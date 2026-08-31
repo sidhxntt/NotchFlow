@@ -18,6 +18,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # `references/` is deliberately ignored: it holds local research checkouts
+      # and must never leak into this repository. The app still ships Boring
+      # Notch's MediaRemote adapter, so fetch precisely the reviewed upstream
+      # revision in CI before Xcode copies the script and framework into the app.
+      - name: Fetch pinned MediaRemote adapter
+        env:
+          MEDIAREMOTE_ADAPTER_REVISION: 8631461be97933e024dd97788440fee2f9b471b3
+        run: |
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/TheBoredTeam/boring.notch.git references/boring.notch
+          git -C references/boring.notch fetch --depth=1 origin "$MEDIAREMOTE_ADAPTER_REVISION"
+          git -C references/boring.notch checkout --detach "$MEDIAREMOTE_ADAPTER_REVISION"
+
+          test -x references/boring.notch/mediaremote-adapter/mediaremote-adapter.pl
+          test -d references/boring.notch/mediaremote-adapter/MediaRemoteAdapter.framework
+
       - name: Guard against version regression
         env:
           GH_TOKEN: ${{ github.token }}
