@@ -1484,20 +1484,43 @@ struct NotchBody: View {
             case .grok, .commandCode, .pi: return nil
             }
         })
-        // Capped here rather than at the ForEach, so the header's count is the
-        // number of rows actually on screen instead of a total that silently
-        // disagrees with what the user can see.
+        // The surrounding ScrollView owns density. A cap here made a busy
+        // machine indistinguishable from one where discovery silently missed
+        // sessions, exactly when the Agent tab needs to be most trustworthy.
         let statusSessions = agentSessions.sessions.filter {
             let key = "\($0.source.rawValue):\($0.id)"
             return !approvalIDs.contains(key) && !managedSessionIDs.contains(key)
-        }.prefix(8)
+        }
         let visibleCount = codexQueues.count + claudeQueues.count + terminalCodexQueues.count
             + tasks.count + statusSessions.count
+        let bridgeError = terminalCodexApprovals.lastError ?? claudeApprovals.lastError
+        let discoveryMessage = agentSessions.discoveryMessage
+        let hookConfigurationMessage = terminalCodexApprovals.hookConfigurationMessage
 
         if visibleCount > 0 {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 0) {
                     agentWorkspaceHeader(count: visibleCount)
+
+                    if let bridgeError {
+                        Label(bridgeError, systemImage: "exclamationmark.triangle.fill")
+                            .font(.sf(10.5, weight: .medium))
+                            .foregroundStyle(Color.orange)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 6)
+                            .accessibilityLabel("Agent approval bridge error: \(bridgeError)")
+                    }
+                    if let discoveryMessage {
+                        Label(discoveryMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.sf(10.5, weight: .medium))
+                            .foregroundStyle(Color.orange)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 6)
+                            .accessibilityLabel("Agent transcript diagnostic: \(discoveryMessage)")
+                    }
+                    if let hookConfigurationMessage {
+                        hookConfigurationNotice(hookConfigurationMessage)
+                    }
 
                     VStack(alignment: .leading, spacing: 4) {
                         VStack(alignment: .leading, spacing: 4) {
@@ -1545,7 +1568,68 @@ struct NotchBody: View {
             // Workspace tabs dissolve between surfaces; the Agent roster should
             // not use the top-edge movement reserved for inline modules.
             .transition(.opacity)
+        } else {
+            // An empty machine is a valid cold-start state, not an absent
+            // workspace. Naming it keeps a zero-row Agent tab from reading as
+            // a failed scan when the user has not installed either CLI yet.
+            HStack(spacing: 8) {
+                Image(systemName: "terminal")
+                    .font(.sf(11, weight: .semibold))
+                    .foregroundStyle(Tokens.text3)
+                Text("No active agent sessions")
+                    .font(.sf(11.5, weight: .medium))
+                    .foregroundStyle(Tokens.text2)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 12)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("No active agent sessions")
+            if let bridgeError {
+                Label(bridgeError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.sf(10.5, weight: .medium))
+                    .foregroundStyle(Color.orange)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+                    .accessibilityLabel("Agent approval bridge error: \(bridgeError)")
+            }
+            if let discoveryMessage {
+                Label(discoveryMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.sf(10.5, weight: .medium))
+                    .foregroundStyle(Color.orange)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+                    .accessibilityLabel("Agent transcript diagnostic: \(discoveryMessage)")
+            }
+            if let hookConfigurationMessage {
+                hookConfigurationNotice(hookConfigurationMessage)
+            }
         }
+    }
+
+    private func hookConfigurationNotice(_ message: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(message)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+            Button(terminalCodexApprovals.canRepairHookConfiguration ? "Repair" : "Reveal") {
+                if terminalCodexApprovals.canRepairHookConfiguration {
+                    terminalCodexApprovals.repairGlobalHookConfiguration()
+                } else {
+                    terminalCodexApprovals.revealGlobalHookConfiguration()
+                }
+            }
+            .buttonStyle(.plain)
+            .font(.sf(10, weight: .semibold))
+            .foregroundStyle(Tokens.text1)
+        }
+        .font(.sf(10.5, weight: .medium))
+        .foregroundStyle(Color.orange)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Agent hook configuration: \(message)")
     }
 
     private func agentWorkspaceHeader(count: Int) -> some View {

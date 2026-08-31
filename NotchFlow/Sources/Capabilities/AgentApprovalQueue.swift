@@ -209,6 +209,18 @@ public struct CodexSessionHierarchy: Equatable, Sendable {
         parentBySessionID.keys.count { rootSessionID(for: $0) == rootID }
     }
 
+    /// Counts only the descendants still doing something.
+    ///
+    /// The badge is a statement about right now, not about history: a root that
+    /// fanned out six sub-agents an hour ago has six *finished* children and
+    /// nothing running, and reporting "6" there describes the past. The
+    /// hierarchy itself deliberately keeps every child it has seen, because a
+    /// finished child's approval must still route to the right parent — so the
+    /// filtering belongs here at the point of display, not in the hierarchy.
+    public func activeSubagentCount(for rootID: String, activeIDs: Set<String>) -> Int {
+        parentBySessionID.keys.count { activeIDs.contains($0) && rootSessionID(for: $0) == rootID }
+    }
+
     /// Session parentage is immutable for a run. Retain previously observed
     /// links when a bounded scan omits an older but still-pending child.
     public func merging(_ newer: CodexSessionHierarchy) -> CodexSessionHierarchy {
@@ -293,14 +305,19 @@ public enum AgentSessionStatus: String, Equatable, Sendable {
         }
     }
 
-    /// The roster's delete action deliberately affects only settled sessions:
-    /// a regular completion, a completed plan (both shown as Done), or Closed.
-    public var isClearable: Bool {
+    /// Nothing further is expected of this session: it finished, it finished a
+    /// plan, or it closed. The complement is not "busy" but "still live" — a
+    /// session waiting on the user is unsettled too.
+    public var isSettled: Bool {
         switch self {
         case .done, .planReady, .interrupted: return true
         case .working, .planning, .needsYou, .question: return false
         }
     }
+
+    /// The roster's delete action deliberately affects only settled sessions:
+    /// a regular completion, a completed plan (both shown as Done), or Closed.
+    public var isClearable: Bool { isSettled }
 
     /// Turn terminal events override the provisional activity state. A completed
     /// plan retains its distinct completed-plan presentation; an aborted or
@@ -321,11 +338,31 @@ public enum AgentSessionStatus: String, Equatable, Sendable {
 public enum AgentSessionTerminal: Equatable, Sendable {
     case completed, interrupted
 
+    /// How long a turn may go silent and still be believed to be working.
+    ///
+    /// A live agent writes to its transcript constantly — assistant deltas, tool
+    /// calls, tool results. Measured across 21,957 real mid-turn gaps on this
+    /// machine: half are under 2.2s, 90% under 14s, 99% under 125s. The tail
+    /// beyond that is not slow work, it is turns that never finished — a CLI
+    /// killed mid-tool, a permission prompt left unanswered, a session abandoned.
+    ///
+    /// 180s sits above the 99th percentile, so genuinely slow work is not
+    /// libelled, and below the scanner's own five-minute activity window, so the
+    /// rule still has room to act before the session ages out of the roster
+    /// entirely.
+    public static let stalledAfter: TimeInterval = 180
+
+    /// A turn that stopped without finishing is not a working turn.
+    ///
+    /// `inactiveFor` was previously accepted and ignored, which is why a session
+    /// that was merely *open* — sitting idle at the prompt, or holding a turn
+    /// that had died — kept reporting Working for as long as it stayed in the
+    /// roster. An explicit completion or abort still wins over the clock.
     public static func inferred(completed: Bool, aborted: Bool,
-                                inactiveFor _: TimeInterval) -> AgentSessionTerminal? {
+                                inactiveFor idle: TimeInterval) -> AgentSessionTerminal? {
         if aborted { return .interrupted }
         if completed { return .completed }
-        return nil
+        return idle >= stalledAfter ? .interrupted : nil
     }
 }
 
@@ -715,7 +752,8 @@ public struct AgentSessionPreview: Equatable, Sendable {
     }
 
     public func isVisible(at date: Date = Date()) -> Bool {
-        date.timeIntervalSince(shownAt) < Self.duration
+        let age = date.timeIntervalSince(shownAt)
+        return age >= 0 && age < Self.duration
     }
 }
 
@@ -726,7 +764,8 @@ public enum AgentSessionObservation {
     public static let activeFileWindow: TimeInterval = 24 * 60 * 60
 
     public static func isWithinActiveWindow(_ modifiedAt: Date, now: Date = Date()) -> Bool {
-        now.timeIntervalSince(modifiedAt) <= activeFileWindow
+        let age = now.timeIntervalSince(modifiedAt)
+        return age >= 0 && age <= activeFileWindow
     }
 }
 

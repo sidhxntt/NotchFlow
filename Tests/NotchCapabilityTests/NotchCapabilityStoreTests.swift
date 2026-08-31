@@ -4,6 +4,16 @@ import UniformTypeIdentifiers
 @testable import NotchCapabilities
 
 final class NotchCapabilityStoreTests: XCTestCase {
+    func testIdleMediaPollingWaitsFiveSecondsButPlayingMediaStaysResponsive() {
+        let policy = MediaRefreshPolicy()
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+
+        XCTAssertFalse(policy.shouldPoll(lastState: .inactive, lastPolledAt: now, now: now.addingTimeInterval(4.9)))
+        XCTAssertTrue(policy.shouldPoll(lastState: .inactive, lastPolledAt: now, now: now.addingTimeInterval(5)))
+        XCTAssertTrue(policy.shouldPoll(lastState: MediaState(source: .spotify, title: "Song", isPlaying: true),
+                                        lastPolledAt: now, now: now.addingTimeInterval(1)))
+    }
+
     private final class RecordingMediaController: MediaControlling {
         var source: MediaSource = .spotify
         var state = MediaState(source: .spotify, title: "Song", artist: "Artist", isPlaying: true)

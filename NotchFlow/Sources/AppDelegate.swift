@@ -290,6 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Cheap — a bind, two small file writes and one parked thread.
         ClaudeHookBridge.shared.startIfNeeded()
         CodexTerminalHookBridge.shared.startIfNeeded()
+        CodexTerminalHookBridge.shared.inspectGlobalHookConfiguration()
 
         // Read the user's shell PATH first — every CLI lookup below needs it, and
         // it costs an interactive login shell, so it must not land on the main
@@ -312,6 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Accessibility and never prompts for it — same standing rule as the
         // clipboard reads in `HotKey`.
         startAlertBannerWatch()
+        CallWindowWatcher.shared.primeAccessibilityConnections()
         capabilityRefreshTask = Task { [capabilities] in
             while !Task.isCancelled {
                 await capabilities.refresh()
@@ -387,6 +389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.model.mode = .idle
                         self.model.openPanel(on: screen.displayID)
                     }
+                    self.presentPermissionBriefingIfNeeded()
                 }
             }
         }
@@ -984,6 +987,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.registerSummonHotKey()
                 self?.registerPromptHotKeys()
             }
+        }
+    }
+
+    /// A fresh install cannot safely prompt for every protected capability at
+    /// launch. Instead it names the concrete consequences once and sends the
+    /// user to the existing per-permission controls when they choose to set up.
+    private func presentPermissionBriefingIfNeeded() {
+        guard OnboardingService.shared.shouldShowPermissionBriefing else { return }
+        OnboardingService.shared.markPermissionBriefingShown()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            guard let self else { return }
+            let alert = NSAlert()
+            alert.messageText = "Enable Mac features when you need them"
+            alert.informativeText = "Accessibility is required for call detection and app notification banners. Automation controls Music and Spotify. Notifications deliver timers and reminders. You can grant each one later in Settings."
+            alert.addButton(withTitle: "Review Permissions")
+            alert.addButton(withTitle: "Not Now")
+            let response = alert.runModal()
+            guard response == .alertFirstButtonReturn else { return }
+            self.model.settingsSection = InlineSettingsView.Section.general.rawValue
+            self.model.openSettings(on: self.displayForSummon())
         }
     }
 

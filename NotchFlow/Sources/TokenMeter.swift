@@ -78,6 +78,7 @@ final class TokenMeter: @unchecked Sendable {
 
     private let lock = NSLock()
     private let defaults: UserDefaults
+    private let ledger: TokenLedger?
     private var total: Int
     private var since: Date?
     private var sinceVersion: String?
@@ -97,9 +98,24 @@ final class TokenMeter: @unchecked Sendable {
         total = defaults.integer(forKey: Key.total)
         since = defaults.object(forKey: Key.since) as? Date
         sinceVersion = defaults.string(forKey: Key.sinceVersion)
-        events = (defaults.data(forKey: Key.events)).flatMap {
+        let legacyEvents = (defaults.data(forKey: Key.events)).flatMap {
             try? JSONDecoder().decode([UsageEvent].self, from: $0)
         } ?? []
+        ledger = AppSupportPaths.appDirectory.map {
+            TokenLedger(url: $0.appendingPathComponent("TokenEvents.jsonl", isDirectory: false))
+        }
+        let journalEvents = ledger.flatMap { journal in
+            try? journal.records().compactMap { try? JSONDecoder().decode(UsageEvent.self, from: $0) }
+        } ?? []
+        events = journalEvents.isEmpty ? legacyEvents : journalEvents
+        // Migration is intentionally after both decodes have succeeded. The
+        // legacy blob remains the recovery copy if Application Support cannot
+        // be created or its first atomic write fails.
+        if !legacyEvents.isEmpty, journalEvents.isEmpty, let ledger,
+           let records = try? legacyEvents.map({ try JSONEncoder().encode($0) }),
+           (try? ledger.replace(with: records)) != nil {
+            defaults.removeObject(forKey: Key.events)
+        }
         latestContextByProvider = (defaults.data(forKey: Key.providerContexts)).flatMap {
             try? JSONDecoder().decode([String: ContextEvent].self, from: $0)
         } ?? [:]
@@ -122,10 +138,15 @@ final class TokenMeter: @unchecked Sendable {
         guard sum > 0 else { return }
         lock.lock()
         if let identifier, let index = events.firstIndex(where: { $0.identifier == identifier }) {
-            if events[index].project == nil, project != nil { events[index].project = project }
+            let changedProject = events[index].project == nil && project != nil
+            if changedProject { events[index].project = project }
             let savedEvents = events
             lock.unlock()
-            if let encoded = try? JSONEncoder().encode(savedEvents) { defaults.set(encoded, forKey: Key.events) }
+            // The transcript importer intentionally re-offers known events so
+            // a changed tail can fill any gap. A duplicate that adds no data is
+            // not a persistence event: rewriting the complete journal for each
+            // one turned an initial history import into sustained 100% CPU.
+            if changedProject { persist(events: savedEvents) }
             return
         }
         total += sum
@@ -135,12 +156,14 @@ final class TokenMeter: @unchecked Sendable {
             sinceVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         }
         let now = Date()
-        events.append(UsageEvent(identifier: identifier, project: project, date: recordedAt, provider: provider,
-                                 input: max(0, input), output: max(0, output)))
+        let event = UsageEvent(identifier: identifier, project: project, date: recordedAt, provider: provider,
+                               input: max(0, input), output: max(0, output))
+        events.append(event)
         // A seven-day monitor needs one extra day of slack around a calendar
         // boundary. The cap also prevents an unusually chatty session from
         // turning UserDefaults into an unbounded event archive.
         let oldest = now.addingTimeInterval(-8 * 24 * 60 * 60)
+        let compacted = events.contains { $0.date < oldest } || events.count > 20_000
         events.removeAll { $0.date < oldest }
         if events.count > 20_000 { events.removeFirst(events.count - 20_000) }
         let (newTotal, stamp, version, savedEvents) = (total, since, sinceVersion, events)
@@ -151,9 +174,7 @@ final class TokenMeter: @unchecked Sendable {
             defaults.set(stamp, forKey: Key.since)
             defaults.set(version, forKey: Key.sinceVersion)
         }
-        if let encoded = try? JSONEncoder().encode(savedEvents) {
-            defaults.set(encoded, forKey: Key.events)
-        }
+        persist(appending: event, snapshot: savedEvents, compacted: compacted)
     }
 
     var reading: Reading {
@@ -244,5 +265,36 @@ final class TokenMeter: @unchecked Sendable {
         if let encoded = try? JSONEncoder().encode(saved) {
             defaults.set(encoded, forKey: Key.providerContexts)
         }
+    }
+
+    private func persist(appending event: UsageEvent, snapshot: [UsageEvent], compacted: Bool) {
+        guard let ledger else {
+            persist(events: snapshot)
+            return
+        }
+        if compacted {
+            persist(events: snapshot)
+            return
+        }
+        guard let encoded = try? JSONEncoder().encode(event), (try? ledger.append(encoded)) != nil else {
+            // A full defaults snapshot is less efficient, but it is safer than
+            // accepting a reported token count that disappears on restart.
+            persist(events: snapshot)
+            return
+        }
+        defaults.removeObject(forKey: Key.events)
+    }
+
+    private func persist(events: [UsageEvent]) {
+        guard let ledger else {
+            if let encoded = try? JSONEncoder().encode(events) { defaults.set(encoded, forKey: Key.events) }
+            return
+        }
+        guard let records = try? events.map({ try JSONEncoder().encode($0) }),
+              (try? ledger.replace(with: records)) != nil else {
+            if let encoded = try? JSONEncoder().encode(events) { defaults.set(encoded, forKey: Key.events) }
+            return
+        }
+        defaults.removeObject(forKey: Key.events)
     }
 }

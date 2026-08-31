@@ -419,3 +419,119 @@ func codexHierarchyCountsSubagents() {
     #expect(hierarchy.subagentCount(for: "parent-019ff608") == 1)
     #expect(hierarchy.rootSessionID(for: "child-01a01058") == "parent-019ff608")
 }
+
+// MARK: - An open session is not a working session
+
+private func localCommand(_ text: String) -> [String: Any] {
+    ["type": "user", "sessionId": "s1", "message": ["role": "user", "content": text]]
+}
+
+@Test("running a local slash command leaves an idle session settled, not Working")
+func localCommandOutputIsNotAPrompt() {
+    // `/model` appends these two records and touches the file. Read as prompts,
+    // they made an idle session look like it owed an answer to something that
+    // was never a question.
+    let entries = claudeEntries([
+        userPrompt("do the thing"), assistant(), turnEnded(),
+        localCommand("<command-name>/model</command-name><command-message>model</command-message>"),
+        localCommand("<local-command-stdout>Set model to Opus 5</local-command-stdout>")
+    ])
+
+    #expect(ClaudeTranscriptStatus.reading(in: entries).status == .done)
+}
+
+@Test("injected meta context is not a prompt either")
+func injectedMetaIsNotAPrompt() {
+    var meta = userPrompt("<system-reminder>background context</system-reminder>")
+    meta["isMeta"] = true
+    let entries = claudeEntries([assistant(), turnEnded(), meta])
+
+    #expect(ClaudeTranscriptStatus.reading(in: entries).status == .done)
+}
+
+@Test("a real prompt after a local command still reads as Working")
+func aRealPromptAfterChromeStillWorks() {
+    let entries = claudeEntries([
+        assistant(), turnEnded(),
+        localCommand("<local-command-stdout>Set model to Opus 5</local-command-stdout>"),
+        userPrompt("now do this")
+    ])
+
+    #expect(ClaudeTranscriptStatus.reading(in: entries).status == .working)
+}
+
+@Test("a turn that has gone silent past the stall window is no longer Working")
+func aStalledTurnStopsClaimingToWork() {
+    // Measured across 21,957 real mid-turn gaps: p99 is 125s. Silence past 180s
+    // is a turn that died, not slow work.
+    let entries = claudeEntries([userPrompt("go"), assistant(tools: ["Bash"])])
+
+    #expect(ClaudeTranscriptStatus.reading(in: entries, inactiveFor: 5).status == .working)
+    #expect(ClaudeTranscriptStatus.reading(in: entries, inactiveFor: 120).status == .working)
+    #expect(ClaudeTranscriptStatus.reading(in: entries, inactiveFor: 181).status == .interrupted)
+}
+
+@Test("silence never overrides a turn that explicitly finished")
+func silenceDoesNotRewriteAFinishedTurn() {
+    let entries = claudeEntries([userPrompt("go"), assistant(), turnEnded()])
+
+    #expect(ClaudeTranscriptStatus.reading(in: entries, inactiveFor: 9_000).status == .done)
+}
+
+@Test("a parsed Claude reading can be reused while its silence clock advances")
+func cachedClaudeReadingStillExpires() {
+    let reading = ClaudeTranscriptStatus.reading(in: claudeEntries([
+        userPrompt("go"), assistant(tools: ["Bash"])
+    ]))
+
+    #expect(reading.resolved(inactiveFor: 5) == .working)
+    #expect(reading.resolved(inactiveFor: 181) == .interrupted)
+}
+
+@Test("a stalled Codex turn stops claiming to work too")
+func codexStalledTurnStopsClaimingToWork() {
+    let entries = [codexTurn(), codexEvent("task_started")]
+
+    #expect(CodexTranscriptStatus.reading(in: entries, inactiveFor: 60).status == .working)
+    #expect(CodexTranscriptStatus.reading(in: entries, inactiveFor: 181).status == .interrupted)
+
+    let finished = [codexTurn(), codexEvent("task_complete")]
+    #expect(CodexTranscriptStatus.reading(in: finished, inactiveFor: 9_000).status == .done)
+}
+
+@Test("the stall window sits above real work and below the roster's own cutoff")
+func stallWindowIsBoundedOnBothSides() {
+    // Above the measured p99 mid-turn gap (125s) so slow work is not libelled,
+    // and below the scanner's five-minute file window so the rule can still act.
+    #expect(AgentSessionTerminal.stalledAfter > 125)
+    #expect(AgentSessionTerminal.stalledAfter < 300)
+}
+
+// MARK: - Sub-agents are counted in the present tense
+
+@Test("only sub-agents still running count toward the badge")
+func onlyLiveSubagentsAreCounted() {
+    let hierarchy = CodexSessionHierarchy(parentBySessionID: [
+        "child-a": "root", "child-b": "root", "child-c": "root"
+    ])
+
+    // All six finished an hour ago: the badge must not say "3".
+    #expect(hierarchy.activeSubagentCount(for: "root", activeIDs: []) == 0)
+    #expect(hierarchy.activeSubagentCount(for: "root", activeIDs: ["child-b"]) == 1)
+    #expect(hierarchy.activeSubagentCount(for: "root", activeIDs: ["child-a", "child-c"]) == 2)
+    // The hierarchy itself still knows all three, so a finished child's approval
+    // continues to route to its parent.
+    #expect(hierarchy.subagentCount(for: "root") == 3)
+}
+
+@Test("a settled session yields no badge at all")
+func settledSessionsHaveNoBadge() {
+    for status in [AgentSessionStatus.done, .planReady, .interrupted] {
+        #expect(status.isSettled)
+    }
+    for status in [AgentSessionStatus.working, .planning, .needsYou, .question] {
+        #expect(!status.isSettled)
+    }
+    #expect(AgentSessionState(id: "s", source: .codex, status: .working,
+                              subagentCount: 0).subagentBadge == nil)
+}

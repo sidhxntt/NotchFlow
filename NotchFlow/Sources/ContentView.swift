@@ -527,6 +527,7 @@ private struct WorkEarWidthsKey: PreferenceKey {
 /// only identifies the highest-priority session state without obscuring the
 /// physical camera area.
 private struct CollapsedAgentStatusEars: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let session: AgentSessionState
     let notchWidth: CGFloat
     let earLeft: CGFloat
@@ -559,12 +560,18 @@ private struct CollapsedAgentStatusEars: View {
 
             Color.clear.frame(width: notchWidth)
 
+            // The pulse re-rasterises the notch layer for as long as it runs, and
+            // this ear now stays up for a whole session rather than a few
+            // seconds, so it is honoured only when the user has not asked for
+            // less motion — the expanded status icon already makes the same
+            // concession.
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(color)
                 .frame(width: earRight)
                 .symbolEffect(.pulse, options: .repeating,
-                              isActive: session.status == .working || session.status == .planning)
+                              isActive: !reduceMotion
+                                  && (session.status == .working || session.status == .planning))
         }
         .frame(minHeight: 22)
     }

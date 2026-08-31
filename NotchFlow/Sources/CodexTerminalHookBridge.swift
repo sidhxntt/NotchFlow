@@ -16,15 +16,31 @@ final class CodexTerminalHookBridge: ObservableObject {
     @Published private(set) var sessionQueues: [AgentApprovalSessionQueue] = []
     @Published private(set) var isAvailable = false
     @Published private(set) var lastError: String?
+    @Published private(set) var hookConfigurationMessage: String?
+    @Published private(set) var canRepairHookConfiguration = false
 
     private var queue = AgentApprovalQueue()
     private var connections: [String: HookConnection] = [:]
     private var listenFD: Int32 = -1
     private var hierarchyObservation: UUID?
+    private var hookConfigurationURL: URL?
 
     private static var socketPath: String {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AgentNotch/notch.sock").path
+    }
+
+    private static var currentClaudeHookScriptPath: String? {
+        AppSupportPaths.appDirectory?
+            .appendingPathComponent("ClaudeHook/claude-hook.py").path
+    }
+
+    private static var globalHookConfigurationURLs: [URL] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            home.appendingPathComponent(".claude/settings.json"),
+            home.appendingPathComponent(".codex/hooks.json")
+        ]
     }
 
     var hasPendingApprovals: Bool { !sessionQueues.isEmpty }
@@ -62,6 +78,63 @@ final class CodexTerminalHookBridge: ObservableObject {
         listener.start()
         isAvailable = true
         lastError = nil
+    }
+
+    /// User-owned global hook configs can contain several tools. Inspect them at
+    /// launch, but do not write one until the user explicitly chooses Repair.
+    func inspectGlobalHookConfiguration() {
+        guard let expectedScriptPath = Self.currentClaudeHookScriptPath else { return }
+        hookConfigurationMessage = nil
+        canRepairHookConfiguration = false
+        hookConfigurationURL = nil
+
+        for url in Self.globalHookConfigurationURLs {
+            guard let data = try? Data(contentsOf: url),
+                  let configuration = try? JSONSerialization.jsonObject(with: data),
+                  !HookConfigurationRepair.staleClaudeCommands(in: configuration,
+                                                               expectedScriptPath: expectedScriptPath).isEmpty
+            else { continue }
+
+            let repaired = HookConfigurationRepair.repairingStaleClaudeCommands(
+                in: configuration, expectedScriptPath: expectedScriptPath)
+            hookConfigurationURL = url
+            canRepairHookConfiguration = repaired.replacements > 0
+            let displayPath = url.path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path,
+                                                             with: "~")
+            hookConfigurationMessage = repaired.replacements > 0
+                ? "\(displayPath) points to an old NotchFlow approval hook. Repair it to restore approvals."
+                : "\(displayPath) contains an unfamiliar NotchFlow hook command. Review it before using approvals."
+            return
+        }
+    }
+
+    func repairGlobalHookConfiguration() {
+        guard let url = hookConfigurationURL,
+              let expectedScriptPath = Self.currentClaudeHookScriptPath,
+              let data = try? Data(contentsOf: url),
+              let configuration = try? JSONSerialization.jsonObject(with: data)
+        else { return }
+
+        let repaired = HookConfigurationRepair.repairingStaleClaudeCommands(
+            in: configuration, expectedScriptPath: expectedScriptPath)
+        guard repaired.replacements > 0,
+              JSONSerialization.isValidJSONObject(repaired.value)
+        else { inspectGlobalHookConfiguration(); return }
+        do {
+            let backupURL = url.deletingPathExtension().appendingPathExtension("notchflow-backup.json")
+            try data.write(to: backupURL, options: .atomic)
+            let serialized = try JSONSerialization.data(withJSONObject: repaired.value,
+                                                        options: [.prettyPrinted, .sortedKeys])
+            try serialized.write(to: url, options: .atomic)
+            inspectGlobalHookConfiguration()
+        } catch {
+            lastError = "Could not repair the global hook config: \(error.localizedDescription)"
+        }
+    }
+
+    func revealGlobalHookConfiguration() {
+        guard let url = hookConfigurationURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     func decide(_ decision: Decision, for approval: AgentApproval) {
@@ -143,10 +216,13 @@ final class CodexTerminalHookBridge: ObservableObject {
     }
 
     private static func bindListener(at path: String) throws -> Int32 {
-        // AgentNotch owns this compatibility endpoint. A stale socket is not
-        // permission to take over its protocol: doing so dropped its Claude
-        // gate records before AgentNotch could see them.
-        if FileManager.default.fileExists(atPath: "/Applications/AgentNotch.app") {
+        // This is a compatibility endpoint, so a *running* AgentNotch owns it.
+        // Merely having AgentNotch installed is not ownership: the old rule
+        // rejected a stale socket after every NotchFlow reinstall and terminal
+        // Codex approvals silently failed open even though no process listened.
+        if NSWorkspace.shared.runningApplications.contains(where: {
+            $0.bundleIdentifier == "app.agentnotch.AgentNotch"
+        }) {
             throw SocketError.activeAgentNotch
         }
         let parent = (path as NSString).deletingLastPathComponent

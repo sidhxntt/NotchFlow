@@ -15,6 +15,24 @@ public protocol MediaControlling: AnyObject {
     func perform(_ command: MediaCommand) async
 }
 
+/// Poll player metadata at the rate users can perceive while a track is active,
+/// but do not keep sending Apple events to an idle player every capability tick.
+public struct MediaRefreshPolicy: Sendable {
+    public let activeInterval: TimeInterval
+    public let idleInterval: TimeInterval
+
+    public init(activeInterval: TimeInterval = 1, idleInterval: TimeInterval = 5) {
+        self.activeInterval = activeInterval
+        self.idleInterval = idleInterval
+    }
+
+    public func shouldPoll(lastState: MediaState, lastPolledAt: Date?, now: Date = .now) -> Bool {
+        guard let lastPolledAt else { return true }
+        let interval = lastState.isActive ? activeInterval : idleInterval
+        return max(0, now.timeIntervalSince(lastPolledAt)) >= interval
+    }
+}
+
 @MainActor
 protocol MediaArtworkProviding: AnyObject {
     func artwork(for state: MediaState) -> Data?
@@ -418,10 +436,14 @@ public final class AppleScriptMediaController: MediaControlling, MediaErrorRepor
     /// once per track rather than on every one-second refresh.
     private var artworkTrack: String?
     private let session: URLSession
+    private let refreshPolicy: MediaRefreshPolicy
+    private var lastPolledAt: Date?
 
-    public init(source: MediaSource, session: URLSession = .shared) {
+    public init(source: MediaSource, session: URLSession = .shared,
+                refreshPolicy: MediaRefreshPolicy = .init()) {
         self.source = source
         self.session = session
+        self.refreshPolicy = refreshPolicy
         self.state = MediaState(source: source)
     }
 
@@ -431,8 +453,13 @@ public final class AppleScriptMediaController: MediaControlling, MediaErrorRepor
             state = MediaState(source: source)
             artwork = nil
             artworkTrack = nil
+            lastPolledAt = nil
             return state
         }
+        guard refreshPolicy.shouldPoll(lastState: state, lastPolledAt: lastPolledAt) else {
+            return state
+        }
+        lastPolledAt = .now
         let script: String
         if source == .spotify {
             script = """
@@ -547,6 +574,9 @@ public final class AppleScriptMediaController: MediaControlling, MediaErrorRepor
             Self.automationError(from: script)
         }.value
         mediaError = error
+        // A user action is the one situation in which an idle poll must not
+        // wait for its backoff interval before the notch reflects the result.
+        lastPolledAt = nil
     }
 
     nonisolated private static func playbackResult(_ source: String) -> PlaybackResult {

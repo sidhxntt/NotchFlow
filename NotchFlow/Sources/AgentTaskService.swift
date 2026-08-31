@@ -665,7 +665,7 @@ final class AgentTaskManager: ObservableObject {
         var interrupted = false
 
         var isRunning: Bool { outcome == nil }
-        var elapsed: TimeInterval { (finishedAt ?? Date()).timeIntervalSince(startedAt) }
+        var elapsed: TimeInterval { max(0, (finishedAt ?? Date()).timeIntervalSince(startedAt)) }
     }
 
     /// A permission prompt observed in an interactive Codex or Claude session.
@@ -906,7 +906,7 @@ final class AgentTaskManager: ObservableObject {
         let now = Date()
         externalApprovals = externalTrackedTools.compactMap { key, tool in
             guard AgentPermissionPolicy.needsTerminalHandoff(forToolName: tool.toolName,
-                                                             elapsed: now.timeIntervalSince(tool.startedAt)) else { return nil }
+                                                             elapsed: max(0, now.timeIntervalSince(tool.startedAt))) else { return nil }
             return ExternalApproval(id: key, engine: tool.engine, toolName: tool.toolName,
                                     folder: tool.folder, sessionID: tool.sessionID, startedAt: tool.startedAt)
         }.sorted { $0.startedAt > $1.startedAt }
@@ -1850,7 +1850,7 @@ final class AgentTaskManager: ObservableObject {
 
         // What's left of the runaway ceiling still applies, measured from the
         // round's original start.
-        let elapsed = Date().timeIntervalSince(marker.startedAt)
+        let elapsed = max(0, Date().timeIntervalSince(marker.startedAt))
         let watchdog = DispatchWorkItem { kill(pid, SIGTERM) }
         DispatchQueue.global().asyncAfter(deadline: .now() + max(30, Self.timeout - elapsed),
                                           execute: watchdog)
@@ -2752,6 +2752,7 @@ private final class CodexAgentStreamState: AgentEventParser {
 final class AgentSessionActivityStore: ObservableObject {
     static let shared = AgentSessionActivityStore()
     @Published private(set) var sessions: [AgentSessionState] = []
+    @Published private(set) var discoveryMessage: String?
     /// The folded notch is only an announcement surface. It shows the newest
     /// non-permission state briefly, then releases the hardware notch while the
     /// persistent session card remains available in the Agent tab.
@@ -2761,6 +2762,7 @@ final class AgentSessionActivityStore: ObservableObject {
     private struct ExternalSessionSnapshot {
         let sessions: [AgentSessionState]
         let codexHierarchy: CodexSessionHierarchy
+        let discoveryMessage: String?
     }
     private var markers: [String: Marker] = [:]
     /// Terminal rows explicitly cleared from the roster. The source transcript
@@ -2778,6 +2780,7 @@ final class AgentSessionActivityStore: ObservableObject {
     private var codexHierarchy = CodexSessionHierarchy()
     private var codexHierarchyObservers: [UUID: (CodexSessionHierarchy) -> Void] = [:]
     private var scanInFlight = false
+    private var usageImportInFlight = false
     private var lastCodexUsageImportAt: Date?
     private var refreshTimer: Timer?
     private var previewExpiryTimer: Timer?
@@ -2786,7 +2789,11 @@ final class AgentSessionActivityStore: ObservableObject {
 
     private init() {
         refresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        // Permission bridges are push-driven and retain their own fast poll.
+        // Transcript discovery is deliberately slower: a two-second cadence is
+        // still live enough for a roster, without asking the filesystem to walk
+        // every Claude root and child directory twice per second forever.
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
     }
@@ -2862,21 +2869,24 @@ final class AgentSessionActivityStore: ObservableObject {
 
     private func refresh() {
         let now = Date()
-        markers = markers.filter { now.timeIntervalSince($0.value.receivedAt) < Self.markerLifetime }
+        markers = markers.filter {
+            let age = now.timeIntervalSince($0.value.receivedAt)
+            return age >= 0 && age < Self.markerLifetime
+        }
         guard !scanInFlight else {
             rebuild(from: scannedSessions, at: now)
             return
         }
         scanInFlight = true
-        let shouldImportCodexUsage = lastCodexUsageImportAt.map {
+        let importIsDue = lastCodexUsageImportAt.map {
             now.timeIntervalSince($0) >= Self.codexUsageImportInterval
         } ?? true
-        if shouldImportCodexUsage { lastCodexUsageImportAt = now }
+        let shouldImportCodexUsage = importIsDue && !usageImportInFlight
+        if shouldImportCodexUsage {
+            lastCodexUsageImportAt = now
+            usageImportInFlight = true
+        }
         Task.detached(priority: .utility) { [weak self] in
-            if shouldImportCodexUsage {
-                Self.importRecentCodexUsage(now: now)
-                Self.importRecentClaudeUsage(now: now)
-            }
             let snapshot = Self.scanExternalSessions(now: now)
             await MainActor.run {
                 guard let self else { return }
@@ -2887,7 +2897,16 @@ final class AgentSessionActivityStore: ObservableObject {
                 // file was read, so it must still count as fresher than it.
                 self.scannedAt = now
                 self.updateCodexHierarchy(snapshot.codexHierarchy)
+                self.discoveryMessage = snapshot.discoveryMessage
                 self.rebuild(from: snapshot.sessions, at: Date())
+            }
+            // Initial session discovery is latency-sensitive; the token history
+            // is not. Publish the small, current roster before starting the
+            // eight-day backfill, then keep that backfill out of the UI path.
+            if shouldImportCodexUsage {
+                await Self.importRecentCodexUsage(now: now)
+                await Self.importRecentClaudeUsage(now: now)
+                await MainActor.run { self?.usageImportInFlight = false }
             }
         }
     }
@@ -3005,19 +3024,40 @@ final class AgentSessionActivityStore: ObservableObject {
 
     private nonisolated static func scanExternalSessions(now: Date) -> ExternalSessionSnapshot {
         let codex = codexSessions(now: now)
-        return .init(sessions: codex.sessions + claudeSessions(now: now), codexHierarchy: codex.hierarchy)
+        let claude = claudeSessions(now: now)
+        let sessions = codex.sessions + claude.sessions
+        return .init(sessions: sessions, codexHierarchy: codex.hierarchy,
+                     discoveryMessage: AgentTranscriptDiscovery.message(
+                        transcriptsFound: codex.transcriptsFound + claude.transcriptsFound,
+                        recognizedSessions: sessions.count
+                     ))
     }
 
     /// Codex stores provider-reported counters in its local JSONL transcripts.
     /// They are cumulative per session, so `CodexTranscriptUsage` converts them
     /// to timestamped deltas before they enter the local ledger.
-    private nonisolated static func importRecentCodexUsage(now: Date) {
+    private nonisolated static func importRecentCodexUsage(now: Date) async {
         let root = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex/sessions", isDirectory: true)
         let oldest = now.addingTimeInterval(-8 * 24 * 60 * 60)
-        for file in recentCodexFiles(root, since: oldest, now: now) {
+        for file in recentCodexFiles(root, since: oldest, now: now).sorted(by: { $0.modifiedAt > $1.modifiedAt }) {
             let url = file.url
-            guard let data = read(url, limit: 0, tail: false) else { continue }
+            // Two bounds, both load-bearing on a long-lived session.
+            //
+            // A rollout left running for weeks reaches hundreds of megabytes,
+            // and this used to read every one of them whole, every five
+            // minutes, re-deriving thousands of events the ledger had already
+            // stored and re-encoding each one. Reading a bounded tail is enough:
+            // `incrementalEvents` works from differences between consecutive
+            // counter records, so it only needs the recent ones, and the first
+            // record in the window is spent establishing the baseline.
+            guard importedCodexUsage(url, modifiedAt: file.fileModifiedAt) == false,
+                  let data = read(url, limit: 4 * 1024 * 1024, tail: true) else { continue }
+            // The second bound is time: an actively-written file always looks
+            // changed, so the mtime check above can never skip it. Only events
+            // newer than the newest one already taken from this file are worth
+            // offering to the ledger.
+            let alreadyImportedThrough = importedCodexUsageThrough(url)
                 let sessionID = url.deletingPathExtension().lastPathComponent
                 let project = lines(data).first(where: { $0["type"] as? String == "session_meta" })
                     .flatMap { $0["payload"] as? [String: Any] }
@@ -3026,27 +3066,43 @@ final class AgentSessionActivityStore: ObservableObject {
                     TokenMeter.shared.recordContext(provider: "Codex", project: project, used: context.used,
                                                     window: context.window, at: file.modifiedAt)
                 }
+                var newest = alreadyImportedThrough
                 for event in CodexTranscriptUsage.incrementalEvents(in: data, identifierPrefix: "codex:\(sessionID)")
-                where event.timestamp >= oldest && event.timestamp <= now {
+                where event.timestamp >= oldest && event.timestamp <= now
+                    && event.timestamp > alreadyImportedThrough {
                     TokenMeter.shared.record(input: event.input, output: event.output,
                                          provider: "Codex", recordedAt: event.timestamp,
                                          identifier: event.id, project: project)
-                }
+                    newest = max(newest, event.timestamp)
+            }
+            noteCodexUsageImported(url, through: newest)
+            // A fresh install can have hundreds of old rollouts. Cooperatively
+            // yielding alone immediately resumes on the same idle core; this
+            // small cadence leaves room for the resting notch and input work
+            // while a durable backfill continues in the background.
+            try? await Task.sleep(for: .milliseconds(250))
+            await Task.yield()
         }
     }
 
-    private nonisolated static func importRecentClaudeUsage(now: Date) {
+    private nonisolated static func importRecentClaudeUsage(now: Date) async {
         let root = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects", isDirectory: true)
         let oldest = now.addingTimeInterval(-8 * 24 * 60 * 60)
         guard let files = FileManager.default.enumerator(at: root,
             includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
             options: [.skipsHiddenFiles]) else { return }
-        for case let url as URL in files {
-            guard url.pathExtension == "jsonl", !url.path.contains("/subagents/"),
+        let candidates = files.compactMap { item -> (url: URL, modifiedAt: Date)? in
+            guard let url = item as? URL, url.pathExtension == "jsonl", !url.path.contains("/subagents/"),
                   let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                   values.isRegularFile == true, let modifiedAt = values.contentModificationDate,
-                  modifiedAt >= oldest, let data = read(url, limit: 0, tail: false)
+                  modifiedAt >= oldest else { return nil }
+            return (url, modifiedAt)
+        }.sorted { $0.modifiedAt > $1.modifiedAt }
+        for candidate in candidates {
+            let url = candidate.url
+            guard url.pathExtension == "jsonl", !url.path.contains("/subagents/"),
+                  let data = read(url, limit: 4 * 1024 * 1024, tail: true)
             else { continue }
             let entries = lines(data)
             let sessionID = entries.compactMap { string($0["sessionId"]) ?? string($0["session_id"]) }.first
@@ -3057,95 +3113,258 @@ final class AgentSessionActivityStore: ObservableObject {
                 TokenMeter.shared.record(input: event.input, output: event.output, provider: "Claude",
                                          recordedAt: event.timestamp, identifier: event.id, project: project)
             }
+            try? await Task.sleep(for: .milliseconds(250))
+            await Task.yield()
         }
     }
 
     private struct CodexRecord { let id: String; let parent: String?; let child: Bool; let state: AgentSessionState }
-    private struct CodexSessionSnapshot { let sessions: [AgentSessionState]; let hierarchy: CodexSessionHierarchy }
+    private struct CodexSessionSnapshot {
+        let sessions: [AgentSessionState]
+        let hierarchy: CodexSessionHierarchy
+        let transcriptsFound: Int
+    }
     private nonisolated static func codexSessions(now: Date) -> CodexSessionSnapshot {
         let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions", isDirectory: true)
-        let records = recentCodexFiles(root, since: now.addingTimeInterval(-AgentSessionObservation.activeFileWindow), now: now)
+        let files = recentCodexFiles(root, since: now.addingTimeInterval(-AgentSessionObservation.activeFileWindow), now: now)
             .filter { $0.url.lastPathComponent.hasPrefix("rollout-") }
             .sorted { $0.modifiedAt > $1.modifiedAt }
-            .compactMap { parseCodex($0.url) }
+        let records = files.compactMap { parseCodex($0.url, modifiedAt: $0.modifiedAt,
+                                                    cacheModifiedAt: $0.fileModifiedAt, now: now) }
         let hierarchy = CodexSessionHierarchy(parentBySessionID: Dictionary(
             uniqueKeysWithValues: records.compactMap { record in
                 guard record.child, let parent = record.parent else { return nil }
                 return (record.id, parent)
             }))
-        let sessions = records.filter { !$0.child }.map {
-            var state = $0.state
-            state.subagentCount = hierarchy.subagentCount(for: $0.id)
+        let activeChildIDs = Set(records.lazy
+            .filter { $0.child && !$0.state.status.isSettled }
+            .map(\.id))
+        let sessions = records.filter { !$0.child }.map { record -> AgentSessionState in
+            var state = record.state
+            state.subagentCount = hierarchy.activeSubagentCount(for: record.id,
+                                                                activeIDs: activeChildIDs)
             return state
         }
-        return .init(sessions: sessions, hierarchy: hierarchy)
+        return .init(sessions: sessions, hierarchy: hierarchy, transcriptsFound: files.count)
     }
 
-    private nonisolated static func parseCodex(_ url: URL) -> CodexRecord? {
+    /// Everything about a rollout that comes from its bytes, and therefore only
+    /// changes when the file does.
+    private struct CodexFileFacts {
+        let identity: CodexSessionIdentity
+        let activity: AgentSessionStatus
+        let completed: Bool
+        let aborted: Bool
+        let used: Int?
+        let window: Int?
+        let model: String?
+        let cwd: String?
+    }
+
+    /// Parsed rollouts, keyed by path and invalidated by size and modification
+    /// date.
+    ///
+    /// The roster rescans twice a second, and a long-lived Codex session's
+    /// rollout grows without bound — one session left running for nineteen days
+    /// accounted for most of 322 MB across six live files here. Re-reading and
+    /// re-parsing that on every tick pinned a core at 110% to re-derive bytes
+    /// that had not changed. A file whose size and mtime both match what we last
+    /// saw cannot have new content, so the parse is reused and only the clock is
+    /// re-applied.
+    private nonisolated(unsafe) static var codexFactsCache: [String: (stamp: String, facts: CodexFileFacts)] = [:]
+    private nonisolated static let codexFactsLock = NSLock()
+
+    /// Whether this rollout has already been imported at exactly this
+    /// modification date. Records the date as a side effect, so a caller that
+    /// gets `false` is the one that must do the reading.
+    private nonisolated(unsafe) static var importedCodexUsageAt: [String: Date] = [:]
+
+    private nonisolated static func importedCodexUsage(_ url: URL, modifiedAt: Date) -> Bool {
+        codexFactsLock.lock(); defer { codexFactsLock.unlock() }
+        if importedCodexUsageAt[url.path] == modifiedAt { return true }
+        importedCodexUsageAt[url.path] = modifiedAt
+        return false
+    }
+
+    /// The newest event timestamp already taken from this rollout. Everything at
+    /// or before it is in the ledger under an identifier the ledger would only
+    /// deduplicate, so re-offering it is pure cost.
+    private nonisolated(unsafe) static var importedCodexUsageThroughDate: [String: Date] = [:]
+
+    private nonisolated static func importedCodexUsageThrough(_ url: URL) -> Date {
+        codexFactsLock.lock(); defer { codexFactsLock.unlock() }
+        return importedCodexUsageThroughDate[url.path] ?? .distantPast
+    }
+
+    private nonisolated static func noteCodexUsageImported(_ url: URL, through date: Date) {
+        codexFactsLock.lock(); defer { codexFactsLock.unlock() }
+        importedCodexUsageThroughDate[url.path] = date
+    }
+
+    private nonisolated static func codexFacts(_ url: URL, modifiedAt: Date) -> CodexFileFacts? {
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+        let stamp = "\(modifiedAt.timeIntervalSince1970):\(size)"
+
+        codexFactsLock.lock()
+        let cached = codexFactsCache[url.path]
+        codexFactsLock.unlock()
+        if let cached, cached.stamp == stamp { return cached.facts }
+
         guard let head = read(url, limit: 64 * 1024, tail: false),
               let meta = lines(head).first(where: { $0["type"] as? String == "session_meta" })?["payload"] as? [String: Any],
               let identity = CodexTranscriptStatus.identity(in: meta) else { return nil }
-        let id = identity.id
         let tailData = read(url, limit: 1024 * 1024, tail: true) ?? Data()
         let tailEntries = lines(tailData)
         let context = CodexTranscriptContext.latest(in: tailData)
-        let used = context?.used
-        let window = context?.window
-        let model = string(meta["model"])
-            ?? tailEntries.reversed().compactMap { item in
-                guard let payload = item["payload"] as? [String: Any] else { return nil }
-                return string(payload["model"])
-            }.first
         // Both plan mode and the turn-terminal events are read by
         // `CodexTranscriptStatus`, which scopes completion to the newest turn
         // (a rollout keeps every earlier turn's `task_complete`) and matches
         // `turn_aborted` inside its `event_msg` envelope, where Codex actually
         // writes it.
-        let resolvedStatus = CodexTranscriptStatus.reading(in: tailEntries).status
+        let signals = CodexTranscriptStatus.signals(in: tailEntries)
+        let facts = CodexFileFacts(
+            identity: identity,
+            activity: CodexTranscriptStatus.activity(in: tailEntries),
+            completed: signals.completed,
+            aborted: signals.aborted,
+            used: context?.used,
+            window: context?.window ?? number(meta["context_window"]),
+            model: string(meta["model"]) ?? tailEntries.reversed().compactMap { item in
+                guard let payload = item["payload"] as? [String: Any] else { return nil }
+                return string(payload["model"])
+            }.first,
+            cwd: string(meta["cwd"]))
+
+        codexFactsLock.lock()
+        codexFactsCache[url.path] = (stamp, facts)
+        codexFactsLock.unlock()
+        return facts
+    }
+
+    private nonisolated static func parseCodex(_ url: URL, modifiedAt: Date,
+                                                cacheModifiedAt: Date, now: Date) -> CodexRecord? {
+        guard let facts = codexFacts(url, modifiedAt: cacheModifiedAt) else { return nil }
+        let identity = facts.identity
+        let id = identity.id
+        let used = facts.used
+        let window = facts.window
+        let model = facts.model
+        // Only this part depends on the clock, so it is recomputed every tick
+        // even on a cache hit: a turn that was working ten seconds ago may have
+        // stalled since without the file changing at all.
+        let resolvedStatus = facts.activity.resolved(terminal: AgentSessionTerminal.inferred(
+            completed: facts.completed, aborted: facts.aborted,
+            inactiveFor: max(0, now.timeIntervalSince(modifiedAt))))
         return .init(id: id, parent: identity.parentID, child: identity.isSubagent,
                      state: .init(id: id, source: .codex, status: resolvedStatus,
                                   contextUsed: used,
                                   contextWindow: used.map { _ in
                                       AgentModelContextWindow.window(
-                                          reported: window ?? number(meta["context_window"]),
+                                          reported: window,
                                           model: model, source: .codex, observedUsed: used)
                                   },
-                                  projectName: projectName(for: string(meta["cwd"])), modelName: model,
-                                  workingDirectory: string(meta["cwd"])))
+                                  projectName: projectName(for: facts.cwd), modelName: model,
+                                  workingDirectory: facts.cwd))
     }
 
-    private nonisolated static func claudeSessions(now: Date) -> [AgentSessionState] {
+    /// Everything in a Claude transcript derived from bytes rather than time.
+    /// Keeping the parsed reading, rather than its final status, is important:
+    /// an unchanged unfinished transcript can still become stalled.
+    private struct ClaudeFileFacts {
+        let id: String?
+        let used: Int?
+        let reading: AgentTranscriptReading
+        let workingDirectory: String?
+        let model: String?
+        let planSummary: String?
+    }
+
+    private nonisolated(unsafe) static var claudeFactsCache: [String: (stamp: String, facts: ClaudeFileFacts, lastUsed: Date)] = [:]
+    private nonisolated static let claudeFactsLock = NSLock()
+    private nonisolated static let claudeFactsCacheCapacity = 512
+
+    private nonisolated static func claudeFacts(_ url: URL, modifiedAt: Date) -> ClaudeFileFacts? {
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+        let stamp = "\(modifiedAt.timeIntervalSince1970):\(size)"
+
+        claudeFactsLock.lock()
+        if let cached = claudeFactsCache[url.path], cached.stamp == stamp {
+            claudeFactsCache[url.path] = (cached.stamp, cached.facts, Date())
+            claudeFactsLock.unlock()
+            return cached.facts
+        }
+        claudeFactsLock.unlock()
+
+        guard let data = read(url, limit: 160 * 1024, tail: true) else { return nil }
+        let entries = lines(data)
+        var used: Int?
+        for item in entries.reversed() {
+            guard item["type"] as? String == "assistant",
+                  let usage = (item["message"] as? [String: Any])?["usage"] as? [String: Any]
+            else { continue }
+            used = (number(usage["input_tokens"]) ?? 0)
+                + (number(usage["cache_read_input_tokens"]) ?? 0)
+                + (number(usage["cache_creation_input_tokens"]) ?? 0)
+            break
+        }
+        let facts = ClaudeFileFacts(
+            id: ClaudeTranscriptStatus.sessionID(in: entries),
+            used: used,
+            reading: ClaudeTranscriptStatus.reading(in: entries),
+            workingDirectory: entries.reversed().compactMap { string($0["cwd"]) }.first,
+            model: ClaudeTranscriptStatus.modelName(in: entries),
+            planSummary: ClaudeTranscriptStatus.planSummary(in: entries)
+        )
+        claudeFactsLock.lock()
+        claudeFactsCache[url.path] = (stamp, facts, Date())
+        if claudeFactsCache.count > claudeFactsCacheCapacity {
+            let stale = claudeFactsCache.sorted { $0.value.lastUsed < $1.value.lastUsed }
+                .prefix(claudeFactsCache.count - claudeFactsCacheCapacity)
+            stale.forEach { claudeFactsCache.removeValue(forKey: $0.key) }
+        }
+        claudeFactsLock.unlock()
+        return facts
+    }
+
+    private struct ClaudeSessionSnapshot {
+        let sessions: [AgentSessionState]
+        let transcriptsFound: Int
+    }
+
+    private nonisolated static func claudeSessions(now: Date) -> ClaudeSessionSnapshot {
         let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true)
-        return recentFiles(root, now: now, predicate: { !$0.path.contains("/subagents/") })
+        let files = recentFiles(root, now: now, predicate: { !$0.path.contains("/subagents/") })
             .sorted { $0.modifiedAt > $1.modifiedAt }
-            .prefix(12)
-            .compactMap { parseClaude($0.url, now: now) }
+        return .init(sessions: files.compactMap { parseClaude($0.url, modifiedAt: $0.modifiedAt,
+                                                              cacheModifiedAt: $0.fileModifiedAt, now: now) },
+                     transcriptsFound: files.count)
     }
 
-    private nonisolated static func parseClaude(_ url: URL, now: Date) -> AgentSessionState? {
-        let entries = read(url, limit: 160 * 1024, tail: true).map(lines) ?? []
+    private nonisolated static func parseClaude(_ url: URL, modifiedAt: Date,
+                                                 cacheModifiedAt: Date, now: Date) -> AgentSessionState? {
         // The newest entry carrying a session id, not literally the last line:
         // `file-history-snapshot` (and other bookkeeping records) have none and
         // are routinely appended last, which used to drop the session entirely.
-        guard let id = ClaudeTranscriptStatus.sessionID(in: entries) else { return nil }
-        var used: Int?
-        for item in entries.reversed() {
-            guard item["type"] as? String == "assistant", let usage = (item["message"] as? [String: Any])?["usage"] as? [String: Any] else { continue }
-            used = (number(usage["input_tokens"]) ?? 0) + (number(usage["cache_read_input_tokens"]) ?? 0) + (number(usage["cache_creation_input_tokens"]) ?? 0); break
-        }
+        guard let facts = claudeFacts(url, modifiedAt: cacheModifiedAt), let id = facts.id else { return nil }
+        let used = facts.used
         // Claude keeps each root transcript beside a directory named after that
         // session; its child transcripts live inside that directory's `subagents`.
-        // Only children touched inside the same active window are counted: the
-        // directory keeps every child a session ever ran, and a badge claiming
-        // eight live sub-agents an hour after they finished is simply wrong.
+        // The badge counts only children that are *still working*: the directory
+        // keeps every child the session ever ran, so counting the folder reported
+        // sub-agents in the past tense — "6" long after all six had finished.
         let subdir = url.deletingLastPathComponent()
             .appendingPathComponent(url.deletingPathExtension().lastPathComponent, isDirectory: true)
             .appendingPathComponent("subagents", isDirectory: true)
-        let children = recentFiles(subdir, now: now, predicate: { _ in true }).count
-        let reading = ClaudeTranscriptStatus.reading(in: entries)
-        let resolvedStatus = reading.status
-        let workingDirectory = entries.reversed().compactMap { string($0["cwd"]) }.first
-        let model = ClaudeTranscriptStatus.modelName(in: entries)
+        let children = recentFiles(subdir, now: now, predicate: { _ in true })
+            .count { child in
+                guard let childFacts = claudeFacts(child.url, modifiedAt: child.fileModifiedAt) else { return false }
+                return !childFacts.reading
+                    .resolved(inactiveFor: max(0, now.timeIntervalSince(child.modifiedAt)))
+                    .isSettled
+            }
+        let resolvedStatus = facts.reading.resolved(inactiveFor: max(0, now.timeIntervalSince(modifiedAt)))
+        let workingDirectory = facts.workingDirectory
+        let model = facts.model
         // A Claude transcript never records its window, so it is derived from
         // the model id and the session's own occupancy rather than assumed.
         let window = used.map { _ in
@@ -3155,47 +3374,28 @@ final class AgentSessionActivityStore: ObservableObject {
                      contextUsed: used, contextWindow: window, subagentCount: children,
                      projectName: projectName(for: workingDirectory), modelName: model,
                      workingDirectory: workingDirectory,
-                     planSummary: ClaudeTranscriptStatus.planSummary(in: entries))
+                     planSummary: facts.planSummary)
     }
 
     /// Codex shards transcripts by calendar date. Looking in just those recent
     /// folders avoids repeatedly traversing the user's entire CLI history.
-    private nonisolated static func recentCodexFiles(_ root: URL, since: Date, now: Date) -> [(url: URL, modifiedAt: Date)] {
-        let calendar = Calendar.autoupdatingCurrent
-        let days = max(0, Int(ceil(now.timeIntervalSince(since) / (24 * 60 * 60))))
-        var results: [(url: URL, modifiedAt: Date)] = []
-        for dayOffset in 0...days {
-            guard let day = calendar.date(byAdding: .day, value: -dayOffset, to: now) else { continue }
-            let components = calendar.dateComponents([.year, .month, .day], from: day)
-            guard let year = components.year, let month = components.month, let date = components.day else { continue }
-            let directory = root.appendingPathComponent(String(format: "%04d/%02d/%02d", year, month, date), isDirectory: true)
-            let files = (try? FileManager.default.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-                options: [.skipsHiddenFiles]
-            )) ?? []
-            let recent = files.compactMap { url -> (url: URL, modifiedAt: Date)? in
-                guard url.pathExtension == "jsonl",
-                      let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
-                      values.isRegularFile == true,
-                      let modifiedAt = values.contentModificationDate,
-                      modifiedAt >= since else { return nil }
-                return (url, modifiedAt)
-            }
-            results.append(contentsOf: recent)
-        }
-        return results
+    /// Codex rollouts, by when they were last written.
+    ///
+    /// Delegates to `AgentTranscriptFiles` rather than computing which
+    /// `YYYY/MM/DD` folders to open: a session created weeks ago and still
+    /// running lives in an old folder with a current mtime, and the folder-span
+    /// version could never see it. See that type for the full account.
+    private nonisolated static func recentCodexFiles(_ root: URL, since: Date, now: Date) -> [AgentTranscriptFiles.Entry] {
+        AgentTranscriptFiles.recent(in: root, since: since, now: now)
     }
 
-    private nonisolated static func recentFiles(_ root: URL, now: Date, predicate: (URL) -> Bool) -> [(url: URL, modifiedAt: Date)] {
-        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey], options: [.skipsHiddenFiles]) else { return [] }
-        return walker.compactMap { item -> (URL, Date)? in
-            guard let url = item as? URL, url.pathExtension == "jsonl", predicate(url),
-                  let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]), values.isRegularFile == true,
-                  let date = values.contentModificationDate,
-                  AgentSessionObservation.isWithinActiveWindow(date, now: now) else { return nil }
-            return (url, date)
-        }
+    private nonisolated static func recentFiles(_ root: URL, now: Date, predicate: (URL) -> Bool) -> [AgentTranscriptFiles.Entry] {
+        AgentTranscriptFiles.recent(
+            in: root,
+            since: now.addingTimeInterval(-AgentSessionObservation.activeFileWindow),
+            now: now,
+            matching: predicate
+        )
     }
     private nonisolated static func read(_ url: URL, limit: Int, tail: Bool) -> Data? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }; defer { try? handle.close() }

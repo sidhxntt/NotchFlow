@@ -18,6 +18,15 @@ public struct AgentTranscriptReading: Equatable, Sendable {
     }
 
     public var status: AgentSessionStatus { activity.resolved(terminal: terminal) }
+
+    /// Reapply the clock to facts parsed from an unchanged transcript. An
+    /// unfinished turn can age into an interruption without the JSONL bytes
+    /// changing, so a file cache must never cache `status` alone.
+    public func resolved(inactiveFor idle: TimeInterval) -> AgentSessionStatus {
+        activity.resolved(terminal: terminal ?? AgentSessionTerminal.inferred(
+            completed: false, aborted: false, inactiveFor: idle
+        ))
+    }
 }
 
 /// Reads session status out of a Claude Code JSONL transcript.
@@ -51,12 +60,28 @@ public enum ClaudeTranscriptStatus {
 
     private static let interruptionMarker = "[Request interrupted by user]"
 
-    public static func reading(in data: Data) -> AgentTranscriptReading {
-        reading(in: entries(in: data))
+    /// Wrappers the CLI puts around its own chrome, which it records as `user`
+    /// entries even though the user never said them and the model is never asked
+    /// to reply.
+    ///
+    /// This matters because running a purely local slash command — `/model`,
+    /// `/clear` — appends `<command-name>` and `<local-command-stdout>` records
+    /// and touches the file. Read as prompts, they left an idle session claiming
+    /// to be Working: the model appeared to owe an answer to something that was
+    /// never a question.
+    private static let localCommandWrappers = [
+        "<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>",
+        "<command-name>", "<command-message>", "<command-args>"
+    ]
+
+    public static func reading(in data: Data, inactiveFor idle: TimeInterval = 0) -> AgentTranscriptReading {
+        reading(in: entries(in: data), inactiveFor: idle)
     }
 
-    public static func reading(in entries: [[String: Any]]) -> AgentTranscriptReading {
-        AgentTranscriptReading(activity: activity(in: entries), terminal: terminal(in: entries))
+    public static func reading(in entries: [[String: Any]],
+                               inactiveFor idle: TimeInterval = 0) -> AgentTranscriptReading {
+        AgentTranscriptReading(activity: activity(in: entries),
+                               terminal: terminal(in: entries, inactiveFor: idle))
     }
 
     /// The session id, taken from the newest entry that carries one. Not every
@@ -173,12 +198,13 @@ public enum ClaudeTranscriptStatus {
     /// Whether the newest turn has settled. Read from the last entry that says
     /// anything about the turn, ignoring the bookkeeping records appended after
     /// it.
-    private static func terminal(in entries: [[String: Any]]) -> AgentSessionTerminal? {
+    private static func terminal(in entries: [[String: Any]],
+                                 inactiveFor idle: TimeInterval) -> AgentSessionTerminal? {
         guard let signal = entries.reversed().lazy.compactMap(turnSignal).first else { return nil }
         return AgentSessionTerminal.inferred(
             completed: signal == .turnEnded || signal == .assistantAnswer,
             aborted: signal == .userInterrupted,
-            inactiveFor: 0)
+            inactiveFor: idle)
     }
 
     private static func turnSignal(_ item: [String: Any]) -> TurnSignal? {
@@ -186,6 +212,11 @@ public enum ClaudeTranscriptStatus {
         case "assistant":
             return toolNames(in: item).isEmpty ? .assistantAnswer : .assistantAwaitingTool
         case "user":
+            // Injected context and the CLI's own chrome say nothing about whether
+            // a turn is under way, so they are not signals at all — skipping them
+            // lets the real signal underneath decide.
+            if item["isMeta"] as? Bool == true { return nil }
+            if isLocalCommandChrome(item) { return nil }
             return containsInterruption(item) ? .userInterrupted : .userTurn
         case "system":
             let subtype = item["subtype"] as? String
@@ -193,6 +224,13 @@ public enum ClaudeTranscriptStatus {
         default:
             return nil
         }
+    }
+
+    private static func isLocalCommandChrome(_ item: [String: Any]) -> Bool {
+        guard let message = item["message"] as? [String: Any],
+              let text = message["content"] as? String else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return localCommandWrappers.contains { trimmed.hasPrefix($0) }
     }
 
     private static func toolNames(in item: [String: Any]) -> [String] {
@@ -296,12 +334,25 @@ public enum CodexTranscriptStatus {
         return Array(entries[start...])
     }
 
-    public static func terminal(in entries: [[String: Any]]) -> AgentSessionTerminal? {
+    /// The two turn-terminal facts a rollout records, separated from the clock.
+    ///
+    /// Kept apart because they are cacheable and the clock is not: these come
+    /// from the file's bytes and only change when it is rewritten, whereas
+    /// whether a turn has *stalled* depends on how long ago that was. A scanner
+    /// that re-reads a large rollout every half second only to re-derive the
+    /// same two booleans is doing all of the work and none of the thinking.
+    public static func signals(in entries: [[String: Any]]) -> (completed: Bool, aborted: Bool) {
         let turn = activeTurn(in: entries)
-        return AgentSessionTerminal.inferred(
-            completed: turn.contains { event($0, is: "task_complete") },
-            aborted: turn.contains { event($0, is: "turn_aborted") },
-            inactiveFor: 0)
+        return (completed: turn.contains { event($0, is: "task_complete") },
+                aborted: turn.contains { event($0, is: "turn_aborted") })
+    }
+
+    public static func terminal(in entries: [[String: Any]],
+                                inactiveFor idle: TimeInterval = 0) -> AgentSessionTerminal? {
+        let found = signals(in: entries)
+        return AgentSessionTerminal.inferred(completed: found.completed,
+                                             aborted: found.aborted,
+                                             inactiveFor: idle)
     }
 
     /// Plan mode, from the newest two distinct `collaboration_mode` values.
@@ -317,8 +368,10 @@ public enum CodexTranscriptStatus {
         return .working
     }
 
-    public static func reading(in entries: [[String: Any]]) -> AgentTranscriptReading {
-        AgentTranscriptReading(activity: activity(in: entries), terminal: terminal(in: entries))
+    public static func reading(in entries: [[String: Any]],
+                               inactiveFor idle: TimeInterval = 0) -> AgentTranscriptReading {
+        AgentTranscriptReading(activity: activity(in: entries),
+                               terminal: terminal(in: entries, inactiveFor: idle))
     }
 
     private static func event(_ item: [String: Any], is kind: String) -> Bool {

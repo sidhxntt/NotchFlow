@@ -44,6 +44,7 @@
 		A100AA03 /* AgentModelContextWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA04 /* AgentModelContextWindow.swift */; };
 		A100AA05 /* RestingNotchPriority.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA06 /* RestingNotchPriority.swift */; };
 		A100AA07 /* AlertBannerText.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA08 /* AlertBannerText.swift */; };
+		A100AA09 /* AgentTranscriptFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA10 /* AgentTranscriptFiles.swift */; };
 		A1001802 /* AgentApprovalQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001803 /* AgentApprovalQueue.swift */; };
 		A1001804 /* ClaudeHookBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001805 /* ClaudeHookBridge.swift */; };
 		A1001806 /* ClaudeHookPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001807 /* ClaudeHookPayload.swift */; };
@@ -150,6 +151,7 @@
 		A100AA04 /* AgentModelContextWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AgentModelContextWindow.swift; sourceTree = "<group>"; };
 		A100AA06 /* RestingNotchPriority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/RestingNotchPriority.swift; sourceTree = "<group>"; };
 		A100AA08 /* AlertBannerText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AlertBannerText.swift; sourceTree = "<group>"; };
+		A100AA10 /* AgentTranscriptFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AgentTranscriptFiles.swift; sourceTree = "<group>"; };
 		A1001803 /* AgentApprovalQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AgentApprovalQueue.swift; sourceTree = "<group>"; };
 		A1001805 /* ClaudeHookBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeHookBridge.swift; sourceTree = "<group>"; };
 		A1001807 /* ClaudeHookPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/ClaudeHookPayload.swift; sourceTree = "<group>"; };
@@ -312,6 +314,7 @@
 				A1001022 /* NotchQuickUtilitiesView.swift */,
 				A1001024 /* FocusTimerStore.swift */,
 				A1001803 /* AgentApprovalQueue.swift */,
+				A100AA10 /* AgentTranscriptFiles.swift */,
 				A100AA06 /* RestingNotchPriority.swift */,
 				A100AA08 /* AlertBannerText.swift */,
 				A100AA04 /* AgentModelContextWindow.swift */,
@@ -521,6 +524,7 @@
 				A1000790 /* CodexCLIService.swift in Sources */,
 				A1001800 /* CodexAppServerBridge.swift in Sources */,
 				A1001802 /* AgentApprovalQueue.swift in Sources */,
+				A100AA09 /* AgentTranscriptFiles.swift in Sources */,
 				A100AA05 /* RestingNotchPriority.swift in Sources */,
 				A100AA07 /* AlertBannerText.swift in Sources */,
 				A100AA03 /* AgentModelContextWindow.swift in Sources */,

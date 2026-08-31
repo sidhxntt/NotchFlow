@@ -22,6 +22,10 @@ final class OnboardingService: ObservableObject {
     /// Whether the intro animation should play at launch. Cleared the moment it
     /// has run (or been skipped) — it never leads twice.
     @Published private(set) var showIntro: Bool
+    /// The first run also names the macOS capabilities the app cannot infer or
+    /// request silently. It is intentionally informational: TCC prompts stay
+    /// attached to the action that needs them.
+    @Published private(set) var shouldShowPermissionBriefing: Bool
 
     /// The key recording that the intro has played.
     private let introDoneKey = "onboarding_intro_done"
@@ -31,6 +35,7 @@ final class OnboardingService: ObservableObject {
     /// long-time user with a first-launch animation.
     private let legacyOpenedKey = "onboarding_opened_once"
     private let legacyGuideKey = "onboarding_guide_done"
+    private let permissionBriefingDoneKey = "onboarding_permission_briefing_done"
 
     /// Debug switch: when on, the intro plays at every launch and never records
     /// "done", so it can be inspected any number of times. Off by default. Flip it
@@ -54,6 +59,7 @@ final class OnboardingService: ObservableObject {
             || defaults.bool(forKey: legacyOpenedKey)
             || defaults.bool(forKey: legacyGuideKey)
         showIntro = Self.alwaysShow || !alreadyRun
+        shouldShowPermissionBriefing = !alreadyRun && !defaults.bool(forKey: permissionBriefingDoneKey)
     }
 
     /// Record that the intro has played (or been skipped), so it never leads
@@ -63,5 +69,11 @@ final class OnboardingService: ObservableObject {
         showIntro = false
         guard !Self.alwaysShow else { return }
         UserDefaults.standard.set(true, forKey: introDoneKey)
+    }
+
+    func markPermissionBriefingShown() {
+        shouldShowPermissionBriefing = false
+        guard !Self.alwaysShow else { return }
+        UserDefaults.standard.set(true, forKey: permissionBriefingDoneKey)
     }
 }

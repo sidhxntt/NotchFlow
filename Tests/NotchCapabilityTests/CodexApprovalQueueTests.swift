@@ -25,6 +25,43 @@ final class CodexApprovalQueueTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(CodexTerminalHookRequest.decode(payload)).approval.threadID, "terminal-thread")
     }
 
+    func testAgentNotchCompatibleClaudeGateUsesTheClaudeApprovalSource() throws {
+        let payload = Data("""
+        {"v":1,"source":"claude","action":"gate","session_id":"claude-terminal-thread","tool_name":"Bash","detail":"npm test"}
+        """.utf8)
+
+        let request = try XCTUnwrap(CodexTerminalHookRequest.decode(payload))
+        XCTAssertEqual(request.approval.threadID, "claude-terminal-thread")
+        XCTAssertEqual(request.approval.source, .claude)
+        XCTAssertEqual(request.approval.title, "npm test")
+    }
+
+    func testGlobalHookConfigFindsAndRepairsOnlyStaleQuotedNotchFlowClaudeCommands() {
+        let oldCommand = "python3 '/Users/me/Library/Application Support/NotchFlow/ClaudeHook/claude-hook.py'"
+        let config: [String: Any] = [
+            "hooks": [
+                "PreToolUse": [["command": oldCommand]],
+                "PostToolUse": [["command": "echo untouched"]]
+            ]
+        ]
+        let expected = "/Users/me/Library/Application Support/NotchFlow/ClaudeHook/current-hook.py"
+
+        XCTAssertEqual(HookConfigurationRepair.staleClaudeCommands(in: config,
+                                                                    expectedScriptPath: expected),
+                       [oldCommand])
+
+        let repaired = HookConfigurationRepair.repairingStaleClaudeCommands(in: config,
+                                                                              expectedScriptPath: expected)
+        XCTAssertEqual(repaired.replacements, 1)
+        XCTAssertTrue(HookConfigurationRepair.staleClaudeCommands(in: repaired.value,
+                                                                   expectedScriptPath: expected).isEmpty)
+        XCTAssertEqual((repaired.value as? [String: Any])?["hooks"] as? [String: [[String: String]]],
+                       [
+                        "PreToolUse": [["command": "python3 '\(expected)'" ]],
+                        "PostToolUse": [["command": "echo untouched"]]
+                       ])
+    }
+
     func testNotificationDecodesWithoutARequestID() {
         let payload = Data("""
         {"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-1","turn":{"status":"completed"}}}

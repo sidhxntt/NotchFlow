@@ -77,6 +77,27 @@ final class CallWindowWatcher {
 
     // MARK: - Sweep
 
+    /// macOS can return an empty `AXWindows` array for an application until the
+    /// client has asked for it once. Prime only the known call applications at
+    /// launch, off the main actor, so the first incoming call is not sacrificed
+    /// to that otherwise invisible handshake.
+    func primeAccessibilityConnections() {
+        guard AXIsProcessTrusted() else { return }
+        let processIDs = NSWorkspace.shared.runningApplications.compactMap { app -> pid_t? in
+            guard Self.callApps.contains(app.bundleIdentifier ?? "") else { return nil }
+            return app.processIdentifier
+        }
+        guard !processIDs.isEmpty else { return }
+        Thread.detachNewThread {
+            for processID in processIDs {
+                let application = AXUIElementCreateApplication(processID)
+                AXUIElementSetMessagingTimeout(application, 0.25)
+                var ignored: CFTypeRef?
+                AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &ignored)
+            }
+        }
+    }
+
     /// Driven by the app's existing one-second capability tick, same as the
     /// banner sweep. Inert without Accessibility, and never prompts.
     func sweep() {

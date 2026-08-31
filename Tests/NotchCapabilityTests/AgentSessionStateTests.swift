@@ -250,6 +250,13 @@ func longRunningTranscriptRetentionExceedsTheOldFiveMinuteCutoff() {
     #expect(!AgentSessionObservation.isWithinActiveWindow(now.addingTimeInterval(-25 * 60 * 60), now: now))
 }
 
+@Test("a future transcript date is not treated as indefinitely active")
+func futureTranscriptDateIsNotActive() {
+    let now = Date(timeIntervalSinceReferenceDate: 10_000_000)
+
+    #expect(!AgentSessionObservation.isWithinActiveWindow(now.addingTimeInterval(60), now: now))
+}
+
 @Test("only completed and Closed session cards are clearable")
 func onlyCompletedAndClosedSessionCardsAreClearable() {
     #expect(AgentSessionStatus.done.isClearable)
