@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AgentNotch}",
+            "name": "Debug NotchFlow",
+            "target": "NotchFlow",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug NotchFlow"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AgentNotch}",
+            "name": "Release NotchFlow",
+            "target": "NotchFlow",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release NotchFlow"
+        }
+    ]
+}

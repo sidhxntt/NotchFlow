@@ -1,0 +1,4304 @@
+import Foundation
+import AppKit
+
+/// Which local agent CLI an agent task runs on. All of them are the same compliant
+/// pattern — spawn the user's own official binary under their own sign-in — so
+/// the runner only differs in argv and JSONL dialect.
+enum AgentEngine: String, CaseIterable {
+    case codex
+    case claude
+    case grok
+    case commandCode
+    case pi
+
+    var displayName: String {
+        switch self {
+        case .codex:  return "Codex"
+        case .claude: return "Claude"
+        case .grok:   return "Grok"
+        case .commandCode: return "Command Code"
+        case .pi:     return "PI"
+        }
+    }
+
+    /// Installed + signed in, per the engine's own service.
+    var isAvailable: Bool {
+        switch self {
+        case .codex:  return CodexCLIService.isAvailable
+        case .claude: return ClaudeCLIService.isAvailable
+        case .grok:   return GrokCLIService.isAvailable
+        case .commandCode: return CommandCodeCLIService.isAvailable
+        case .pi:     return PiCLIService.isAvailable
+        }
+    }
+
+    /// Whether this engine's availability answer is FINAL, rather than the
+    /// placeholder "no" a probe still in flight reports. `isAvailable` has to
+    /// answer instantly from `body`, so on a cold cache it says `false` for every
+    /// engine whose binary hasn't resolved yet — Command Code's probe is a Node
+    /// cold start, ~2s after launch.
+    var isAvailabilityResolved: Bool {
+        switch self {
+        case .codex:  return CodexCLIService.isAvailabilityResolved
+        case .claude: return ClaudeCLIService.isAvailabilityResolved
+        case .grok:   return GrokCLIService.isAvailabilityResolved
+        case .commandCode: return CommandCodeCLIService.isAvailabilityResolved
+        case .pi:     return PiCLIService.isAvailabilityResolved
+        }
+    }
+
+    /// Known dead — resolved, and the answer was no. The ONLY safe trigger for
+    /// dropping a remembered engine and the model pick under it: `!isAvailable`
+    /// alone is true during every launch's probe window, and acting on it there
+    /// is how a relaunch used to silently reset the armed model to the first
+    /// engine's default.
+    var isKnownUnavailable: Bool { isAvailabilityResolved && !isAvailable }
+
+    /// Image input is wired only for the CLIs that expose a real headless image
+    /// transport: Codex uses `-i`, while Claude accepts vision blocks through
+    /// stream-json. The other runners must leave an image paste to AppKit instead
+    /// of showing an attachment they would silently drop.
+    var supportsImageInput: Bool {
+        self == .codex || self == .claude
+    }
+
+    /// The terminal command that picks this engine's session back up. Neither
+    /// CLI is spawned with `--ephemeral` / `--no-session-persistence`, so a run
+    /// Notch lost track of (quit, crash) is still resumable by hand — the
+    /// interrupted run's Recent row hands the user the exact line.
+    func resumeCommand(session: String) -> String {
+        switch self {
+        case .codex:  return "codex resume \(session)"
+        case .claude: return "claude --resume \(session)"
+        case .grok:   return "grok --resume \(session)"
+        // A headless Command Code session is hidden from the interactive picker but
+        // opens fine when its id is named outright.
+        case .commandCode: return "cmd --resume \(session)"
+        // pi looks a session up by id within the folder it ran in, so this line is
+        // only exact when the user runs it from that folder — same as the others.
+        case .pi:     return "pi --session \(session)"
+        }
+    }
+
+    /// The engines the app offers — every case except the retired `.commandCode`
+    /// (see `CommandCodeCLIService.isRetired`). The case stays so past agent rows
+    /// still decode and draw their engine; it is simply never listed again.
+    static let offered: [AgentEngine] = allCases.filter { $0 != .commandCode }
+
+    /// The engines that can actually run right now — drives the entry button
+    /// (any) and the armed line's engine chip (a toggle only when both).
+    static var available: [AgentEngine] { offered.filter(\.isAvailable) }
+
+    /// The engine to arm by default: the last one used, if it's still available,
+    /// else whichever is. Persisted whenever the armed engine changes.
+    private static let defaultsKey = "agentEngine"
+    static var preferred: AgentEngine? {
+        if let stored = storedPreference, stored.isAvailable { return stored }
+        return available.first
+    }
+    /// The raw remembered choice, with NO availability probe — safe to read on
+    /// the main thread at model init (`isAvailable` shells out on a cold cache).
+    static var storedPreference: AgentEngine? {
+        UserDefaults.standard.string(forKey: defaultsKey).flatMap(AgentEngine.init)
+    }
+    static func rememberPreference(_ engine: AgentEngine) {
+        UserDefaults.standard.set(engine.rawValue, forKey: defaultsKey)
+    }
+
+    /// This engine's entries in the armed row's model menu — named models only,
+    /// no "CLI default" rung (a bare "Default" says nothing about what you'd
+    /// get). Codex's pinnable ids come from the account's own `model/list`
+    /// (fetched and cached by `CodexCLIService` at launch) — never hardcoded,
+    /// because Codex has no rolling aliases and a retired id 404s the whole run.
+    /// Claude's are the CLI's documented rolling aliases (they always point at
+    /// the current lineup), since the Claude CLI has no model-list command to
+    /// query. Codex keeps ONE fallback entry when that list hasn't landed
+    /// (`id == nil` → the CLI's own default): the menu is also the only way to
+    /// arm an engine, so an available engine must never have an empty section.
+    var modelChoices: [AgentModelChoice] {
+        switch self {
+        case .codex:
+            let listed = CodexCLIService.listedModels.map {
+                AgentModelChoice(engine: self, id: $0.id, label: $0.displayName)
+            }
+            return listed.isEmpty
+                ? [AgentModelChoice(engine: self, id: nil, label: displayName)]
+                : listed
+        case .claude:
+            // The rolling aliases stay the pickable ids (they're what `--model`
+            // takes), but each label names the CONCRETE model the alias points
+            // at today — "Claude Opus 4.8", probed from the CLI and cached by
+            // `ClaudeCLIService` — because a bare family word names a shelf,
+            // not a model. Falls back to the family word until a probe lands.
+            let resolved = ClaudeCLIService.resolvedModels
+            return [("fable", "Claude Fable"), ("opus", "Claude Opus"),
+                    ("sonnet", "Claude Sonnet")].map { alias, fallback in
+                AgentModelChoice(
+                    engine: self, id: alias,
+                    label: resolved[alias].map(ClaudeCLIService.displayName(forResolved:))
+                        ?? fallback)
+            }
+        case .grok:
+            // Grok's models come from the CLI's own cache (see `GrokCLIService`),
+            // labelled with the cache's display names ("Grok 4.5" — the id's bare
+            // version tail says nothing in the list). An empty cache → the one
+            // flag-less default entry (an available engine must never have an
+            // empty section, since the menu is the only way to arm it).
+            let listed = GrokCLIService.listedModels
+            if listed.isEmpty {
+                return [AgentModelChoice(engine: self, id: nil, label: displayName)]
+            }
+            return listed.map {
+                AgentModelChoice(engine: self, id: $0.id, label: $0.displayName)
+            }
+        case .commandCode:
+            // Command Code's catalog is the widest of the four (an aggregator: ~50
+            // models across a dozen labs), read from the CLI itself — see
+            // `CommandCodeCLIService`. Same empty-cache fallback as Grok's: an
+            // available engine must never have an empty section.
+            let listed = CommandCodeCLIService.listedModels
+            if listed.isEmpty {
+                return [AgentModelChoice(engine: self, id: nil, label: displayName)]
+            }
+            return listed.map {
+                AgentModelChoice(engine: self, id: $0.id, label: $0.displayName)
+            }
+        case .pi:
+            // pi's catalog is the widest of the five, because it is not one account's
+            // lineup but every provider the user has signed pi into — read from the
+            // CLI itself (see `PiCLIService`). Same empty-catalog fallback as the
+            // other two: an available engine must never have an empty section.
+            let listed = PiCLIService.listedModels
+            if listed.isEmpty {
+                return [AgentModelChoice(engine: self, id: nil, label: displayName)]
+            }
+            return listed.map {
+                AgentModelChoice(engine: self, id: $0.id, label: $0.displayName)
+            }
+        }
+    }
+}
+
+/// One pickable model for an agent run. The armed row's model chip mixes
+/// every available engine's entries into a single menu — choosing a model
+/// chooses its engine with it. `id == nil` is the engine's own CLI-config
+/// default (no model flag passed at all).
+struct AgentModelChoice: Hashable {
+    let engine: AgentEngine
+    /// The value for the engine's model flag (`-m` / `--model`); nil = default.
+    let id: String?
+    /// The menu / chip title. A nil-id entry (Codex before its model list lands)
+    /// carries the plain engine name.
+    let label: String
+}
+
+/// Reasoning effort for an agent run — the armed row's third chip. `nil`
+/// (no selection) leaves both CLIs on their own defaults. The full ladder both
+/// CLIs speak today; which rungs the menu actually offers comes from
+/// `AgentEngine.effortChoices(forModelID:)`, since they differ per engine
+/// and (for Codex) per model.
+enum AgentEffort: String, CaseIterable {
+    case low, medium, high, xhigh, max, ultra
+}
+
+extension AgentEngine {
+    /// The effort levels pickable for a run on this engine + model pick — see
+    /// `AgentEffortCatalog` for where each engine's answer comes from and why a
+    /// hardcoded ladder isn't one.
+    func effortChoices(forModelID modelID: String?) -> [AgentEffort] {
+        AgentEffortCatalog.choices(engine: self, modelID: modelID)
+    }
+}
+
+/// Which `--effort` levels an engine+model actually accepts.
+///
+/// This used to be three hardcoded ladders, and the Command Code one was wrong in
+/// a way that **killed runs**: the CLI doesn't ignore a level it doesn't take, it
+/// refuses the whole task before doing any work —
+/// `Unknown effort "low". Supported: high, max.` Measured against the installed
+/// CLI (v1.26.0, 55 models), the old `[.low, .medium, .high]` guess was right for
+/// 7 of them; 29 accept no effort flag at all, and the CLI's own default model
+/// (`deepseek/deepseek-v4-flash`) takes only `high`/`max` — which is exactly the
+/// combination a fresh install hit.
+///
+/// The sets aren't even a ladder, so "clamp to the nearest rung" is no fix either:
+/// `qwen/qwen3.8-max` takes `xhigh` but not `high`, `zai-org/glm-5.3` skips
+/// `medium`. The only correct answer is the real set, so it comes from three
+/// layers, most authoritative first:
+///
+///  1. **The installed binary** (`CommandCodeCLIService.effortLevels`) — a 1.3s
+///     probe that spends no tokens, cached against the CLI's fingerprint. Only
+///     the build on this Mac can answer for the build on this Mac, and Command
+///     Code updates itself in the background, so no table we ship or serve can
+///     know which build a given user is on.
+///  2. **The remote manifest** (`RemoteModelManifest.efforts`) — the maintained
+///     table on the website, so a CLI release that moves a model's set is fixed
+///     without shipping an app update. It can also be told to *outrank* the probe
+///     per engine (`effortsOverride`), which is the lever for a probe that has
+///     started misreading the binary — off by default, since a probe that simply
+///     fails already falls through to here.
+///  3. **The bundled table below** — the same measurement baked in, so a fresh
+///     offline install is already right.
+///
+/// That order is the one this app already uses for models: the vendor's own live
+/// catalog supersedes the manifest, which supersedes the bundled spec
+/// (`RemoteModelManifest`). The probe is the live catalog of this seam.
+///
+/// A model no layer knows offers **no rungs at all** (Default only, no `--effort`
+/// sent). That is deliberate: sending an unverified level risks the run, and the
+/// upside is one menu entry. The probe fills the menu in a second or so.
+enum AgentEffortCatalog {
+    static func choices(engine: AgentEngine, modelID: String?) -> [AgentEffort] {
+        switch engine {
+        case .codex:
+            // Codex publishes the answer itself — each model's own
+            // `supportedReasoningEfforts` from the app-server's `model/list` — so
+            // it needs no table. For the default pick (`modelID == nil`) that's
+            // the account-default model's set.
+            let models = CodexCLIService.listedModels
+            let picked = modelID.flatMap { id in models.first { $0.id == id } }
+                ?? models.first(where: \.isDefault) ?? models.first
+            // Until that list lands, the lowest common denominator every Codex
+            // model accepts — unchanged from before, and safe because Codex is one
+            // vendor's own lineup rather than an aggregator's.
+            guard let picked else { return [.low, .medium, .high] }
+            return picked.efforts.compactMap(AgentEffort.init)
+        case .commandCode:
+            // The one aggregator, and the one that hard-errors: ask the binary,
+            // and kick a probe when it hasn't been asked about this model yet.
+            let id = modelID ?? CommandCodeCLIService.defaultModel
+            // The remote kill switch, normally off — see
+            // `RemoteModelManifest.effortsOverridesProbe` for why the probe leads
+            // by default (it's the only layer that can't be wrong about which CLI
+            // build the user is actually running).
+            if RemoteModelManifest.effortsOverridesProbe(engine: engine.rawValue),
+               let curated = manifest(engine: engine, model: id) {
+                return curated
+            }
+            if let probed = CommandCodeCLIService.effortLevels(for: modelID) {
+                return probed.compactMap(AgentEffort.init)
+            }
+            CommandCodeCLIService.probeEfforts(for: modelID)
+            return manifest(engine: engine, model: id)
+                ?? bundledCommandCode[id]
+                ?? []
+        case .pi:
+            // The other aggregator, and the only one that answers this for free: its
+            // catalog carries a `thinking` column per model, so whether a pick takes
+            // a `--thinking` level is already known — no probe, no bundled table. The
+            // levels themselves are pi's own documented ladder, minus `off`/`minimal`
+            // (which are "don't think", not efforts). Still routed through the
+            // manifest first, so a wrong rung stays a website edit.
+            let id = modelID ?? PiCLIService.defaultModel
+            if let curated = manifest(engine: engine, model: id) { return curated }
+            guard PiCLIService.supportsThinking(modelID) else { return [] }
+            return [.low, .medium, .high, .xhigh, .max]
+        case .claude, .grok:
+            // Single-vendor CLIs with a documented, stable ladder (claude's
+            // `--effort`, grok's `--reasoning-effort`). Left as the documented set,
+            // but routed through the manifest first so a wrong rung is a website
+            // edit rather than a release.
+            let id = modelID ?? ""
+            return manifest(engine: engine, model: id)
+                ?? [.low, .medium, .high, .xhigh, .max]
+        }
+    }
+
+    /// The maintained table's answer for this engine+model, mapped into the cases
+    /// this app knows. An entry that exists but is empty means "no effort flag" and
+    /// is returned as such — only a *missing* entry falls through to the next layer.
+    private static func manifest(engine: AgentEngine, model: String) -> [AgentEffort]? {
+        guard let levels = RemoteModelManifest.efforts(engine: engine.rawValue, model: model)
+        else { return nil }
+        return levels.compactMap(AgentEffort.init)
+    }
+
+    /// Command Code's table as measured against CLI v1.26.0 — the offline seed for
+    /// layers 2 and 3 above. Grouped by set rather than listed per model, because
+    /// that is how it reads: a whole vendor's rows usually move together.
+    ///
+    /// Regenerate by probing the installed CLI, which costs no tokens and answers
+    /// in ~1.3s per model:
+    ///
+    ///     cmd -p hi -m <id> --effort __probe__ --no-auto-update --skip-onboarding
+    private static let bundledCommandCode: [String: [AgentEffort]] = {
+        let groups: [([AgentEffort], [String])] = [
+            ([.low, .medium, .high, .xhigh, .max], [
+                "claude-sonnet-5", "claude-sonnet-4-6",
+                "claude-fable-5", "claude-opus-5",
+                "claude-opus-4-8", "claude-opus-4-7",
+                "gpt-5.6-sol", "gpt-5.6-terra",
+                "gpt-5.6-luna"]),
+            ([.low, .medium, .high, .xhigh], [
+                "gpt-5.5", "gpt-5.4",
+                "gpt-5.3-codex", "xai/grok-4.6"]),
+            ([.low, .medium, .high], [
+                "gpt-5.4-mini", "google/gemini-3.7-flash",
+                "google/gemini-3.6-flash", "google/gemini-3.5-flash",
+                "google/gemini-3.5-flash-lite", "google/gemini-3.1-flash-lite",
+                "xai/grok-4.5"]),
+            ([.high, .max], [
+                "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash",
+                "zai-org/glm-5.2"]),
+            ([.low, .high, .max], ["zai-org/glm-5.3"]),
+            ([.low, .medium, .xhigh], ["qwen/qwen3.8-max"]),
+            ([.high, .xhigh], ["sakana/fugu-ultra"]),
+            // No adjustable reasoning effort — over half the fleet. The CLI says so
+            // in as many words ("<Model> has no adjustable reasoning effort.").
+            ([], [
+                "moonshotai/kimi-k3", "moonshotai/kimi-k2.7-code",
+                "moonshotai/kimi-k2.7-code-highspeed", "moonshotai/kimi-k2.6",
+                "moonshotai/kimi-k2.5", "zai-org/glm-5.2-fast",
+                "zai-org/glm-5.1", "zai-org/glm-5",
+                "minimaxai/minimax-m3", "minimaxai/minimax-m2.7",
+                "minimaxai/minimax-m2.5", "xiaomi/mimo-v2.5-pro",
+                "xiaomi/mimo-v2.5", "qwen/qwen3.7-max",
+                "qwen/qwen3.7-plus", "qwen/qwen3.7-flash",
+                "qwen/qwen3.6-max-preview", "qwen/qwen3.6-plus",
+                "stepfun/step-3.7-flash", "stepfun/step-3.5-flash",
+                "tencent/hy3-paid", "nvidia/nemotron-3-ultra-550b-a55b",
+                "thinkingmachines/inkling", "thinkingmachines/inkling-small",
+                "poolside/laguna-s-2.1-free", "claude-haiku-4-5",
+                "meta/muse-spark-1.1", "meta/muse-spark-1.2",
+                "meta/muse-spark-1.2-contributor"]),
+        ]
+        var out: [String: [AgentEffort]] = [:]
+        for (levels, ids) in groups {
+            for id in ids { out[id] = levels }
+        }
+        return out
+    }()
+}
+
+/// One step in an agent run's work trail: a tool call the agent made — the
+/// input line ("$ npm test", "Editing Foo.swift", "Searching …") plus, once the tool's
+/// result event lands, its output. Narration the agent emits between tool calls
+/// is an entry too (`mono == false`). Feeds the task card's expandable detail
+/// view; the one-line `activity` ticker stays the collapsed summary.
+struct AgentLogEntry: Identifiable, Equatable, Codable {
+    /// How the row is drawn. `plain` is the historical shape — a command, a file,
+    /// a paragraph of narration; the rest earn a rendering of their own, and each
+    /// owns its `detail` (a tool result never overwrites it — see `applyProgress`).
+    enum Kind: String, Codable {
+        case plain
+        /// The model's own reasoning, folded away behind a "Thinking" line.
+        case thinking
+        /// `detail` holds a patch — drawn line-coloured (`AgentDiff`).
+        case diff
+        /// `detail` holds an encoded checklist — drawn as one (`AgentTodo`).
+        case todo
+    }
+
+    let id: UUID
+    /// The input side: command / file / query / narration text. A streaming
+    /// block GROWS this in place as its deltas land, hence `var`.
+    var title: String
+    /// Terminal-ish entries (commands, files, queries) render monospaced;
+    /// narration reads as prose.
+    let mono: Bool
+    /// The output side, attached when the tool's result arrives. Capped at parse.
+    var detail: String? = nil
+    var kind: Kind = .plain
+
+    init(id: UUID, title: String, mono: Bool,
+         detail: String? = nil, kind: Kind = .plain) {
+        self.id = id
+        self.title = title
+        self.mono = mono
+        self.detail = detail
+        self.kind = kind
+    }
+
+    /// Hand-written purely for `kind`: synthesized decoding ignores a property's
+    /// default value and throws on a missing key, so every record archived before
+    /// this field existed would fail to decode. Absent → `.plain`, which is what
+    /// those rows were.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id     = try c.decode(UUID.self, forKey: .id)
+        title  = try c.decode(String.self, forKey: .title)
+        mono   = try c.decode(Bool.self, forKey: .mono)
+        detail = try c.decodeIfPresent(String.self, forKey: .detail)
+        kind   = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .plain
+    }
+}
+
+extension Array where Element == AgentLogEntry {
+    /// The work trail with its trailing narration entry dropped when that entry
+    /// only repeats the `answer` rendered directly beneath it.
+    ///
+    /// The agent's final assistant message is captured twice by design: the stream
+    /// parser can't tell mid-run which text block is the last, so every narration
+    /// block becomes a trail entry AND the last one also becomes the round's answer
+    /// (`finalMessage`). Any view that stacks the trail above the answer therefore
+    /// printed the report twice (the "回答内容重复展示"). Drop it here, where both
+    /// halves are known. Only a non-mono (narration) tail entry is eligible — a tool
+    /// row (`mono`) is never the answer — and only when the answer begins with its
+    /// (prefix-capped, whitespace-trimmed) title. Pass an empty `answer` (e.g. while
+    /// the round still streams and no report shows yet) to keep the trail whole.
+    func droppingTrailingAnswer(_ answer: String) -> [AgentLogEntry] {
+        // Only a NARRATION tail can be the answer: a tool row (`mono`) never is,
+        // and neither is a folded reasoning block or a plan, whose text could
+        // otherwise coincidentally prefix-match and vanish.
+        guard let last, !last.mono, last.kind == .plain else { return self }
+        let title = last.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !body.isEmpty, body.hasPrefix(title) else { return self }
+        return Array(dropLast())
+    }
+}
+
+/// The patch a file-editing tool call is about to apply, built from the call's
+/// OWN arguments (every CLI hands over the before/after text; none of them ship
+/// a rendered diff). One `-`/`+` line per changed line, context dropped — the
+/// work trail wants "what changed", not a reviewable hunk.
+///
+/// Deliberately not a real LCS diff: an Edit's `old_string`/`new_string` are
+/// already the minimal region the model chose to rewrite, so line-for-line is
+/// both honest and cheap. The row's own title carries the ± counts.
+enum AgentDiff {
+    /// Cap per patch — a whole-file `Write` can be thousands of lines, and the
+    /// row is a peek, not the file.
+    private static let lineCap = 400
+
+    /// A replacement: every old line as `-`, every new line as `+`.
+    static func replacement(old: String, new: String) -> String {
+        lines(old, "-") + (old.isEmpty || new.isEmpty ? "" : "\n") + lines(new, "+")
+    }
+
+    /// A whole-file write: every line as `+`.
+    static func addition(_ content: String) -> String { lines(content, "+") }
+
+    /// Several replacements in one call (claude's `MultiEdit`), blank-separated.
+    static func combined(_ patches: [String]) -> String {
+        patches.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    private static func lines(_ text: String, _ sign: String) -> String {
+        guard !text.isEmpty else { return "" }
+        let all = text.components(separatedBy: "\n")
+        let kept = all.prefix(lineCap).map { sign + $0 }
+        guard all.count > lineCap else { return kept.joined(separator: "\n") }
+        return (kept + ["… \(all.count - lineCap) more lines"]).joined(separator: "\n")
+    }
+
+    /// `(+added, −removed)` for a patch this type built — what the row's title
+    /// reports beside the file name.
+    static func counts(_ patch: String) -> (added: Int, removed: Int) {
+        var added = 0, removed = 0
+        for line in patch.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("+") { added += 1 }
+            else if line.hasPrefix("-") { removed += 1 }
+        }
+        return (added, removed)
+    }
+
+    /// "Editing Foo.swift  +12 −3" — the row title for a patch. An empty patch
+    /// (a tool whose arguments didn't carry the text) keeps the bare title.
+    static func title(_ base: String, patch: String) -> String {
+        let (added, removed) = counts(patch)
+        guard added + removed > 0 else { return base }
+        var suffix = ""
+        if added > 0 { suffix += "  +\(added)" }
+        if removed > 0 { suffix += (added > 0 ? " " : "  ") + "−\(removed)" }
+        return base + suffix
+    }
+}
+
+/// The agent's own plan (claude's `TodoWrite`, codex's `todo_list`, Command
+/// Code's `todo_write`), encoded into one string so it can ride an entry's
+/// `detail` without widening `AgentLogEntry`'s archive shape: one item per line,
+/// `[x]` done · `[>]` in progress · `[ ]` pending.
+enum AgentTodo {
+    enum Status: String { case done = "x", active = ">", pending = " " }
+
+    static func encode(_ items: [(text: String, status: Status)]) -> String {
+        items
+            .map { "[\($0.status.rawValue)] " + $0.text.replacingOccurrences(of: "\n", with: " ") }
+            .joined(separator: "\n")
+    }
+
+    static func decode(_ encoded: String) -> [(text: String, status: Status)] {
+        encoded.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
+            guard line.count > 4, line.hasPrefix("[") else { return nil }
+            let mark = line[line.index(line.startIndex, offsetBy: 1)]
+            let status = Status(rawValue: String(mark)) ?? .pending
+            return (String(line.dropFirst(4)), status)
+        }
+    }
+
+    /// "Plan · 2/7" — the row's headline, so a folded plan still reports progress.
+    static func title(_ items: [(text: String, status: Status)]) -> String {
+        L("agent.trail.plan", items.filter { $0.status == .done }.count, items.count)
+    }
+}
+
+/// Runs a **agent implementation task**: the user picks a folder, describes a
+/// task, and a local agent CLI (Codex or Claude Code — `AgentEngine`) works
+/// *in that folder* — reading and writing files — until it's done, then reports
+/// its result back (XII: agent-to-Codex).
+///
+/// This is deliberately a different animal from `CodexCLIService` (the chat
+/// backend), even though both shell out to the same `codex` binary:
+///  · **write access** — the chat runs `-s read-only` in a throwaway temp dir; a
+///    agent task runs `-s workspace-write -C <folder>` so Codex can actually
+///    implement things in the user's project. (Network stays off inside the
+///    sandbox — codex's own workspace-write default — so an unattended task can't
+///    reach out; it can still read/write every file under the folder.)
+///  · **lifetime** — a chat turn is seconds and dies with the panel; an agent
+///    task is minutes and must survive the panel closing, so the process is owned
+///    by this singleton, not by a view's stream. Closing the notch never cancels
+///    it — and neither does quitting the app: the CLI's output goes to a file,
+///    not a pipe, so the run keeps working unattended and the next launch
+///    re-attaches to it (`recoverInterruptedRuns`).
+///  · **user config** — the chat isolates itself (`--ignore-user-config`) for a
+///    fast predictable answer; an agent task *honors* the user's own codex
+///    setup (model, reasoning effort, skills), because capability matters more
+///    than latency here. The session is also persisted (no `--ephemeral`), so the
+///    user can pick the run up later with `codex resume` in a terminal.
+///
+/// Tasks run in parallel — submitting while others are working just spawns
+/// another process (same folder included, by explicit decision: the CLIs cope
+/// the way they do in a terminal). Each run owns its own process, parser and
+/// teardown; nothing is shared between runs. Progress (the current command /
+/// file edit) streams into its task's `activity` for the in-panel card;
+/// completion posts a native notification (the user has almost certainly
+/// walked away from a minutes-long task) and the result stays in `tasks`
+/// until dismissed.
+@MainActor
+final class AgentTaskManager: ObservableObject {
+    static let shared = AgentTaskManager()
+
+    /// Hard ceiling on a single agent run. Generous — real implementation
+    /// tasks take minutes — but bounded, so a hung codex can't spin forever.
+    private static let timeout: TimeInterval = 1800   // 30 min
+
+    /// How a finished task ended.
+    enum Outcome: Equatable { case success, failure, cancelled }
+
+    /// One settled round of a task: the prompt that kicked it off and the
+    /// answer it produced. A task accumulates one per follow-up — the full
+    /// conversation `recordAgentHistory` files into Recent.
+    struct AgentExchange: Equatable {
+        let prompt: String
+        let answer: String
+        /// The images pasted into this round, parked in the history image store at
+        /// spawn (filenames under `NotchModel.historyImagesDirectory`). They ride
+        /// into the Recent row `recordAgentHistory` files, so a task whose whole
+        /// description was a screenshot still reads as one when reopened.
+        var imageFiles: [String] = []
+        /// This round's slice of the work trail — the entries appended between
+        /// the round's spawn and its settle. Rides the round into its history
+        /// record, so a reopened run shows the same tool rows the live detail
+        /// page did.
+        var log: [AgentLogEntry] = []
+    }
+
+    /// One agent task, live or finished. The manager keeps every undismissed
+    /// task in `tasks`, in spawn order.
+    struct AgentTask: Equatable, Identifiable {
+        /// Fresh per run — except on a resume, which revives an interrupted run
+        /// under the id its Recent row already carries (see `resume`), so the row
+        /// it settles back into is the same one, not a fork. (A `var` purely so
+        /// the memberwise init can take it; nothing ever reassigns it.)
+        var id = UUID()
+        let engine: AgentEngine
+        /// The model this run actually rides — the armed row's explicit pick to
+        /// begin with, then overwritten by the id the CLI itself reports on its
+        /// session event, so a run on the CLI-config default still names a
+        /// concrete model in the detail's info line rather than "default".
+        var modelID: String? = nil
+        let folder: URL
+        /// The task description the run STARTED with. Follow-up prompts live in
+        /// `exchanges` (and in the work trail); this stays the card's headline.
+        let prompt: String
+        /// Reset on every round, so the elapsed clock (and "finished in …")
+        /// times the round, not the whole conversation.
+        var startedAt: Date
+        /// The CLI's own conversation handle — claude's `session_id` (init
+        /// event) / codex's `thread_id` (thread.started). Once known, the
+        /// settled card grows a follow-up input that resumes this session.
+        /// Re-captured every round: claude forks a NEW id on --resume.
+        var sessionID: String? = nil
+        /// Tokens occupying the model's context window after the latest turn
+        /// (input + cache reads/creation), from the CLI's own usage events.
+        var contextUsed: Int? = nil
+        /// The window those tokens sit in, when the CLI reports it (claude's
+        /// result event does; codex usually doesn't — absolute count only).
+        var contextWindow: Int? = nil
+        /// Every settled round so far, in order — the follow-up conversation.
+        var exchanges: [AgentExchange] = []
+        /// The latest activity line while running ("$ npm test", "Editing Foo.swift").
+        var activity: String? = nil
+        /// A state-changing tool that is still waiting for its result. This is
+        /// the small bit of state AgentNotch uses to decide whether the user
+        /// needs to check the interactive terminal.
+        var activePermissionTool: String? = nil
+        var activePermissionEntryID: UUID? = nil
+        var activePermissionStartedAt: Date? = nil
+        /// Set only after `AgentPermissionPolicy.delay`; it is a handoff cue,
+        /// never an in-notch approval prompt.
+        var pendingPermissionTool: String? = nil
+        /// Distinct files codex reported changing, by name — the finished card's
+        /// "N files changed" summary.
+        var changedFiles: [String] = []
+        /// The full work trail (every tool call + its output, in order) behind
+        /// the one-line `activity` — the card's tap-to-expand detail. Capped at
+        /// `logCap`; oldest entries fall off a marathon run.
+        var log: [AgentLogEntry] = []
+        var finishedAt: Date? = nil
+        var outcome: Outcome? = nil          // nil while running
+        /// Codex's final message — the reported result of the implementation.
+        var result: String = ""
+        /// The failure reason when `outcome == .failure`.
+        var failureReason: String? = nil
+        /// The armed row's original model/effort picks, replayed verbatim on
+        /// every follow-up spawn (`modelID` gets overwritten by the id the CLI
+        /// itself reports, which isn't necessarily a valid flag value to send
+        /// back).
+        var armedModel: String? = nil
+        var armedEffort: AgentEffort? = nil
+        /// True only for a task rebuilt by `recoverInterruptedRuns` — the app died
+        /// mid-run. Its Recent row keeps the CLI session behind it, so the row can
+        /// offer the in-app resume (`resume`) instead of only naming a terminal
+        /// command. Cleared by definition once the resumed run settles normally.
+        var interrupted = false
+
+        var isRunning: Bool { outcome == nil }
+        var elapsed: TimeInterval { (finishedAt ?? Date()).timeIntervalSince(startedAt) }
+    }
+
+    /// A permission prompt observed in an interactive Codex or Claude session.
+    /// The agent owns the decision; Notch only makes the blocked state visible
+    /// and opens that session's project in Terminal.
+    struct ExternalApproval: Equatable, Identifiable {
+        let id: String
+        let engine: AgentEngine
+        let toolName: String
+        let folder: URL
+        let sessionID: String?
+        let startedAt: Date
+    }
+
+    /// Every live or finished-but-undismissed task, in spawn order.
+    @Published private(set) var tasks: [AgentTask] = []
+    @Published private(set) var externalApprovals: [ExternalApproval] = []
+
+    /// Fired on the main actor when a run settles as success or failure (never
+    /// cancel — the user just did that by hand). `AppDelegate` wires this to
+    /// `NotchModel.recordAgentHistory`, which files the run into Recent so a
+    /// dismissed card isn't the end of the record.
+    var onSettled: ((AgentTask) -> Void)? = nil
+
+    var isRunning: Bool { tasks.contains(where: \.isRunning) }
+    var runningTasks: [AgentTask] { tasks.filter(\.isRunning) }
+    var hasPendingApproval: Bool {
+        CodexAppServerBridge.shared.hasPendingApprovals
+            || ClaudeHookBridge.shared.hasPendingApprovals
+            || CodexTerminalHookBridge.shared.hasPendingApprovals
+    }
+
+    /// The mutable bookkeeping behind ONE spawned round: its process handle,
+    /// cancel flag, temp image files, and the prompt/images `settle` pairs into
+    /// the round's exchange. Keyed by task id in `runs` — created at launch,
+    /// discarded at settle — so parallel runs never share a slot.
+    private final class RunState {
+        var process: Process? = nil
+        /// The spawned pid — kept beside `process` because a re-attached run
+        /// (adopted from a previous app instance by `recoverInterruptedRuns`)
+        /// has no `Process` handle: the pid is all it signals and watches.
+        var pid: pid_t? = nil
+        /// Wall clock at spawn. On recovery it's compared against the kernel's
+        /// own start time for the pid, so a recycled pid can't impersonate the run.
+        var spawnedAt: Date? = nil
+        /// Tails the round's stdout log file (the CLI writes to a file, not a
+        /// pipe — see `launch`), feeding the parser while the app is alive.
+        var stdoutTailer: RunLogTailer? = nil
+        /// Exit watch for a re-attached run — kqueue via a dispatch process
+        /// source, because the process is not our child and has no
+        /// termination handler.
+        var exitWatch: DispatchSourceProcess? = nil
+        /// Set by `cancel()` so the termination handler files the run as
+        /// cancelled rather than failed.
+        var cancelRequested = false
+        /// Set by `interrupt()` — a cancel that is really a hand-over: the round
+        /// still files as cancelled (it WAS stopped mid-work, and whatever it
+        /// already reported is worth keeping), but instead of ending the task,
+        /// `settle` immediately opens a new round in the same session carrying
+        /// this instruction.
+        var interruptPrompt: String?
+        var interruptImages: [Data] = []
+        /// The temp files the round's pasted images were written to for codex's
+        /// `exec -i` — deleted when the run settles.
+        var tempImageURLs: [URL] = []
+        /// The prompt driving this round — the task description on round one,
+        /// the follow-up text after.
+        var currentPrompt = ""
+        /// The temporary `› prompt` row shown while a follow-up is in flight.
+        /// Once this round settles, its exchange renders the same prompt as a
+        /// real user bubble, so `settle` removes this marker from both the flat
+        /// trail and whichever earlier exchange temporarily owned it.
+        var promptMarkerID: UUID?
+        /// The round's images, as filenames in the history image store.
+        var currentImageFiles: [String] = []
+        /// Where in the task's work trail this round began — `settle` slices the
+        /// round's own entries out with it (for the exchange's `log`). Walked
+        /// back when the log cap trims the front of a marathon trail.
+        var logStartIndex = 0
+    }
+    private var runs: [UUID: RunState] = [:]
+    private var appServerPrompts: [UUID: String] = [:]
+
+    /// Follow-ups typed while the task's round was still in flight — the CLI
+    /// can't take a new instruction mid-round, and dropping the line on the
+    /// floor loses user input. Each queues here (its "› " marker joins the
+    /// trail immediately) and `settle` dispatches them in order, one per
+    /// settle, each as its own round in the same session. A cancel clears the
+    /// task's queue: the user said stop, so nothing auto-restarts.
+    private struct QueuedFollowUp {
+        let prompt: String
+        let imagesJPEG: [Data]
+        let markerID: UUID
+    }
+    private var pendingFollowUps: [UUID: [QueuedFollowUp]] = [:]
+
+    private struct ExternalTrackedTool {
+        let engine: AgentEngine
+        let toolName: String
+        let folder: URL
+        let sessionID: String?
+        let startedAt: Date
+    }
+
+    private var externalReadOffsets: [String: UInt64] = [:]
+    private var externalSessionInfo: [String: (folder: URL, sessionID: String?)] = [:]
+    private var externalTrackedTools: [String: ExternalTrackedTool] = [:]
+    private var externalMonitorTimer: Timer?
+
+    private init() {
+        scanExternalApprovalSessions()
+        externalMonitorTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.scanExternalApprovalSessions() }
+        }
+    }
+
+    deinit { externalMonitorTimer?.invalidate() }
+
+    /// AgentNotch observes the CLIs' persisted JSONL streams instead of owning
+    /// their permission buttons. Do the same for active Codex/Claude sessions:
+    /// a tool with no matching result after the reference delay is surfaced to
+    /// the dedicated Agent tab.
+    private func scanExternalApprovalSessions() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let roots: [(URL, AgentEngine)] = [
+            (home.appendingPathComponent(".codex/sessions"), .codex),
+            (home.appendingPathComponent(".claude/projects"), .claude),
+        ]
+        let cutoff = Date().addingTimeInterval(-300)
+        let fm = FileManager.default
+
+        for (root, engine) in roots where fm.fileExists(atPath: root.path) {
+            let enumerator = fm.enumerator(at: root,
+                                           includingPropertiesForKeys: [.contentModificationDateKey],
+                                           options: [.skipsHiddenFiles])
+            while let file = enumerator?.nextObject() as? URL {
+                guard file.pathExtension == "jsonl",
+                      let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
+                      (values.contentModificationDate ?? .distantPast) >= cutoff else { continue }
+                ingestExternalSession(file: file, engine: engine)
+            }
+        }
+        refreshExternalApprovals()
+    }
+
+    private func ingestExternalSession(file: URL, engine: AgentEngine) {
+        let path = file.path
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return }
+        defer { try? handle.close() }
+        let offset = externalReadOffsets[path] ?? 0
+        let size = (try? handle.seekToEnd()) ?? 0
+        guard size >= offset else {
+            externalReadOffsets[path] = 0
+            return
+        }
+        try? handle.seek(toOffset: offset)
+        let data = (try? handle.readToEnd()) ?? nil
+        externalReadOffsets[path] = size
+        guard let data, !data.isEmpty,
+              let text = String(data: data, encoding: .utf8) else { return }
+        for line in text.split(separator: "\n") {
+            guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
+            ingestExternalEvent(json, from: file, engine: engine)
+        }
+    }
+
+    private func ingestExternalEvent(_ json: [String: Any], from file: URL, engine: AgentEngine) {
+        let path = file.path
+        let type = json["type"] as? String
+        let payload = json["payload"] as? [String: Any]
+        if type == "session_meta", let payload {
+            let folder = URL(fileURLWithPath: payload["cwd"] as? String ?? file.deletingLastPathComponent().path)
+            externalSessionInfo[path] = (folder, (payload["id"] as? String) ?? (payload["session_id"] as? String))
+            return
+        }
+        let info = externalSessionInfo[path] ?? (file.deletingLastPathComponent(), nil)
+
+        func start(_ id: String, _ tool: String) {
+            let normalizedTool: String
+            if engine == .codex {
+                switch tool.lowercased() {
+                case "exec", "shell", "commandexecution", "command_execution":
+                    normalizedTool = "Bash"
+                case "apply_patch", "write_file":
+                    normalizedTool = "Edit"
+                default:
+                    normalizedTool = tool
+                }
+            } else {
+                normalizedTool = tool
+            }
+            guard AgentPermissionPolicy.needsTerminalHandoff(forToolName: normalizedTool,
+                                                             elapsed: AgentPermissionPolicy.delay) else { return }
+            externalTrackedTools["\(path)#\(id)"] = ExternalTrackedTool(engine: engine,
+                                                                            toolName: normalizedTool,
+                                                                            folder: info.folder,
+                                                                            sessionID: info.sessionID,
+                                                                            startedAt: Date())
+        }
+        func finish(_ id: String) { externalTrackedTools.removeValue(forKey: "\(path)#\(id)") }
+
+        if engine == .codex, let payload {
+            if type == "response_item", let itemType = payload["type"] as? String {
+                if itemType == "function_call", let id = (payload["call_id"] as? String) ?? (payload["id"] as? String) {
+                    start(id, payload["name"] as? String ?? "Bash")
+                } else if itemType == "function_call_output", let id = payload["call_id"] as? String {
+                    finish(id)
+                } else if itemType == "custom_tool_call", let id = (payload["call_id"] as? String) ?? (payload["id"] as? String) {
+                    // A custom tool call is recorded as \"completed\" as soon as Codex
+                    // submits it for approval. The subsequent custom_tool_call_output is
+                    // the authoritative completion event.
+                    start(id, payload["name"] as? String ?? "Bash")
+                } else if itemType == "custom_tool_call_output", let id = payload["call_id"] as? String {
+                    finish(id)
+                }
+            }
+            if type == "event_msg", let item = payload["item"] as? [String: Any],
+               let id = item["id"] as? String {
+                if payload["type"] as? String == "item_completed" { finish(id) }
+                else if payload["type"] as? String == "item_started",
+                        item["type"] as? String == "CommandExecution" { start(id, "Bash") }
+            }
+        }
+
+        if engine == .claude, let message = json["message"] as? [String: Any],
+           let content = message["content"] as? [[String: Any]] {
+            for item in content {
+                if item["type"] as? String == "tool_use", let id = item["id"] as? String {
+                    start(id, item["name"] as? String ?? "")
+                } else if item["type"] as? String == "tool_result", let id = item["tool_use_id"] as? String {
+                    finish(id)
+                }
+            }
+        }
+    }
+
+    private func refreshExternalApprovals() {
+        let now = Date()
+        externalApprovals = externalTrackedTools.compactMap { key, tool in
+            guard AgentPermissionPolicy.needsTerminalHandoff(forToolName: tool.toolName,
+                                                             elapsed: now.timeIntervalSince(tool.startedAt)) else { return nil }
+            return ExternalApproval(id: key, engine: tool.engine, toolName: tool.toolName,
+                                    folder: tool.folder, sessionID: tool.sessionID, startedAt: tool.startedAt)
+        }.sorted { $0.startedAt > $1.startedAt }
+    }
+
+    #if DEBUG
+    /// TEMP debug: seed N settled agent cards so the immersive Recent list renders
+    /// its agent status rows without a live CLI. Remove after diagnosing.
+    func _debugSeedSettled(_ n: Int) {
+        let engine = AgentEngine.available.first ?? .codex
+        for i in 0..<n {
+            var t = AgentTask(engine: engine,
+                              folder: URL(fileURLWithPath: "/tmp/demo-project"),
+                              prompt: "Demo agent task \(i + 1) — implement the thing",
+                              startedAt: Date())
+            t.finishedAt = Date()
+            t.outcome = .success
+            t.result = "done"
+            t.exchanges = [.init(prompt: "Demo agent task \(i + 1)", answer: "done")]
+            tasks.append(t)
+        }
+    }
+
+    /// TEMP debug: seed one LIVE (running) card — a fixed activity line and a
+    /// clock already minutes in — so the running status row and the resting
+    /// notch's busy ears can be screenshotted without a real CLI run. Never
+    /// persisted (running tasks only archive on settle); a normal relaunch
+    /// clears it. Used by the `NOTCH_DEMO_AGENT_RUN` env path in `AppDelegate`.
+    func _debugSeedRunning(prompt: String, activity: String, elapsed: TimeInterval,
+                           logLines: Int = 0) {
+        let engine = AgentEngine.available.first ?? .codex
+        var t = AgentTask(engine: engine,
+                          folder: URL(fileURLWithPath: "/tmp/demo-project"),
+                          prompt: prompt,
+                          startedAt: Date().addingTimeInterval(-elapsed))
+        t.activity = activity
+        // Optional dense work trail (NOTCH_DEMO_AGENT_LOG=<n>) so the live
+        // detail page can be exercised/screenshotted at realistic size — a
+        // repeating prose → commands → edit pattern, some rows with output.
+        if logLines > 0 {
+            t.log = (0..<logLines).map { i in
+                switch i % 6 {
+                case 0: return AgentLogEntry(id: UUID(), title: "Looking at the failing test to understand the assertion before touching the implementation.", mono: false)
+                case 1: return AgentLogEntry(id: UUID(), title: "$ swift test --filter NotchModelTests", mono: true,
+                                             detail: "Test Suite 'NotchModelTests' passed.\n Executed 12 tests, with 0 failures.")
+                case 2: return AgentLogEntry(id: UUID(), title: "Read NotchModel.swift", mono: true)
+                case 3: return AgentLogEntry(id: UUID(), title: "Editing NotchModel.swift", mono: true)
+                case 4: return AgentLogEntry(id: UUID(), title: "$ git diff --stat", mono: true,
+                                             detail: " NotchModel.swift | 24 ++++++++-----\n 1 file changed")
+                default: return AgentLogEntry(id: UUID(), title: "Searching hover collapse", mono: true)
+                }
+            }
+        }
+        tasks.append(t)
+    }
+    #endif
+
+    private func taskIndex(_ id: UUID) -> Int? {
+        tasks.firstIndex { $0.id == id }
+    }
+
+    /// Kick off an agent run on `engine`. Runs in parallel with anything
+    /// already working — each submit is its own process. No-op only when the
+    /// engine's binary/sign-in is missing (the entry button is gated on
+    /// availability, so this is belt-and-braces). `model` / `effort` are the
+    /// armed row's explicit picks; nil leaves the CLI on its own config.
+    /// `imagesJPEG` are the pasted images riding the task (already downsampled +
+    /// JPEG-encoded off-main): codex attaches them natively (one `-i <file>` per
+    /// image); claude has no image flag, so the prompt goes in as a stream-json
+    /// user message carrying base64 vision blocks instead of plain stdin text.
+    @discardableResult
+    func start(folder: URL, prompt: String, engine: AgentEngine,
+               model: String? = nil, effort: AgentEffort? = nil,
+               imagesJPEG: [Data] = []) -> UUID? {
+        guard let binary = Self.binary(for: engine) else {
+            // The entry button is availability-gated, so a missing binary or
+            // sign-in here means the user pressed ⏎ and nothing happened —
+            // worth a breadcrumb (metadata only, never the prompt).
+            DiagnosticsLog.shared.record(provider: "Agent/\(engine.displayName)",
+                                         kind: "agent-binary-missing")
+            return nil
+        }
+
+        let t = AgentTask(engine: engine, modelID: model, folder: folder,
+                          prompt: prompt, startedAt: Date(),
+                          armedModel: model, armedEffort: effort)
+        tasks.append(t)
+        if engine == .codex {
+            launchCodexAppServer(taskID: t.id, folder: folder, prompt: prompt,
+                                 model: model, effort: effort)
+            return t.id
+        }
+        launch(taskID: t.id, binary: binary, engine: engine, folder: folder,
+               prompt: prompt, model: model, effort: effort,
+               imagesJPEG: imagesJPEG, resumeSession: nil)
+        return t.id
+    }
+
+    /// Codex turns launched by NotchFlow use the app-server rather than a
+    /// detached `codex exec` process. The app-server owns the approval callbacks,
+    /// so the Agent tab can make a per-session decision without a Terminal jump.
+    private func launchCodexAppServer(taskID: UUID, folder: URL, prompt: String,
+                                      model: String?, effort: AgentEffort?) {
+        appServerPrompts[taskID] = prompt
+        CodexAppServerBridge.shared.startTurn(
+            folder: folder, prompt: prompt, model: model, effort: effort,
+            onThreadStarted: { [weak self] threadID in
+                guard let self, let i = self.taskIndex(taskID) else { return }
+                self.tasks[i].sessionID = threadID
+                self.tasks[i].activity = "Thinking"
+            },
+            onText: { [weak self] delta in
+                guard let self, let i = self.taskIndex(taskID), self.tasks[i].isRunning else { return }
+                self.tasks[i].result += delta
+                self.tasks[i].activity = "Responding"
+            },
+            onFinished: { [weak self] success in
+                self?.settleCodexAppServer(taskID: taskID, success: success)
+            })
+    }
+
+    private func settleCodexAppServer(taskID: UUID, success: Bool) {
+        guard let i = taskIndex(taskID), tasks[i].isRunning else { return }
+        var task = tasks[i]
+        let turnPrompt = appServerPrompts.removeValue(forKey: taskID) ?? task.prompt
+        task.finishedAt = Date()
+        task.activity = nil
+        task.outcome = success ? .success : .failure
+        if !success { task.failureReason = "Codex ended before completing this turn." }
+        let answer = task.result.trimmingCharacters(in: .whitespacesAndNewlines)
+        task.exchanges.append(AgentExchange(prompt: turnPrompt,
+                                            answer: answer.isEmpty ? (success ? L("agent.done", task.engine.displayName, NotchModel.formatAgentElapsed(task.elapsed)) : task.failureReason ?? "Codex failed") : answer))
+        tasks[i] = task
+        onSettled?(task)
+        if success {
+            NotificationService.shared.postAgentFinished(engineName: task.engine.displayName,
+                                                          prompt: task.prompt,
+                                                          failureReason: nil,
+                                                          success: true,
+                                                          threadID: task.id)
+        }
+    }
+
+    /// Continue a settled task in the same CLI session — the multi-turn path.
+    /// Spawns a fresh process with the engine's resume flag pointed at the
+    /// session the first round persisted; the same task revives as running and
+    /// its work trail carries on. A follow-up sent while the task is still
+    /// running is never dropped: it queues, and `settle` dispatches it as the
+    /// next round the moment the current one ends. `imagesJPEG` are images
+    /// pasted into the follow-up field — they ride the round exactly like
+    /// round one's (codex `exec resume -i`; claude's stream-json vision blocks
+    /// work the same under `--resume`).
+    func followUp(taskID: UUID, prompt: String, imagesJPEG: [Data] = []) {
+        guard let i = taskIndex(taskID) else {
+            DiagnosticsLog.shared.record(provider: "Agent", kind: "agent-followup-dropped")
+            return
+        }
+        if tasks[i].isRunning {
+            // Mid-round: the CLI can't take a new instruction while a round is
+            // in flight, so the line queues for the next one. Its marker joins
+            // the trail right away, so the user sees the instruction landed.
+            let markerID = UUID()
+            pendingFollowUps[taskID, default: []].append(
+                QueuedFollowUp(prompt: prompt, imagesJPEG: imagesJPEG,
+                               markerID: markerID))
+            tasks[i].log.append(AgentLogEntry(id: markerID, title: "› " + prompt,
+                                              mono: false))
+            return
+        }
+        beginFollowUpRound(index: i, prompt: prompt, imagesJPEG: imagesJPEG,
+                           appendMarker: true, existingMarkerID: nil)
+    }
+
+    /// The spawn half of `followUp`: revive the settled task as running and
+    /// launch the round against its persisted session. `appendMarker` is false
+    /// on a queued dispatch — that line's marker already joined the trail at
+    /// queue time. No-op (with breadcrumb) when the task never got far enough
+    /// to report a session id — nothing to resume, ever — in which case any
+    /// queued lines are cleared too, since no future settle will dispatch them.
+    private func beginFollowUpRound(index i: Int, prompt: String,
+                                    imagesJPEG: [Data], appendMarker: Bool,
+                                    existingMarkerID: UUID?) {
+        var t = tasks[i]
+        guard let session = t.sessionID, let binary = Self.binary(for: t.engine) else {
+            // Round one never reported a session id, or the engine's
+            // binary/sign-in vanished since. Breadcrumb, metadata only.
+            DiagnosticsLog.shared.record(provider: "Agent/\(t.engine.displayName)",
+                                         kind: t.sessionID == nil
+                                            ? "agent-followup-dropped" : "agent-binary-missing")
+            pendingFollowUps[t.id] = nil
+            return
+        }
+
+        t.outcome = nil
+        t.finishedAt = nil
+        t.startedAt = Date()
+        t.result = ""
+        t.failureReason = nil
+        t.activity = nil
+        // The follow-up joins the work trail where it happened, so the
+        // transcript reads as one conversation.
+        let markerID: UUID?
+        if appendMarker {
+            let id = UUID()
+            t.log.append(AgentLogEntry(id: id, title: "› " + prompt, mono: false))
+            markerID = id
+        } else {
+            markerID = existingMarkerID
+        }
+        tasks[i] = t
+        if t.engine == .codex {
+            launchCodexAppServerContinuation(taskID: t.id, threadID: session,
+                                              prompt: prompt, effort: t.armedEffort)
+            return
+        }
+        launch(taskID: t.id, binary: binary, engine: t.engine, folder: t.folder,
+               prompt: prompt, model: t.armedModel, effort: t.armedEffort,
+               imagesJPEG: imagesJPEG, resumeSession: session,
+               promptMarkerID: markerID)
+    }
+
+    private func launchCodexAppServerContinuation(taskID: UUID, threadID: String,
+                                                   prompt: String, effort: AgentEffort?) {
+        appServerPrompts[taskID] = prompt
+        CodexAppServerBridge.shared.continueTurn(
+            threadID: threadID, prompt: prompt, effort: effort,
+            onText: { [weak self] delta in
+                guard let self, let i = self.taskIndex(taskID), self.tasks[i].isRunning else { return }
+                self.tasks[i].result += delta
+                self.tasks[i].activity = "Responding"
+            },
+            onFinished: { [weak self] success in
+                self?.settleCodexAppServer(taskID: taskID, success: success)
+            })
+    }
+
+    /// Pick an interrupted run back up in-app — the GUI half of `resumeCommand`.
+    /// The app died mid-run; the CLI's session survived on disk, so this rebuilds
+    /// the task around it and re-issues the round that never finished. `taskID` is
+    /// the id of the Recent row the run left behind, so the row it settles back
+    /// into REPLACES that one (same id → `recordAgentHistory` overwrites in place)
+    /// rather than forking a second copy of the same conversation.
+    ///
+    /// No model/effort flags: the armed picks didn't survive the quit, and a
+    /// resumed session already carries its own model — passing none leaves the
+    /// engine on exactly what it was running. No-op if that task is somehow live.
+    func resume(taskID: UUID, engine: AgentEngine, folder: URL, headline: String,
+                session: String, priorRounds: [AgentExchange], prompt: String,
+                imagesJPEG: [Data] = []) {
+        guard taskIndex(taskID) == nil, let binary = Self.binary(for: engine) else {
+            // The row's resume button is gated on the engine being installed, so
+            // landing here means the tap silently did nothing. Breadcrumb only.
+            DiagnosticsLog.shared.record(provider: "Agent/\(engine.displayName)",
+                                         kind: "agent-resume-dropped")
+            return
+        }
+        var t = AgentTask(id: taskID, engine: engine, folder: folder,
+                          prompt: headline, startedAt: Date())
+        t.sessionID = session
+        t.exchanges = priorRounds
+        // The re-issued round opens the trail where the interruption cut it off.
+        let markerID = UUID()
+        t.log.append(AgentLogEntry(id: markerID, title: "› " + prompt, mono: false))
+        tasks.append(t)
+        launch(taskID: taskID, binary: binary, engine: engine, folder: folder,
+               prompt: prompt, model: nil, effort: nil,
+               imagesJPEG: imagesJPEG, resumeSession: session,
+               promptMarkerID: markerID)
+    }
+
+    /// The engine's resolved binary, gated on its sign-in — nil means "can't run".
+    private static func binary(for engine: AgentEngine) -> String? {
+        switch engine {
+        case .codex:  return CodexCLIService.authExists() ? CodexCLIService.resolveBinary() : nil
+        case .claude: return ClaudeCLIService.authExists() ? ClaudeCLIService.resolveBinary() : nil
+        case .grok:   return GrokCLIService.authExists() ? GrokCLIService.resolveBinary() : nil
+        case .commandCode:
+            return CommandCodeCLIService.authExists() ? CommandCodeCLIService.resolveBinary() : nil
+        case .pi:
+            // Resolve FIRST, then check the sign-in — the opposite order of its
+            // siblings, and load-bearing: pi's `authExists` reads the catalog, and
+            // the catalog is filled BY the resolution (`pi --list-models` is both
+            // probes in one spawn). Asking first on a cold cache would answer "not
+            // signed in" for a perfectly signed-in install.
+            guard let binary = PiCLIService.resolveBinary() else { return nil }
+            return PiCLIService.authExists() ? binary : nil
+        }
+    }
+
+    /// The event parser for an engine's JSONL dialect.
+    private static func makeParser(for engine: AgentEngine) -> AgentEventParser {
+        switch engine {
+        case .codex:  return CodexAgentStreamState()
+        case .claude: return ClaudeAgentStreamState()
+        case .grok:   return GrokAgentStreamState()
+        case .commandCode: return CommandCodeAgentStreamState()
+        case .pi:     return PiAgentStreamState()
+        }
+    }
+
+    /// The user-facing "couldn't start the CLI" reason for an engine.
+    private static func spawnFailureReason(_ engine: AgentEngine, _ detail: String) -> String? {
+        switch engine {
+        case .codex:  return CodexError.spawnFailed(detail).errorDescription
+        case .claude: return ClaudeCodeError.spawnFailed(detail).errorDescription
+        case .grok:   return GrokError.spawnFailed(detail).errorDescription
+        case .commandCode: return CommandCodeError.spawnFailed(detail).errorDescription
+        case .pi:     return PiError.spawnFailed(detail).errorDescription
+        }
+    }
+
+    /// Spawn one round's process — the shared tail of `start` (fresh session)
+    /// and `followUp` (`resumeSession` != nil). Each call owns a fresh
+    /// `RunState`, so parallel rounds never trample each other's bookkeeping.
+    private func launch(taskID: UUID, binary: String, engine: AgentEngine, folder: URL,
+                        prompt: String, model: String?, effort: AgentEffort?,
+                        imagesJPEG: [Data], resumeSession: String?,
+                        promptMarkerID: UUID? = nil) {
+        let run = RunState()
+        runs[taskID] = run
+        run.currentPrompt = prompt
+        run.promptMarkerID = promptMarkerID
+        // The round's trail starts where the task's log stands now (any follow-up
+        // marker already appended stays with the PREVIOUS round's tail, not this
+        // round's slice — the prompt becomes the record's own user turn instead).
+        run.logStartIndex = taskIndex(taskID).map { tasks[$0].log.count } ?? 0
+        // Keep a copy of the round's images beside the archive, so the Recent row
+        // this run settles into can show what it was handed. Same already-downsampled
+        // JPEGs that go to the CLI — a couple hundred KB each, written once per spawn.
+        run.currentImageFiles = imagesJPEG.compactMap { NotchModel.storeHistoryImage($0) }
+
+        // A model flag rides only on an explicit pick from the armed row's menu
+        // (`model != nil`); the default stays flag-less so the run honors the
+        // user's OWN CLI configuration — a stale pinned id 404s the whole run
+        // ("Model not found gpt-5.6-luna"), while the config default is what
+        // the user's own CLI demonstrably runs.
+        var args: [String]
+        switch engine {
+        case .codex:
+            // Sandboxed workspace-write: can edit anything under the folder and
+            // run commands inside codex's sandbox; network stays off (codex's own
+            // workspace-write default). `resume` is an `exec` subcommand, so the
+            // exec-only flags must precede it; placing --color/-s/-C after the
+            // resumed prompt makes the resume parser reject the follow-up before
+            // it starts. The explicit `-` positional below keeps that prompt on
+            // stdin like round one.
+            args = ["exec", "--json", "--skip-git-repo-check", "--color", "never",
+                    "-s", "workspace-write", "-C", folder.path]
+            if resumeSession != nil { args.append("resume") }
+            if let model { args += ["-m", model] }
+            if let effort {
+                args += ["-c", "model_reasoning_effort=\(effort.rawValue)"]
+            }
+            // Pasted images attach via codex's own flag. They need real files:
+            // written to the temp dir (NOT the project folder — the run must
+            // never plant artifacts in the user's repo), deleted on settle.
+            // One `-i` per image is the only form BOTH paths take: `exec`'s
+            // `-i` is variadic, but `exec resume`'s takes a single value per
+            // occurrence, so `-i a.jpg b.jpg` is a parse error there.
+            for jpeg in imagesJPEG {
+                let url = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("notch-agent-\(UUID().uuidString).jpg")
+                if (try? jpeg.write(to: url)) != nil {
+                    args += ["-i", url.path]
+                    run.tempImageURLs.append(url)
+                }
+            }
+            if let resumeSession { args += [resumeSession, "-"] }
+        case .claude:
+            // acceptEdits auto-approves file edits under the project (the cwd),
+            // and Bash/web are pre-authorized so builds/tests/doc-lookups run
+            // unattended — anything else falls to acceptEdits' auto-deny rather
+            // than hanging on a prompt no one will answer. Explicit on purpose:
+            // a bare spawn would inherit whatever permission defaultMode the
+            // user's settings.json happens to have. Deliberately NOT --safe-mode
+            // (the user's CLAUDE.md/skills are assets for implementation work)
+            // and NOT --no-session-persistence (the session should be resumable
+            // from a terminal with `claude --resume`, same as codex's).
+            // `--include-partial-messages` is what makes the trail STREAM: without
+            // it the CLI emits each assistant message whole, so a paragraph the
+            // model spent 40s writing lands in one lump. With it the same message
+            // also arrives as token deltas (`stream_event`), which the parser
+            // grows the trail entry from — and the whole-message event that still
+            // follows corrects it, so the two can't disagree.
+            args = ["-p", "--verbose", "--output-format", "stream-json",
+                    "--include-partial-messages",
+                    "--permission-mode", "acceptEdits",
+                    "--allowedTools", "Bash,WebSearch,WebFetch"]
+            // …and route what those permissions would have auto-approved through
+            // the notch first. `--settings` points at an app-generated file (see
+            // `ClaudeHookBridge`) holding a single `PreToolUse` hook for
+            // Bash/Edit/Write/NotebookEdit — the Claude equivalent of the Codex
+            // path's app-server approval callbacks, and the reason a
+            // NotchFlow-launched Claude run asks before it executes or mutates.
+            // The user's own ~/.claude/settings.json is never touched; Claude
+            // Code merges this file on top of it for this process only, and the
+            // flag rides EVERY spawn because flags don't carry across --resume.
+            // Empty (so: unchanged behaviour) if the socket could not be opened.
+            args += ClaudeHookBridge.shared.launchArguments()
+            // A follow-up resumes the persisted session (that's why the agent
+            // path never passes --no-session-persistence). Flags don't carry
+            // over from the resumed session, so everything above rides again.
+            if let resumeSession { args += ["--resume", resumeSession] }
+            if let model { args += ["--model", model] }
+            // Same knob as Codex's, via the CLI's own flag (`--effort
+            // low|medium|high|xhigh|max`).
+            if let effort { args += ["--effort", effort.rawValue] }
+            // With pasted images, stdin switches from plain text to one
+            // stream-json user message carrying text + base64 vision blocks —
+            // the CLI's only image route (there is no `-i` equivalent). The
+            // output dialect is stream-json either way, so parsing is untouched.
+            if !imagesJPEG.isEmpty { args += ["--input-format", "stream-json"] }
+        case .grok:
+            // Grok headless needs the prompt via --prompt-file: bare stdin
+            // errors "Device not configured (os error 6)", and `-p` would merge
+            // the stdin the shared writer sends (double prompt) — but
+            // --prompt-file is authoritative and ignores stdin (verified). The
+            // prompt file rides `tempImageURLs` so it's cleaned up on settle.
+            // --always-approve lets file edits / shell run unattended (the twin
+            // of codex's workspace-write and claude's acceptEdits); --no-plan
+            // stops it pausing on a plan no one will approve. NOT sandboxed
+            // (grok's sandbox profiles aren't wired) — parity with the Claude
+            // engine, which likewise runs Bash unconfined. Session persists, so
+            // a follow-up rides `--resume <id>` (id parsed from the `end` event).
+            let promptURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("notch-grok-prompt-\(UUID().uuidString).txt")
+            try? Data(prompt.utf8).write(to: promptURL)
+            run.tempImageURLs.append(promptURL)
+            args = ["--prompt-file", promptURL.path,
+                    "--output-format", "streaming-json",
+                    "--always-approve", "--no-plan", "--no-memory", "--no-subagents",
+                    "--no-auto-update", "--cwd", folder.path]
+            if let resumeSession { args += ["--resume", resumeSession] }
+            if let model { args += ["-m", model] }
+            if let effort { args += ["--reasoning-effort", effort.rawValue] }
+        case .commandCode:
+            // `--yolo` is what lets file writes and shell commands run unattended:
+            // headless denies both by default, and with no TTY there is nobody to
+            // approve them (the twin of codex's workspace-write, claude's
+            // acceptEdits and grok's --always-approve). `--trust` skips the
+            // first-run project-trust prompt and `--skip-onboarding` the taste
+            // onboarding — both would otherwise block a run with no TTY. The
+            // session persists (no `--no-session`), so a follow-up rides
+            // `--resume <id>`, the id parsed from `run_start`.
+            args = ["-p", "--output-format", "json",
+                    "--yolo", "--trust", "--skip-onboarding", "--no-auto-update"]
+            if let resumeSession { args += ["--resume", resumeSession] }
+            if let model { args += ["-m", model] }
+            if let effort { args += ["--effort", effort.rawValue] }
+        case .pi:
+            // pi needs no unattended-approval flag at all: headless `-p` runs its
+            // tools (read/write/edit/bash/ls/grep/find) without ever prompting —
+            // verified against the installed build, where a run wrote a file and
+            // ran a shell command with no TTY and no approval events. `--approve`
+            // is the OTHER kind of trust: it opts the run into the project's own
+            // AGENTS.md / extensions / skills, which is deliberate here (parity
+            // with the Claude engine, which likewise treats the repo's own
+            // instructions as assets for implementation work). `--offline` keeps a
+            // startup version check off the run (the twin of the others'
+            // `--no-auto-update`). The session persists by default, so a follow-up
+            // rides `--session <id>`, the id parsed from the `session` header line.
+            args = ["-p", "--mode", "json", "--approve", "--offline"]
+            if let resumeSession { args += ["--session", resumeSession] }
+            args += PiCLIService.modelArgs(for: model)
+            if let effort { args += ["--thinking", effort.rawValue] }
+        }
+
+        let p = ShellEnvironment.makeProcess(binary, args, cwd: folder)
+
+        // stdout/stderr go to FILES, not pipes — deliberately. A pipe ties the
+        // CLI to this process: quit the app mid-run and the orphaned CLI dies
+        // of SIGPIPE at its next write. A file keeps the CLI self-sufficient,
+        // so the run outlives the app that spawned it; the app streams
+        // progress by tailing the file instead, and after a relaunch
+        // `recoverInterruptedRuns` re-attaches to the live process (or
+        // harvests the result a finished one left behind). stdin stays a
+        // pipe: the prompt is written and closed within seconds of the spawn.
+        let inPipe = Pipe()
+        p.standardInput = inPipe
+        let outURL = Self.stdoutLogURL(taskID: taskID)
+        let errURL = Self.stderrLogURL(taskID: taskID)
+        try? FileManager.default.createDirectory(at: Self.runLogsDirectory,
+                                                 withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: outURL.path, contents: nil)
+        FileManager.default.createFile(atPath: errURL.path, contents: nil)
+        guard let outWrite = try? FileHandle(forWritingTo: outURL),
+              let errWrite = try? FileHandle(forWritingTo: errURL) else {
+            // No log files means no redirect, no recovery record and no output
+            // parse — don't spawn a run we'd be blind to.
+            let reason = Self.spawnFailureReason(engine, "run log unavailable")
+            settle(taskID: taskID,
+                   snapshot: AgentSnapshot(finalMessage: "", failure: reason,
+                                           stderrTail: "", sawTerminal: false),
+                   exitStatus: 1)
+            return
+        }
+        p.standardOutput = outWrite
+        p.standardError = errWrite
+
+        let state: AgentEventParser = Self.makeParser(for: engine)
+
+        // Progress streams off the growing log file — push became poll: the
+        // pipe's readability handler used to feed these bytes; a quarter-second
+        // tail tick now reads the same bytes through the same parser.
+        let tailer = RunLogTailer(url: outURL) { [weak self] data in
+            if let update = state.ingest(data) {
+                Task { @MainActor in
+                    self?.applyProgress(update, for: taskID)
+                }
+            }
+        }
+
+        // Watchdog: terminate a runaway run; cancelled on clean exit.
+        let watchdog = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.timeout, execute: watchdog)
+
+        p.terminationHandler = { [weak self] proc in
+            watchdog.cancel()
+            // Once the process exited, everything it wrote is in the file —
+            // there is no kernel pipe buffer to race (the old TeardownLatch's
+            // whole job). One final drain picks up the tail, result event
+            // included; stderr rides in for the failure tail.
+            tailer.finishAndDrain()
+            Self.appendStderrFile(errURL, to: state)
+            let status = proc.terminationStatus
+            let snapshot = state.finish()
+            Task { @MainActor in
+                self?.settle(taskID: taskID, snapshot: snapshot, exitStatus: status)
+            }
+        }
+
+        do {
+            try p.run()
+        } catch {
+            tailer.finishAndDrain()
+            try? outWrite.close()
+            try? errWrite.close()
+            // A run that never launched settles like any other failure — same
+            // exchange, same Recent row. Hand-rolling the outcome here (as this
+            // used to) skipped `onSettled`, so a spawn failure left no record
+            // at all once its card was dismissed.
+            let reason = Self.spawnFailureReason(engine, error.localizedDescription)
+            settle(taskID: taskID,
+                   snapshot: AgentSnapshot(finalMessage: "", failure: reason,
+                                           stderrTail: "", sawTerminal: false),
+                   exitStatus: 1)
+            return
+        }
+        // The child holds its own dups of the log descriptors now; the
+        // parent's copies would only leak.
+        try? outWrite.close()
+        try? errWrite.close()
+        run.process = p
+        run.pid = p.processIdentifier
+        run.spawnedAt = Date()
+        run.stdoutTailer = tailer
+        // Remember the run is in flight — WITH its pid — so a quit/crash
+        // mid-run re-attaches to the still-running process on the next launch
+        // instead of writing the run off.
+        Self.saveInFlight(task: tasks.first { $0.id == taskID }, currentPrompt: prompt,
+                          pid: run.pid, spawnedAt: run.spawnedAt,
+                          imageFiles: run.currentImageFiles)
+
+        // The task description goes in on stdin (no arg ⇒ stdin is the prompt),
+        // then the pipe closes so the agent starts working. Claude-with-images is
+        // the one shape that differs: `--input-format stream-json` above means
+        // stdin must be a JSONL user message, with the pasted images riding as
+        // base64 vision blocks next to the task text.
+        //
+        // Written OFF the main thread: the payload can exceed the pipe buffer
+        // (one base64 screenshot easily does), and the write then blocks until
+        // the CLI drains it. The throwing `write(contentsOf:)` also turns a
+        // broken pipe (a CLI that died on startup) into an ignorable error —
+        // the legacy `write(_:)` raised an ObjC exception there, which took the
+        // whole app down; the run's failure is already reported via settle.
+        let writer = inPipe.fileHandleForWriting
+        let isClaude = engine == .claude
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { try? writer.close() }
+            let payload: Data
+            if isClaude, !imagesJPEG.isEmpty {
+                // Images lead and the task text closes — the order Anthropic's own
+                // vision guidance recommends. Past one image, each gets an "Image N:"
+                // label so the prompt (and every follow-up) can refer to them by name.
+                var content: [[String: Any]] = []
+                for (i, jpeg) in imagesJPEG.enumerated() {
+                    if imagesJPEG.count > 1 {
+                        content.append(["type": "text", "text": "Image \(i + 1):"])
+                    }
+                    content.append(["type": "image",
+                                    "source": ["type": "base64",
+                                               "media_type": "image/jpeg",
+                                               "data": jpeg.base64EncodedString()]])
+                }
+                content.append(["type": "text", "text": prompt])
+                let message: [String: Any] = [
+                    "type": "user",
+                    "message": ["role": "user", "content": content],
+                ]
+                guard var line = try? JSONSerialization.data(withJSONObject: message)
+                else { return }
+                line.append(Data("\n".utf8))
+                payload = line
+            } else {
+                payload = Data(prompt.utf8)
+            }
+            try? writer.write(contentsOf: payload)
+        }
+    }
+
+    /// Stop one running task. The termination handler files it as cancelled.
+    ///
+    /// Returns whether this call is the one that requested the stop — false
+    /// when the task isn't running, or a stop is already on its way (the
+    /// process takes a beat to die, so a second press lands while the run
+    /// still reads as live). Callers that give Esc a stepped meaning use that
+    /// to hand the *next* press on to whatever comes after stopping.
+    @discardableResult
+    func cancel(taskID: UUID) -> Bool {
+        guard let run = runs[taskID],
+              tasks.first(where: { $0.id == taskID })?.isRunning == true,
+              !run.cancelRequested else { return false }
+        run.cancelRequested = true
+        if let p = run.process {
+            p.terminate()
+        } else if let pid = run.pid {
+            // A re-attached run has no Process handle — signal the pid
+            // directly; its exit watch files the cancel.
+            kill(pid, SIGTERM)
+        }
+        return true
+    }
+
+    /// Stop the round in flight and hand the agent a new instruction straight
+    /// away — the "no, do this instead" of a terminal's Esc. The CLI has no way
+    /// to take a mid-round instruction (headless, no TTY, stdin already closed),
+    /// so this is the honest equivalent: kill the process, keep everything it
+    /// reported, and re-open the SAME session with the new prompt the moment it
+    /// settles. `whileRunning` is why this exists at all — queueing (`followUp`)
+    /// makes the user wait out work they've already decided is wrong.
+    ///
+    /// Falls back to queueing when there's no session to resume yet (the round
+    /// died before its id landed): stopping there would end the task outright.
+    /// Returns whether the round was actually interrupted.
+    @discardableResult
+    func interrupt(taskID: UUID, prompt: String, imagesJPEG: [Data] = []) -> Bool {
+        guard let i = taskIndex(taskID), tasks[i].isRunning,
+              let run = runs[taskID], tasks[i].sessionID != nil else {
+            followUp(taskID: taskID, prompt: prompt, imagesJPEG: imagesJPEG)
+            return false
+        }
+        run.interruptPrompt = prompt
+        run.interruptImages = imagesJPEG
+        cancel(taskID: taskID)
+        return true
+    }
+
+    /// Dismiss one finished task's card. Never clears a running task. Any
+    /// follow-ups still queued go with it — their task can no longer settle.
+    func dismissFinished(taskID: UUID) {
+        guard let i = taskIndex(taskID), !tasks[i].isRunning else { return }
+        tasks.remove(at: i)
+        pendingFollowUps[taskID] = nil
+    }
+
+    /// Clear only successfully completed work from the roster. Failed,
+    /// cancelled, and still-running tasks remain available for inspection.
+    func dismissCompleted() {
+        let completedIDs = tasks.compactMap { task in
+            task.outcome == .success ? task.id : nil
+        }
+        for id in completedIDs { dismissFinished(taskID: id) }
+    }
+
+    /// Reveal a task's folder in Finder — the finished card's "Open Folder".
+    func openFolder(taskID: UUID) {
+        guard let folder = tasks.first(where: { $0.id == taskID })?.folder else { return }
+        NSWorkspace.shared.open(folder)
+    }
+
+    /// AgentNotch intentionally sends permission handling back to the terminal
+    /// rather than attempting to answer an agent's approval request itself.
+    /// Open Terminal in the run's working directory so the relevant session is
+    /// immediately discoverable without changing the run's approval state.
+    func openTerminalForPermission(taskID: UUID) {
+        guard let task = tasks.first(where: { $0.id == taskID }) else { return }
+        let escapedPath = task.folder.path
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let source = "tell application \"Terminal\"\nactivate\ndo script \"cd \\\"\(escapedPath)\\\"\"\nend tell"
+        var error: NSDictionary?
+        NSAppleScript(source: source)?.executeAndReturnError(&error)
+        if error != nil, let terminal = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.apple.Terminal") {
+            NSWorkspace.shared.open(terminal)
+        }
+    }
+
+    /// Focus the user-owned Terminal process that is waiting for this external
+    /// session's answer. If Terminal is not open, start it in the session's
+    /// working folder; no approval is ever sent by NotchFlow.
+    func openTerminalForExternalApproval(_ approval: ExternalApproval) {
+        if let terminal = NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.apple.Terminal").first {
+            terminal.activate(options: [.activateIgnoringOtherApps])
+            return
+        }
+        let escapedPath = approval.folder.path
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let source = "tell application \"Terminal\"\nactivate\ndo script \"cd \\\"\(escapedPath)\\\"\"\nend tell"
+        var error: NSDictionary?
+        NSAppleScript(source: source)?.executeAndReturnError(&error)
+        if error != nil, let terminal = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.apple.Terminal") {
+            NSWorkspace.shared.open(terminal)
+        }
+    }
+
+    // MARK: - Surviving an abnormal exit
+
+    /// A run that was still in flight, remembered on disk. The live task lives
+    /// only in memory and history is written when the run *settles* — so a quit,
+    /// a crash, or a kill mid-run used to erase the run entirely: no card, no
+    /// Recent row, nothing but the CLI's own session on disk. This marker is
+    /// written when the process spawns and cleared when it settles; anything
+    /// still there at launch is by definition a run that never got to settle.
+    /// (Since the reliability pass, "settle" here means *filed to disk*: the
+    /// marker outlives settle itself and is cleared by `recordAgentHistory`
+    /// only after the run's history row is written.)
+    private struct InFlightRun: Codable {
+        struct Round: Codable { let prompt: String; let answer: String }
+        let engine: String
+        let folderPath: String
+        /// The task description the run started with (the headline).
+        let prompt: String
+        /// The prompt of the round that was actually interrupted — the task
+        /// description on round one, the follow-up text after.
+        let currentPrompt: String
+        let startedAt: Date
+        /// Rounds that had already settled before the interruption.
+        let rounds: [Round]
+        /// The CLI's own conversation handle, when the round got far enough to
+        /// report one — the run is resumable from a terminal with it.
+        let sessionID: String?
+        // v2 (runs survive the app): identify the possibly-still-running
+        // process, and carry the round's pasted images. All optional so a
+        // marker written by an older build still decodes (it just can't
+        // re-attach — its process died with its pipes anyway).
+        /// The spawned process, for the relaunch to find again.
+        let pid: Int32?
+        /// Wall clock at spawn — matched against the kernel's start time for
+        /// `pid` on recovery, so a recycled pid can't impersonate the run.
+        let processStartedAt: Date?
+        /// This round's images (filenames in the history image store), so a
+        /// recovered exchange keeps its screenshots.
+        let currentImageFiles: [String]?
+    }
+
+    /// Each parallel run writes its own marker under `<prefix>_<task-uuid>`.
+    /// The bare prefix is also the pre-parallel single-slot key — recovery
+    /// consumes it too, so an update never loses a run that was in flight.
+    private nonisolated static let inFlightKeyPrefix = "notch_agent_inflight"
+
+    // Pure string assembly — nonisolated so `clearInFlight` (called off-main
+    // from the archive write's completion) can build the key too.
+    private nonisolated static func inFlightKey(_ taskID: UUID) -> String {
+        inFlightKeyPrefix + "_" + taskID.uuidString
+    }
+
+    private static func saveInFlight(task: AgentTask?, currentPrompt: String,
+                                     pid: Int32?, spawnedAt: Date?,
+                                     imageFiles: [String]) {
+        guard let t = task else { return }
+        let run = InFlightRun(
+            engine: t.engine.rawValue,
+            folderPath: t.folder.path,
+            prompt: t.prompt,
+            currentPrompt: currentPrompt,
+            startedAt: t.startedAt,
+            rounds: t.exchanges.map { .init(prompt: $0.prompt, answer: $0.answer) },
+            sessionID: t.sessionID,
+            pid: pid,
+            processStartedAt: spawnedAt,
+            currentImageFiles: imageFiles.isEmpty ? nil : imageFiles)
+        guard let data = try? JSONEncoder().encode(run) else { return }
+        UserDefaults.standard.set(data, forKey: inFlightKey(t.id))
+    }
+
+    /// Cleared only when the settled run's history row is on disk (see
+    /// `NotchModel.recordAgentHistory`) — or consumed by launch recovery.
+    /// The run's log files go with it: once the row is filed, the bytes are done.
+    /// `nonisolated` so the archive write's completion can call it off-main;
+    /// UserDefaults is thread-safe.
+    nonisolated static func clearInFlight(taskID: UUID) {
+        UserDefaults.standard.removeObject(forKey: inFlightKey(taskID))
+        removeRunLogs(taskID: taskID)
+    }
+
+    /// Re-record the session id once the CLI reports it, so a run interrupted
+    /// mid-flight still names a resumable session in its Recent row.
+    private func refreshInFlight(_ t: AgentTask) {
+        let run = runs[t.id]
+        Self.saveInFlight(task: t, currentPrompt: run?.currentPrompt ?? t.prompt,
+                          pid: run?.pid, spawnedAt: run?.spawnedAt,
+                          imageFiles: run?.currentImageFiles ?? [])
+    }
+
+    /// What the runs that were in flight when the app last went away come back
+    /// as — empty if the last exit was clean. Consumes the markers: called
+    /// once, at launch, by `AppDelegate`. Also swallows the pre-parallel
+    /// single-slot key. Three legs, in order of how much survived:
+    ///
+    ///  1. the **process is still alive** (the whole point of the file
+    ///     redirect) → re-adopted in place: its task rejoins `tasks` as
+    ///     running, the stdout log replays into the card, and the run settles
+    ///     normally when the process exits. Not in the return value.
+    ///  2. the process **finished while the app was away** (its log ends with
+    ///     the stream's own terminal event) → returned as a normal
+    ///     success/failure task, with the completion notification the user
+    ///     never got.
+    ///  3. the process **died mid-run** (killed, crashed, or an old marker
+    ///     from before the redirect) → the historical interrupted row,
+    ///     resumable via its session id.
+    func recoverInterruptedRuns() -> [AgentTask] {
+        let defaults = UserDefaults.standard
+        var markers: [(taskID: UUID, marker: InFlightRun)] = []
+        for key in defaults.dictionaryRepresentation().keys
+        where key.hasPrefix(Self.inFlightKeyPrefix) {
+            if let data = defaults.data(forKey: key),
+               let run = try? JSONDecoder().decode(InFlightRun.self, from: data) {
+                // The marker key carries the task id — keeping it means the run
+                // settles back into the SAME Recent row across any number of
+                // app restarts. (A pre-parallel single-slot key gets a fresh one.)
+                let suffix = String(key.dropFirst(Self.inFlightKeyPrefix.count + 1))
+                markers.append((UUID(uuidString: suffix) ?? UUID(), run))
+            }
+            defaults.removeObject(forKey: key)
+        }
+
+        var settled: [AgentTask] = []
+        var adopted: Set<UUID> = []
+        for (taskID, marker) in markers {
+            guard let engine = AgentEngine(rawValue: marker.engine) else { continue }
+
+            // Leg 1 — alive: same pid AND same kernel start time (a recycled
+            // pid fails the second check).
+            if let pid = marker.pid, let spawnedAt = marker.processStartedAt,
+               let kernelStart = Self.processStartTime(pid: pid_t(pid)),
+               abs(kernelStart.timeIntervalSince(spawnedAt)) < 15 {
+                reattach(taskID: taskID, marker: marker, engine: engine, pid: pid_t(pid))
+                adopted.insert(taskID)
+                continue
+            }
+
+            // Leg 2 — finished while away: harvest the log's result.
+            if let done = settleFromLog(taskID: taskID, marker: marker, engine: engine) {
+                DiagnosticsLog.shared.record(provider: "Agent/\(engine.displayName)",
+                                             kind: "agent-recovered-finished")
+                NotificationService.shared.postAgentFinished(
+                    engineName: engine.displayName,
+                    prompt: done.exchanges.last?.prompt ?? done.prompt,
+                    failureReason: done.failureReason,
+                    success: done.outcome == .success,
+                    threadID: done.id)
+                settled.append(done)
+                continue
+            }
+
+            // Leg 3 — gone: the interrupted row.
+            settled.append(Self.interruptedTask(taskID: taskID, marker: marker,
+                                                engine: engine))
+        }
+
+        // Sweep every log a re-attached run doesn't own — harvested,
+        // interrupted and orphaned files alike (their rows are filed or moot;
+        // the bytes are done).
+        if let files = try? FileManager.default.contentsOfDirectory(
+            at: Self.runLogsDirectory, includingPropertiesForKeys: nil) {
+            for file in files {
+                let stem = file.deletingPathExtension().deletingPathExtension()
+                    .lastPathComponent
+                if let id = UUID(uuidString: stem), adopted.contains(id) { continue }
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+        return settled
+    }
+
+    /// Adopt a run whose process outlived the previous app instance: rebuild
+    /// its live task, replay the stdout log from the top through a fresh
+    /// parser (work trail, session id, model and context gauge all come
+    /// back), keep tailing the file, and watch the pid for exit. From the
+    /// outside it's the same run, still going.
+    private func reattach(taskID: UUID, marker: InFlightRun,
+                          engine: AgentEngine, pid: pid_t) {
+        var t = AgentTask(id: taskID, engine: engine,
+                          folder: URL(fileURLWithPath: marker.folderPath),
+                          prompt: marker.prompt, startedAt: marker.startedAt)
+        t.sessionID = marker.sessionID
+        t.exchanges = marker.rounds.map { .init(prompt: $0.prompt, answer: $0.answer) }
+        // A follow-up round reopens the trail where its prompt did originally.
+        let promptMarkerID: UUID?
+        if !t.exchanges.isEmpty {
+            let id = UUID()
+            t.log.append(AgentLogEntry(id: id, title: "› " + marker.currentPrompt,
+                                       mono: false))
+            promptMarkerID = id
+        } else {
+            promptMarkerID = nil
+        }
+        tasks.append(t)
+
+        let run = RunState()
+        run.currentPrompt = marker.currentPrompt
+        run.promptMarkerID = promptMarkerID
+        run.currentImageFiles = marker.currentImageFiles ?? []
+        run.pid = pid
+        run.spawnedAt = marker.processStartedAt
+        runs[taskID] = run
+        // Re-arm the marker this recovery just consumed — the run can outlive
+        // THIS app instance too.
+        Self.saveInFlight(task: t, currentPrompt: marker.currentPrompt,
+                          pid: Int32(pid), spawnedAt: run.spawnedAt,
+                          imageFiles: run.currentImageFiles)
+
+        let state: AgentEventParser = Self.makeParser(for: engine)
+        let outURL = Self.stdoutLogURL(taskID: taskID)
+        let errURL = Self.stderrLogURL(taskID: taskID)
+        // The tailer starts at offset zero, so its first tick replays
+        // everything the run streamed before the app went away — the card
+        // comes back mid-sentence.
+        let tailer = RunLogTailer(url: outURL) { [weak self] data in
+            if let update = state.ingest(data) {
+                Task { @MainActor in
+                    self?.applyProgress(update, for: taskID)
+                }
+            }
+        }
+        run.stdoutTailer = tailer
+
+        // What's left of the runaway ceiling still applies, measured from the
+        // round's original start.
+        let elapsed = Date().timeIntervalSince(marker.startedAt)
+        let watchdog = DispatchWorkItem { kill(pid, SIGTERM) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + max(30, Self.timeout - elapsed),
+                                          execute: watchdog)
+
+        // Exit detection for a process that is NOT our child: kqueue via a
+        // dispatch process source. No exit status crosses it (launchd reaps
+        // the orphan), so the stream's own terminal event stands in — reached
+        // it = the CLI concluded; short of it = the run died out from under
+        // us → files as interrupted (resumable), same as a death with the app.
+        let once = OnceFlag()
+        let finishUp: () -> Void = { [weak self] in
+            guard once.tryFire() else { return }
+            watchdog.cancel()
+            tailer.finishAndDrain()
+            Self.appendStderrFile(errURL, to: state)
+            let snapshot = state.finish()
+            Task { @MainActor in
+                self?.settle(taskID: taskID, snapshot: snapshot,
+                             exitStatus: snapshot.sawTerminal ? 0 : 1,
+                             interrupted: !snapshot.sawTerminal)
+            }
+        }
+        let src = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit,
+                                                   queue: .global())
+        src.setEventHandler { [weak src] in
+            src?.cancel()
+            finishUp()
+        }
+        run.exitWatch = src
+        src.resume()
+        // The pid could have exited in the beat between the liveness probe and
+        // the source registration — in which case the source never fires.
+        // Re-probe; `once` keeps the two paths from double-settling.
+        if Self.processStartTime(pid: pid) == nil {
+            src.cancel()
+            finishUp()
+        }
+
+        DiagnosticsLog.shared.record(provider: "Agent/\(engine.displayName)",
+                                     kind: "agent-reattached")
+    }
+
+    /// Harvest a run whose process finished while the app was away: parse the
+    /// full stdout log; only a stream that reached its own terminal event
+    /// (claude's `result`, codex's `turn.completed`/`turn.failed`) counts as
+    /// finished — anything short of that returns nil and files as interrupted
+    /// instead.
+    private func settleFromLog(taskID: UUID, marker: InFlightRun,
+                               engine: AgentEngine) -> AgentTask? {
+        let outURL = Self.stdoutLogURL(taskID: taskID)
+        guard let data = try? Data(contentsOf: outURL), !data.isEmpty else { return nil }
+        let state: AgentEventParser = Self.makeParser(for: engine)
+        let progress = state.ingest(data)
+        Self.appendStderrFile(Self.stderrLogURL(taskID: taskID), to: state)
+        let snapshot = state.finish()
+        guard snapshot.sawTerminal else { return nil }
+
+        var t = AgentTask(id: taskID, engine: engine,
+                          folder: URL(fileURLWithPath: marker.folderPath),
+                          prompt: marker.prompt, startedAt: marker.startedAt)
+        // The log is fresher than the marker: `--resume` forks a new session
+        // id per round, and the marker only catches up when the app was still
+        // around to see the init event.
+        t.sessionID = progress?.sessionID ?? marker.sessionID
+        t.modelID = progress?.model
+        t.contextUsed = progress?.contextUsed
+        t.contextWindow = progress?.contextWindow
+        t.changedFiles = progress?.changedFiles ?? []
+        t.exchanges = marker.rounds.map { .init(prompt: $0.prompt, answer: $0.answer) }
+        // Finished when the log stopped growing, not when we found it — keeps
+        // the "finished in …" line honest.
+        let attrs = try? FileManager.default.attributesOfItem(atPath: outURL.path)
+        t.finishedAt = attrs?[.modificationDate] as? Date ?? Date()
+        t.result = snapshot.finalMessage
+        if let failure = snapshot.failure {
+            t.outcome = .failure
+            t.failureReason = Self.friendlyFailure(failure, engine: engine)
+        } else {
+            t.outcome = .success
+        }
+
+        // Same answer text a live settle would have produced.
+        let answer: String
+        if t.outcome == .success {
+            let body = snapshot.finalMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+            answer = body.isEmpty
+                ? L("agent.done", engine.displayName,
+                    NotchModel.formatAgentElapsed(t.elapsed))
+                : body
+        } else {
+            let reason = (t.failureReason ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            answer = reason.isEmpty
+                ? L("agent.failed", engine.displayName)
+                : L("agent.failed", engine.displayName) + "\n" + reason
+        }
+        t.exchanges.append(AgentExchange(prompt: marker.currentPrompt, answer: answer,
+                                         imageFiles: marker.currentImageFiles ?? []))
+        return t
+    }
+
+    /// Claude's raw auth-failure strings ("OAuth session expired and could
+    /// not be refreshed", …) tell the user nothing actionable — swap in the
+    /// terminal `/login` guidance. Codex reasons pass through verbatim (its
+    /// re-auth lives in-app, not in the terminal).
+    nonisolated private static func friendlyFailure(_ reason: String,
+                                                    engine: AgentEngine) -> String {
+        if engine == .claude, ClaudeCodeError.isAuthFailure(reason) {
+            return L("claudecode.error.authExpired")
+        }
+        if engine == .grok, GrokError.isAuthFailure(reason) {
+            return L("grok.error.authExpired")
+        }
+        if engine == .commandCode, CommandCodeError.isAuthFailure(reason) {
+            return L("commandcode.error.authExpired")
+        }
+        if engine == .pi, PiError.isAuthFailure(reason) {
+            return L("pi.error.authExpired")
+        }
+        return reason
+    }
+
+    /// The last-resort recovery: nothing left of the run but its marker (and
+    /// maybe a truncated log) — the historical interrupted row.
+    private static func interruptedTask(taskID: UUID, marker: InFlightRun,
+                                        engine: AgentEngine) -> AgentTask {
+        var t = AgentTask(id: taskID, engine: engine,
+                          folder: URL(fileURLWithPath: marker.folderPath),
+                          prompt: marker.prompt,
+                          startedAt: marker.startedAt)
+        t.sessionID = marker.sessionID
+        t.exchanges = marker.rounds.map { .init(prompt: $0.prompt, answer: $0.answer) }
+        t.finishedAt = Date()
+        t.outcome = .failure
+        t.failureReason = L("agent.interrupted")
+        t.interrupted = true
+        // The interrupted round closes the thread with the one fact we have.
+        // How to pick it back up is NOT baked into the answer text: the session
+        // id rides the Recent row instead (`HistoryItem.agentResume`), where it
+        // becomes a one-tap resume — and only degrades to the terminal command
+        // when the engine itself has gone missing.
+        t.exchanges.append(AgentExchange(prompt: marker.currentPrompt,
+                                         answer: L("agent.interrupted"),
+                                         imageFiles: marker.currentImageFiles ?? []))
+        return t
+    }
+
+    // MARK: - Run log files & process probing
+
+    /// Where each round's redirected stdout/stderr live. `<taskID>.out.jsonl`
+    /// doubles as the recovery record: on relaunch it replays through the same
+    /// parser as if the stream had never stopped.
+    nonisolated private static var runLogsDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory,
+                                 in: .userDomainMask).first!
+            .appendingPathComponent("Notch", isDirectory: true)
+            .appendingPathComponent("AgentRunLogs", isDirectory: true)
+    }
+
+    nonisolated private static func stdoutLogURL(taskID: UUID) -> URL {
+        runLogsDirectory.appendingPathComponent(taskID.uuidString + ".out.jsonl")
+    }
+
+    nonisolated private static func stderrLogURL(taskID: UUID) -> URL {
+        runLogsDirectory.appendingPathComponent(taskID.uuidString + ".err.log")
+    }
+
+    nonisolated private static func removeRunLogs(taskID: UUID) {
+        try? FileManager.default.removeItem(at: stdoutLogURL(taskID: taskID))
+        try? FileManager.default.removeItem(at: stderrLogURL(taskID: taskID))
+    }
+
+    /// Feed a run's redirected stderr file to its parser at teardown — the
+    /// live pipe handler this replaces streamed the same bytes. Capped: only
+    /// the tail survives into the failure reason anyway.
+    nonisolated private static func appendStderrFile(_ url: URL, to state: AgentEventParser) {
+        guard var data = try? Data(contentsOf: url), !data.isEmpty else { return }
+        if data.count > 65_536 {
+            // Re-encode through a lossy decode so a suffix cut mid-character
+            // can't fail the parser's strict UTF-8 read.
+            data = Data(String(decoding: data.suffix(65_536), as: UTF8.self).utf8)
+        }
+        state.appendStderr(data)
+    }
+
+    /// The kernel's start time for `pid` — nil when no such process exists.
+    /// The pair (pid, start time) identifies a process for good: a recycled
+    /// pid can't match the original's start time.
+    nonisolated private static func processStartTime(pid: pid_t) -> Date? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0,
+              size > 0, info.kp_proc.p_pid == pid else { return nil }
+        let tv = info.kp_proc.p_un.__p_starttime
+        return Date(timeIntervalSince1970: TimeInterval(tv.tv_sec)
+                    + TimeInterval(tv.tv_usec) / 1e6)
+    }
+
+    // MARK: - Internal state transitions
+
+    /// Hard cap on the detail log — a marathon run keeps its newest trail, not
+    /// an unbounded array of every command it ever ran.
+    private static let logCap = 300
+
+    private static func permissionToolName(for entry: AgentLogEntry) -> String? {
+        let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.hasPrefix("$") { return "Bash" }
+        if title.hasPrefix("Editing ") { return "Edit" }
+        if title.hasPrefix("Creating ") { return "Write" }
+        if title.hasPrefix("Searching ") { return "WebSearch" }
+        if title.hasPrefix("Reading http") { return "WebFetch" }
+        let firstWord = title.split(separator: " ", maxSplits: 1).first.map(String.init) ?? title
+        if ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"].contains(firstWord)
+            || firstWord.lowercased().hasPrefix("mcp__") {
+            return firstWord
+        }
+        return nil
+    }
+
+    private func schedulePermissionCheck(taskID: UUID, entryID: UUID, toolName: String, startedAt: Date) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(AgentPermissionPolicy.delay * 1_000_000_000))
+            guard let self, let i = self.taskIndex(taskID), self.tasks[i].isRunning,
+                  self.tasks[i].activePermissionTool == toolName,
+                  self.tasks[i].activePermissionEntryID == entryID,
+                  self.tasks[i].activePermissionStartedAt == startedAt else { return }
+            self.tasks[i].pendingPermissionTool = toolName
+        }
+    }
+
+    private func applyProgress(_ update: AgentProgress, for taskID: UUID) {
+        guard let i = taskIndex(taskID), tasks[i].isRunning else { return }
+        var t = tasks[i]
+        let newSession = update.sessionID != nil && update.sessionID != t.sessionID
+        if let activity = update.activity { t.activity = activity }
+        if let model = update.model { t.modelID = model }
+        if let session = update.sessionID { t.sessionID = session }
+        if let used = update.contextUsed { t.contextUsed = used }
+        if let window = update.contextWindow { t.contextWindow = window }
+        for file in update.changedFiles where !t.changedFiles.contains(file) {
+            t.changedFiles.append(file)
+        }
+        if !update.entries.isEmpty {
+            t.log.append(contentsOf: update.entries)
+            if t.log.count > Self.logCap {
+                let dropped = t.log.count - Self.logCap
+                t.log.removeFirst(dropped)
+                // Keep the round-start marker pointing at the same entry.
+                if let run = runs[taskID] {
+                    run.logStartIndex = max(0, run.logStartIndex - dropped)
+                }
+            }
+            if let entry = update.entries.last,
+               let toolName = Self.permissionToolName(for: entry) {
+                let startedAt = Date()
+                t.activePermissionTool = toolName
+                t.activePermissionEntryID = entry.id
+                t.activePermissionStartedAt = startedAt
+                t.pendingPermissionTool = nil
+                schedulePermissionCheck(taskID: taskID, entryID: entry.id,
+                                        toolName: toolName, startedAt: startedAt)
+            }
+        }
+        // A block still being written grows in place; an id that fell off the
+        // cap is simply gone (no-op), same as the two loops below.
+        for (id, text) in update.appends {
+            if let j = t.log.firstIndex(where: { $0.id == id }) { t.log[j].title += text }
+        }
+        // The CLI's authoritative copy of a block, or a plan being revised.
+        for (id, title, detail) in update.rewrites {
+            guard let j = t.log.firstIndex(where: { $0.id == id }) else { continue }
+            t.log[j].title = title
+            if let detail { t.log[j].detail = detail }
+        }
+        // Outputs arrive after their tool call (a later result event) — attach
+        // in place. A row that drew its OWN detail (a patch, a checklist) keeps
+        // it: the tool result for those is boilerplate ("the file was updated").
+        // A failed call is the exception — it replaces the row's content, and
+        // demotes it to a plain one, so a rejected edit can't keep reading as an
+        // applied patch.
+        for (id, detail, isError) in update.details {
+            guard let j = t.log.firstIndex(where: { $0.id == id }) else { continue }
+            if isError {
+                t.log[j] = AgentLogEntry(id: t.log[j].id, title: t.log[j].title,
+                                         mono: t.log[j].mono, detail: detail)
+            } else if t.log[j].kind == .plain {
+                t.log[j].detail = detail
+            }
+        }
+        if let activeEntryID = t.activePermissionEntryID,
+           (update.details.contains(where: { $0.id == activeEntryID })
+            || update.completedEntries.contains(activeEntryID)) {
+            t.activePermissionTool = nil
+            t.activePermissionEntryID = nil
+            t.activePermissionStartedAt = nil
+            t.pendingPermissionTool = nil
+        }
+        tasks[i] = t
+        // The session id lands a beat after the spawn, so the in-flight marker
+        // is re-written once it's known: an interrupted run's Recent row can
+        // then name the command that picks the session back up.
+        if newSession { refreshInFlight(t) }
+    }
+
+    /// Remove the temp image files a codex run attached, if any. Idempotent.
+    private func cleanupTempImages(_ run: RunState) {
+        for url in run.tempImageURLs { try? FileManager.default.removeItem(at: url) }
+        run.tempImageURLs = []
+    }
+
+    /// `interrupted` is the re-attached path's verdict: the process exited
+    /// without its stream ever reaching a terminal event (killed externally,
+    /// crashed) — files like a death-with-the-app, resumable from its row.
+    private func settle(taskID: UUID, snapshot: AgentSnapshot,
+                        exitStatus: Int32, interrupted: Bool = false) {
+        guard let i = taskIndex(taskID), tasks[i].isRunning,
+              let run = runs[taskID] else {
+            // A settle that lands here leaves NO exchange and NO history row —
+            // if a run ever "vanishes", this breadcrumb is the lead. Should be
+            // unreachable: the teardown latch fires exactly once per run.
+            DiagnosticsLog.shared.record(provider: "Agent", kind: "agent-settle-dropped")
+            return
+        }
+        var t = tasks[i]
+        runs[taskID] = nil
+        cleanupTempImages(run)
+        // The in-flight crash marker is NOT cleared here: it survives until the
+        // history row is safely on disk (`recordAgentHistory` clears it after
+        // its immediate archive write). Clearing at settle left a window —
+        // marker gone, row still in the save debounce — where a crash erased
+        // the run entirely.
+        t.finishedAt = Date()
+        t.activity = nil
+        t.result = snapshot.finalMessage
+
+        if run.cancelRequested {
+            t.outcome = .cancelled
+        } else if interrupted {
+            t.outcome = .failure
+            t.failureReason = L("agent.interrupted")
+            t.interrupted = true
+        } else if let failure = snapshot.failure {
+            t.outcome = .failure
+            t.failureReason = Self.friendlyFailure(failure, engine: t.engine)
+        } else if exitStatus != 0 && snapshot.finalMessage.isEmpty {
+            t.outcome = .failure
+            t.failureReason = snapshot.stderrTail.isEmpty
+                ? nil : Self.friendlyFailure(snapshot.stderrTail, engine: t.engine)
+        } else {
+            t.outcome = .success
+        }
+
+        // Every settled round becomes an exchange — a cancel included. A run
+        // the user stops after ten minutes still edited files and still has a
+        // resumable CLI session; dropping it on the floor was how a stopped run
+        // vanished the moment its card was dismissed. The answer text here is
+        // what history shows, so empty results fall back to the same outcome
+        // lines the card headline uses.
+        let answer: String
+        switch t.outcome {
+        case .success:
+            let body = t.result.trimmingCharacters(in: .whitespacesAndNewlines)
+            answer = body.isEmpty
+                ? L("agent.done", t.engine.displayName,
+                    NotchModel.formatAgentElapsed(t.elapsed))
+                : body
+        case .cancelled:
+            // Whatever the run had already reported before the stop is worth
+            // keeping — it's the only trace of the work it did.
+            let body = t.result.trimmingCharacters(in: .whitespacesAndNewlines)
+            answer = body.isEmpty
+                ? L("agent.cancelled")
+                : L("agent.cancelled") + "\n" + body
+        default:
+            let reason = (t.failureReason ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.interrupted {
+                // Same closing line the launch-recovery interrupted rows use.
+                answer = L("agent.interrupted")
+            } else {
+                answer = reason.isEmpty
+                    ? L("agent.failed", t.engine.displayName)
+                    : L("agent.failed", t.engine.displayName) + "\n" + reason
+            }
+        }
+        // A follow-up marker is only a live placeholder. Once the round becomes
+        // an exchange, the prompt is rendered by `UserQuestionBubble`; leaving
+        // the marker in either trail printed the same instruction again below.
+        var roundStartIndex = run.logStartIndex
+        if let markerID = run.promptMarkerID {
+            if let markerIndex = t.log.firstIndex(where: { $0.id == markerID }) {
+                t.log.remove(at: markerIndex)
+                if markerIndex < roundStartIndex { roundStartIndex -= 1 }
+            }
+            for exchangeIndex in t.exchanges.indices {
+                t.exchanges[exchangeIndex].log.removeAll { $0.id == markerID }
+            }
+        }
+        let roundLog = roundStartIndex < t.log.count
+            ? Array(t.log[roundStartIndex...]) : []
+        t.exchanges.append(AgentExchange(prompt: run.currentPrompt, answer: answer,
+                                         imageFiles: run.currentImageFiles,
+                                         log: roundLog))
+        tasks[i] = t
+
+        // The history record is filed FIRST (via `onSettled` → Recent, keyed by
+        // the task id), so the banner's tap below can land on an existing row.
+        onSettled?(t)
+
+        // An agent task runs for minutes — the user has almost certainly moved
+        // on, so a finished run announces itself. Not a cancel, though: the user
+        // just did that by hand, so there's nothing to announce (the row is
+        // still filed above — it just doesn't buzz).
+        if t.outcome != .cancelled {
+            NotificationService.shared.postAgentFinished(
+                engineName: t.engine.displayName,
+                prompt: t.exchanges.last?.prompt ?? t.prompt,
+                failureReason: t.failureReason,
+                success: t.outcome == .success,
+                threadID: t.id)
+        }
+
+        // An interrupt is a cancel that hands over: the stopped round is filed
+        // above like any other, and the instruction that stopped it opens the
+        // next one right now, in the same session. Anything queued behind it
+        // stays queued — it dispatches on the interrupting round's own settle.
+        if let prompt = run.interruptPrompt, let i = taskIndex(taskID) {
+            beginFollowUpRound(index: i, prompt: prompt,
+                               imagesJPEG: run.interruptImages, appendMarker: true,
+                               existingMarkerID: nil)
+            return
+        }
+
+        // Follow-ups typed while this round ran dispatch now, oldest first, one
+        // per settle — each becomes its own round in the same session. A cancel
+        // clears the queue instead: the user said stop, so nothing auto-restarts.
+        if t.outcome == .cancelled {
+            pendingFollowUps[taskID] = nil
+        } else if var queue = pendingFollowUps[taskID], !queue.isEmpty {
+            let next = queue.removeFirst()
+            pendingFollowUps[taskID] = queue.isEmpty ? nil : queue
+            if let i = taskIndex(taskID) {
+                beginFollowUpRound(index: i, prompt: next.prompt,
+                                   imagesJPEG: next.imagesJPEG, appendMarker: false,
+                                   existingMarkerID: next.markerID)
+            }
+        }
+    }
+}
+
+/// Tails a run's stdout log file: a quarter-second timer reads whatever grew
+/// since the last tick and hands it to `onData` (the pipe readability handler
+/// this replaced pushed the same bytes; the parser line-buffers, so chunk
+/// boundaries don't matter). `finishAndDrain` — called once the process is
+/// known to have exited — stops the timer and synchronously reads the file to
+/// its end, so the final result event is always ingested before the settle.
+private final class RunLogTailer: @unchecked Sendable {
+    private let queue: DispatchQueue
+    private let timer: DispatchSourceTimer
+    private let handle: FileHandle?
+    private let onData: (Data) -> Void
+    private var finished = false
+
+    init(url: URL, onData: @escaping (Data) -> Void) {
+        self.onData = onData
+        queue = DispatchQueue(label: "com.lofilab.notch.agent-tail", qos: .utility)
+        handle = try? FileHandle(forReadingFrom: url)
+        timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 0.25, repeating: 0.25)
+        timer.setEventHandler { [weak self] in self?.poll() }
+        timer.resume()
+    }
+
+    deinit { timer.cancel() }
+
+    /// Runs on `queue`. `availableData` on a regular file returns what sits
+    /// between the current offset and EOF — empty (without blocking) when
+    /// nothing new arrived.
+    private func poll() {
+        guard !finished, let handle else { return }
+        let data = handle.availableData
+        if !data.isEmpty { onData(data) }
+    }
+
+    /// Stop polling and synchronously drain the rest of the file. Idempotent;
+    /// safe from any thread.
+    func finishAndDrain() {
+        timer.cancel()
+        queue.sync {
+            guard !finished else { return }
+            finished = true
+            guard let handle else { return }
+            while true {
+                let data = handle.availableData
+                guard !data.isEmpty else { break }
+                onData(data)
+            }
+            try? handle.close()
+        }
+    }
+}
+
+/// A one-shot gate for teardown paths that can race (a re-attached run's exit
+/// watch vs. the immediate liveness re-probe) — first caller wins.
+private final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    func tryFire() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if fired { return false }
+        fired = true
+        return true
+    }
+}
+
+// MARK: - Stream parsing (thread-safe)
+
+/// One batch of progress parsed out of newly-arrived JSONL data.
+private struct AgentProgress {
+    var activity: String?
+    /// The model id the CLI reports for this session, once it says so.
+    var model: String?
+    /// The CLI's conversation handle (claude session_id / codex thread_id).
+    var sessionID: String?
+    /// Context-window occupancy after the latest turn, and the window size,
+    /// when the round's usage events carry them.
+    var contextUsed: Int?
+    var contextWindow: Int?
+    var changedFiles: [String] = []
+    /// New work-trail entries, in stream order.
+    var entries: [AgentLogEntry] = []
+    /// Text appended to an entry ALREADY in the trail — the token deltas of a
+    /// block that is still being written (`StreamingBlocks`).
+    var appends: [(id: UUID, text: String)] = []
+    /// Whole-text replacement for an entry already in the trail: the CLI's own
+    /// authoritative copy of a block its deltas built, a dialect that sends
+    /// cumulative snapshots instead of deltas, or a plan being rewritten.
+    var rewrites: [(id: UUID, title: String, detail: String?)] = []
+    /// Late-arriving outputs for earlier entries, keyed by entry id. `isError`
+    /// marks a tool that FAILED — the one case allowed to overwrite a row that
+    /// owns its own detail (a diff we drew from arguments the tool then
+    /// rejected must not keep reading as an applied edit).
+    var details: [(id: UUID, detail: String, isError: Bool)] = []
+    /// Tool completion is meaningful even when it produced no stdout. Keeping
+    /// it separately prevents a quiet successful command from being mistaken
+    /// for an unresolved permission prompt five seconds later.
+    var completedEntries: [UUID] = []
+}
+
+/// The delta-to-entry bookkeeping every engine needs once it streams: the first
+/// chunk of a block opens a work-trail entry, later chunks grow it in place, and
+/// the CLI's own whole copy (when one arrives) replaces what the chunks built.
+///
+/// `slot` is the engine's own block index — Anthropic's `content_block` index
+/// for claude, the two constants below for the single-channel dialects, which
+/// only ever have one narration and one reasoning block open at a time.
+private struct StreamingBlocks {
+    static let narration = 0
+    static let thinking = 1
+
+    private var open: [Int: UUID] = [:]
+    /// Everything each open slot has accumulated — the ticker's source, and what
+    /// tells `replace` whether there's anything to correct.
+    private var text: [Int: String] = [:]
+
+    func isOpen(_ slot: Int) -> Bool { open[slot] != nil }
+    func accumulated(_ slot: Int) -> String { text[slot] ?? "" }
+
+    /// One delta. Opens the slot's entry on first sight, appends after.
+    mutating func append(_ delta: String, slot: Int, kind: AgentLogEntry.Kind,
+                         into progress: inout AgentProgress) {
+        guard !delta.isEmpty else { return }
+        text[slot, default: ""] += delta
+        if let id = open[slot] {
+            progress.appends.append((id, delta))
+        } else {
+            let entry = AgentLogEntry(id: UUID(), title: delta, mono: false, kind: kind)
+            open[slot] = entry.id
+            progress.entries.append(entry)
+        }
+    }
+
+    /// The slot's whole text at once — the shape codex sends (cumulative
+    /// snapshots rather than deltas) and the correction claude's `assistant`
+    /// event carries for a block its `stream_event`s already built. Opens the
+    /// entry if nothing streamed, so a CLI that emits no deltas at all still
+    /// lands one entry per block.
+    mutating func replace(_ whole: String, slot: Int, kind: AgentLogEntry.Kind,
+                          into progress: inout AgentProgress) {
+        guard !whole.isEmpty else { return }
+        text[slot] = whole
+        if let id = open[slot] {
+            progress.rewrites.append((id, whole, nil))
+        } else {
+            let entry = AgentLogEntry(id: UUID(), title: whole, mono: false, kind: kind)
+            open[slot] = entry.id
+            progress.entries.append(entry)
+        }
+    }
+
+    /// Seal a slot — the next delta starts a fresh entry.
+    mutating func close(_ slot: Int) {
+        open[slot] = nil
+        text[slot] = nil
+    }
+
+    mutating func closeAll() {
+        open.removeAll()
+        text.removeAll()
+    }
+
+    /// The rolling one-line ticker for a slot: the tail of what it has written,
+    /// so the collapsed card shows the words arriving rather than a static
+    /// "Thinking…". Falls back to that phrase before the first token lands.
+    func ticker(_ slot: Int) -> String {
+        let flat = accumulated(slot)
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        return flat.isEmpty ? L("agent.thinking") : String(flat.suffix(80))
+    }
+}
+
+/// A finished run's distilled output.
+private struct AgentSnapshot {
+    let finalMessage: String
+    let failure: String?
+    let stderrTail: String
+    /// Whether the stream reached its own terminal event (claude's `result`,
+    /// codex's `turn.completed`/`turn.failed`/`error`). False means the
+    /// process died before concluding — recovery uses this to tell a finished
+    /// run from one that was killed out from under the app.
+    let sawTerminal: Bool
+}
+
+/// What the manager needs from an engine's JSONL dialect: progress while running,
+/// a snapshot at the end. One conforming parser per `AgentEngine`.
+private protocol AgentEventParser: AnyObject {
+    func ingest(_ data: Data) -> AgentProgress?
+    func appendStderr(_ data: Data)
+    func finish() -> AgentSnapshot
+}
+
+/// The **codex** dialect (`codex exec --json`). Line-buffers stdout and distills
+/// it into progress + a final snapshot. Lock-guarded: the readability and
+/// termination handlers fire on different queues. Mirrors `StreamState` in
+/// `CodexCLIService`, but where the chat only wants `agent_message` text, the
+/// agent wants the *work trail* too: commands run, files changed, the report.
+private final class CodexAgentStreamState: AgentEventParser {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var stderrTail = ""
+    private var finalMessage = ""
+    private var failure: String?
+    private var sawTerminal = false
+    /// codex item id → the log entry it opened, so `item.completed` can attach
+    /// the command's output to the entry `item.started` created.
+    private var openEntries: [String: UUID] = [:]
+    /// The report and the reasoning as they're written. codex sends each
+    /// `item.updated` with the block's text SO FAR (a snapshot, not a delta), so
+    /// these ride `replace` rather than `append`.
+    private var stream = StreamingBlocks()
+    /// The single plan row, rewritten in place every time codex re-emits its
+    /// todo list — a trail that grew one row per revision buried the work.
+    private var planEntry: UUID?
+
+    /// Append `data`, parse complete JSONL lines, and return the progress they
+    /// carry (nil when nothing user-visible changed).
+    func ingest(_ data: Data) -> AgentProgress? {
+        lock.lock(); defer { lock.unlock() }
+        buffer.append(data)
+        var progress = AgentProgress()
+        return drainLines(into: &progress) ? progress : nil
+    }
+
+    /// Parse every complete (newline-terminated) line in `buffer` into
+    /// `progress`. Caller holds the lock.
+    private func drainLines(into progress: inout AgentProgress) -> Bool {
+        var any = false
+        while let nl = buffer.firstIndex(of: 0x0A) {
+            let line = buffer.subdata(in: buffer.startIndex..<nl)
+            buffer.removeSubrange(buffer.startIndex...nl)
+            guard !line.isEmpty,
+                  let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any]
+            else { continue }
+            // Whichever event carries it (the thread/session one, depending on
+            // the codex build), the model the session resolved to — including
+            // when the run rode the user's own CLI default and we passed no flag.
+            if progress.model == nil,
+               let model = (obj["model"] as? String)
+                ?? ((obj["msg"] as? [String: Any])?["model"] as? String) {
+                progress.model = model
+                any = true
+            }
+            guard let type = obj["type"] as? String else { continue }
+            switch type {
+            case "thread.started":
+                // The conversation handle `codex exec resume` continues from.
+                if let threadID = obj["thread_id"] as? String, !threadID.isEmpty {
+                    progress.sessionID = threadID
+                    any = true
+                }
+            case "turn.completed":
+                sawTerminal = true
+                // Per-turn token accounting. `input_tokens` is the request's
+                // full prompt (cached_input_tokens is a subset of it, not
+                // additive) = what the turn occupied of the context window, and
+                // with the output side the turn's real cost for Stats.
+                if let usage = obj["usage"] as? [String: Any],
+                   let input = usage["input_tokens"] as? Int {
+                    progress.contextUsed = input
+                    TokenMeter.shared.record(input: input,
+                                             output: usage["output_tokens"] as? Int ?? 0,
+                                             provider: "Codex")
+                    any = true
+                }
+                // Opportunistic: some codex builds name the window too.
+                if let window = (obj["model_context_window"] as? Int)
+                    ?? ((obj["usage"] as? [String: Any])?["model_context_window"] as? Int),
+                   window > 0 {
+                    progress.contextWindow = window
+                    any = true
+                }
+            case "item.started", "item.updated", "item.completed":
+                guard let item = obj["item"] as? [String: Any],
+                      let itemType = item["type"] as? String else { continue }
+                let itemID = item["id"] as? String
+                switch itemType {
+                case "agent_message":
+                    // Codex may emit interim messages; the last one is the report.
+                    // Each is also a narration entry in the work trail — grown in
+                    // place from the `item.updated` snapshots so the paragraph is
+                    // seen being written, then sealed by `item.completed`.
+                    let text = item["text"] as? String ?? ""
+                    if !text.isEmpty {
+                        stream.close(StreamingBlocks.thinking)
+                        finalMessage = text
+                        stream.replace(text, slot: StreamingBlocks.narration,
+                                       kind: .plain, into: &progress)
+                        progress.activity = stream.ticker(StreamingBlocks.narration)
+                        any = true
+                    }
+                    if type == "item.completed" { stream.close(StreamingBlocks.narration) }
+                case "command_execution":
+                    if let cmd = item["command"] as? String, !cmd.isEmpty {
+                        progress.activity = "$ " + String(cmd.prefix(80))
+                        any = true
+                        // One log entry per item, opened on first sight; the
+                        // completed event attaches the command's output to it.
+                        if let itemID, openEntries[itemID] == nil {
+                            let entry = AgentLogEntry(
+                                id: UUID(), title: "$ " + String(cmd.prefix(200)), mono: true)
+                            openEntries[itemID] = entry.id
+                            progress.entries.append(entry)
+                        }
+                        if type == "item.completed", let itemID,
+                           let entryID = openEntries.removeValue(forKey: itemID) {
+                            progress.completedEntries.append(entryID)
+                            let out = (item["aggregated_output"] as? String ?? "")
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !out.isEmpty {
+                                progress.details.append((entryID, String(out.suffix(2000)), false))
+                            }
+                        }
+                    }
+                case "file_change":
+                    // `changes: [{path, kind}]` — collect names for the summary
+                    // and surface the latest as the activity line. The completed
+                    // event's final list is what goes in the work trail. codex
+                    // sends no before/after text (so no patch to draw), but it
+                    // does say WHICH of the three things it did — the verb is
+                    // the honest half of a diff we can show.
+                    if let changes = item["changes"] as? [[String: Any]] {
+                        for change in changes {
+                            guard let path = change["path"] as? String else { continue }
+                            let name = (path as NSString).lastPathComponent
+                            let title = Self.verb(change["kind"] as? String) + name
+                            progress.changedFiles.append(name)
+                            progress.activity = title
+                            any = true
+                            if type == "item.completed" {
+                                progress.entries.append(AgentLogEntry(
+                                    id: UUID(), title: title, mono: true))
+                            }
+                        }
+                    }
+                case "todo_list":
+                    // The plan, re-emitted in full on every revision — one row,
+                    // rewritten in place (see `planEntry`).
+                    let items = (item["items"] as? [[String: Any]] ?? []).compactMap {
+                        i -> (text: String, status: AgentTodo.Status)? in
+                        guard let text = (i["text"] as? String) ?? (i["title"] as? String),
+                              !text.isEmpty else { return nil }
+                        return (text, (i["completed"] as? Bool) == true ? .done : .pending)
+                    }
+                    guard !items.isEmpty else { continue }
+                    let encoded = AgentTodo.encode(items)
+                    if let planEntry {
+                        progress.rewrites.append((planEntry, AgentTodo.title(items), encoded))
+                    } else {
+                        let entry = AgentLogEntry(id: UUID(), title: AgentTodo.title(items),
+                                                  mono: false, detail: encoded, kind: .todo)
+                        planEntry = entry.id
+                        progress.entries.append(entry)
+                    }
+                    any = true
+                case "web_search":
+                    if let query = item["query"] as? String, !query.isEmpty {
+                        progress.activity = "Searching " + String(query.prefix(60))
+                        any = true
+                        if let itemID, openEntries[itemID] == nil {
+                            let entry = AgentLogEntry(
+                                id: UUID(), title: "Searching " + String(query.prefix(200)), mono: true)
+                            openEntries[itemID] = entry.id
+                            progress.entries.append(entry)
+                        }
+                    }
+                case "reasoning":
+                    // The reasoning summary codex writes between tool calls.
+                    // It goes in the trail, folded behind a "Thinking" line —
+                    // and nowhere else: the ticker stays the calm "Thinking…"
+                    // rather than sliding raw half-sentences of reasoning past
+                    // the reader.
+                    let text = (item["text"] as? String)
+                        ?? (item["summary"] as? [String])?.joined(separator: "\n")
+                        ?? ""
+                    if !text.isEmpty {
+                        stream.close(StreamingBlocks.narration)
+                        stream.replace(text, slot: StreamingBlocks.thinking,
+                                       kind: .thinking, into: &progress)
+                    }
+                    progress.activity = L("agent.thinking")
+                    any = true
+                    if type == "item.completed" { stream.close(StreamingBlocks.thinking) }
+                default:
+                    break
+                }
+            case "error":
+                sawTerminal = true
+                if let msg = obj["message"] as? String { failure = msg }
+            case "turn.failed":
+                sawTerminal = true
+                if let err = obj["error"] as? [String: Any],
+                   let msg = err["message"] as? String { failure = msg }
+            default:
+                break
+            }
+        }
+        return any
+    }
+
+    /// The row's verb for a `file_change` kind — the one thing codex tells us
+    /// about the shape of the edit. Unknown kinds read as an edit.
+    private static func verb(_ kind: String?) -> String {
+        switch kind?.lowercased() {
+        case "add", "added", "create", "created": return "Creating "
+        case "delete", "deleted", "remove", "removed": return "Deleting "
+        default: return "Editing "
+        }
+    }
+
+    func appendStderr(_ data: Data) {
+        guard let s = String(data: data, encoding: .utf8) else { return }
+        lock.lock(); defer { lock.unlock() }
+        stderrTail += s
+        if stderrTail.count > 2000 { stderrTail = String(stderrTail.suffix(2000)) }
+    }
+
+    func finish() -> AgentSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        // A last line the stream never newline-terminated would sit in the
+        // buffer unparsed — and the LAST line is exactly where the result event
+        // lives. Terminate it and give it one final parse (into a discarded
+        // progress: only the snapshot fields matter now).
+        if !buffer.isEmpty {
+            buffer.append(0x0A)
+            var residue = AgentProgress()
+            _ = drainLines(into: &residue)
+        }
+        let lines = stderrTail
+            .split(separator: "\n")
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let last = lines.last ?? ""
+        // clap ends parse failures with this generic hint. Keep the actual
+        // `error: ...` line instead, so a future CLI incompatibility is visible.
+        let tail = last.hasPrefix("For more information, try")
+            ? (lines.last(where: { $0.hasPrefix("error:") }) ?? last)
+            : last
+        return AgentSnapshot(finalMessage: finalMessage, failure: failure,
+                             stderrTail: tail, sawTerminal: sawTerminal)
+    }
+}
+
+// MARK: - External Codex / Claude session observation
+
+/// Reads the recent, user-owned JSONL records that Codex and Claude Code write.
+/// Approval bridges own the approve/deny connection; this store simply supplies
+/// an independent live status, context meter, and sub-agent count per session.
+@MainActor
+final class AgentSessionActivityStore: ObservableObject {
+    static let shared = AgentSessionActivityStore()
+    @Published private(set) var sessions: [AgentSessionState] = []
+    /// The folded notch is only an announcement surface. It shows the newest
+    /// non-permission state briefly, then releases the hardware notch while the
+    /// persistent session card remains available in the Agent tab.
+    @Published private(set) var preview: AgentSessionPreview?
+
+    private struct Marker { let value: AgentSessionMarker; let receivedAt: Date }
+    private struct ExternalSessionSnapshot {
+        let sessions: [AgentSessionState]
+        let codexHierarchy: CodexSessionHierarchy
+    }
+    private var markers: [String: Marker] = [:]
+    /// Terminal rows explicitly cleared from the roster. The source transcript
+    /// is never touched; a future active state for the same id can still return.
+    private var dismissedCompletedSessionKeys = Set<String>()
+    /// Last background scan. Markers can immediately decorate this cached data
+    /// without sending filesystem work through the main UI actor.
+    private var scannedSessions: [AgentSessionState] = []
+    /// When the scan behind `scannedSessions` began reading. A marker older than
+    /// this has already been accounted for by the transcript, so it is spent —
+    /// see `AgentSessionStatus.isTranscriptObservable`.
+    private var scannedAt = Date.distantPast
+    /// Shared with the approval bridges so child callbacks can be presented under
+    /// their root session without ever changing the callback's own thread ID.
+    private var codexHierarchy = CodexSessionHierarchy()
+    private var codexHierarchyObservers: [UUID: (CodexSessionHierarchy) -> Void] = [:]
+    private var scanInFlight = false
+    private var lastCodexUsageImportAt: Date?
+    private var refreshTimer: Timer?
+    private var previewExpiryTimer: Timer?
+    private static let codexUsageImportInterval: TimeInterval = 5 * 60
+    private static let markerLifetime: TimeInterval = 30 * 60
+
+    private init() {
+        refresh()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+    }
+
+    func record(marker: AgentSessionMarker) {
+        let normalized = normalized(marker)
+        if !isTerminal(normalized.status) {
+            dismissedCompletedSessionKeys.remove(key(normalized.source, normalized.sessionID))
+        }
+        markers[key(normalized.source, normalized.sessionID)] = Marker(value: normalized, receivedAt: Date())
+        rebuild(from: scannedSessions, at: Date())
+        refresh()
+    }
+
+    /// Remove only terminal session cards. Active Working, Planning, permission,
+    /// and question states are deliberately excluded from this operation.
+    func clearCompletedSessions() {
+        let completed = sessions.filter { isTerminal($0.status) }
+        guard !completed.isEmpty else { return }
+        for session in completed {
+            let id = key(session.source, session.id)
+            dismissedCompletedSessionKeys.insert(id)
+            markers.removeValue(forKey: id)
+        }
+        if let preview, isTerminal(preview.session.status) { self.preview = nil }
+        rebuild(from: scannedSessions, at: Date())
+    }
+
+    /// The presentation owner for a Codex callback. Unknown sessions remain
+    /// independent until the scanner discovers their session metadata.
+    func rootSessionID(for source: AgentApprovalSource, sessionID: String) -> String {
+        guard source == .codex else { return sessionID }
+        return codexHierarchy.rootSessionID(for: sessionID)
+    }
+
+    /// Keeps direct terminal permissions on the same visible root as a resumed
+    /// transcript, while retaining the original thread ID for the callback.
+    func groupedForPresentation(_ approval: AgentApproval) -> AgentApproval {
+        let hierarchyRoot = rootSessionID(for: approval.source, sessionID: approval.threadID)
+        let hierarchyGrouped = approval.grouped(under: hierarchyRoot)
+        return hierarchyGrouped.grouped(under: AgentSessionWorkspaceMatcher.rootID(
+            for: hierarchyGrouped,
+            among: scannedSessions
+        ))
+    }
+
+    /// Child session metadata lands asynchronously. Bridges subscribe so already
+    /// visible approvals collapse into the parent row as soon as it is known.
+    func observeCodexHierarchy(_ observer: @escaping (CodexSessionHierarchy) -> Void) -> UUID {
+        let id = UUID()
+        codexHierarchyObservers[id] = observer
+        return id
+    }
+
+    func recordApproval(_ approval: AgentApproval) {
+        record(marker: .init(sessionID: approval.sessionGroupID, source: approval.source,
+                             status: .needsYou, detail: approval.detail))
+    }
+
+    func resolveApproval(_ approval: AgentApproval) {
+        let rootID = approval.sessionGroupID
+        let id = key(approval.source, rootID)
+        guard markers[id]?.value.status == .needsYou else { return }
+        record(marker: .init(sessionID: rootID, source: approval.source, status: .working))
+    }
+
+    /// Extra context for the non-actionable status cards. Questions and plan
+    /// notices are deliberately informational: only a permission request owns
+    /// an approval callback and can show controls in the Notch.
+    func marker(for state: AgentSessionState) -> AgentSessionMarker? {
+        markers[key(state.source, state.id)]?.value
+    }
+
+    private func refresh() {
+        let now = Date()
+        markers = markers.filter { now.timeIntervalSince($0.value.receivedAt) < Self.markerLifetime }
+        guard !scanInFlight else {
+            rebuild(from: scannedSessions, at: now)
+            return
+        }
+        scanInFlight = true
+        let shouldImportCodexUsage = lastCodexUsageImportAt.map {
+            now.timeIntervalSince($0) >= Self.codexUsageImportInterval
+        } ?? true
+        if shouldImportCodexUsage { lastCodexUsageImportAt = now }
+        Task.detached(priority: .utility) { [weak self] in
+            if shouldImportCodexUsage {
+                Self.importRecentCodexUsage(now: now)
+                Self.importRecentClaudeUsage(now: now)
+            }
+            let snapshot = Self.scanExternalSessions(now: now)
+            await MainActor.run {
+                guard let self else { return }
+                self.scanInFlight = false
+                self.scannedSessions = snapshot.sessions
+                // `now`, not the completion time: a marker that arrived while
+                // the scan was reading may describe an event written after the
+                // file was read, so it must still count as fresher than it.
+                self.scannedAt = now
+                self.updateCodexHierarchy(snapshot.codexHierarchy)
+                self.rebuild(from: snapshot.sessions, at: Date())
+            }
+        }
+    }
+
+    private func rebuild(from scanned: [AgentSessionState], at now: Date) {
+        normalizeStoredMarkers()
+        var all = scanned
+        var indexes = Dictionary(uniqueKeysWithValues: all.enumerated().map { (key($0.element.source, $0.element.id), $0.offset) })
+        for (id, marker) in markers {
+            if let index = indexes[id] {
+                // A marker is a push about something the scan has not seen yet.
+                // Once a later scan has read the transcript, the transcript is
+                // the better witness for anything it can observe for itself, so
+                // a spent marker is dropped instead of being re-applied on every
+                // 0.5s rebuild — which is what pinned quiet sessions to Working
+                // for the marker's full 30-minute lifetime.
+                //
+                // A pending permission or question is never in the transcript,
+                // so those markers are exempt and hold until they are resolved.
+                if marker.value.status.isTranscriptObservable, marker.receivedAt < scannedAt {
+                    continue
+                }
+                all[index].apply(status: marker.value.status)
+            } else {
+                all.append(.init(id: marker.value.sessionID, source: marker.value.source, status: marker.value.status))
+                indexes[id] = all.count - 1
+            }
+        }
+        all.removeAll { session in
+            let id = key(session.source, session.id)
+            guard dismissedCompletedSessionKeys.contains(id) else { return false }
+            // A revived session must always return; only its prior terminal
+            // incarnation remains hidden after the user clears it.
+            if isTerminal(session.status) { return true }
+            dismissedCompletedSessionKeys.remove(id)
+            return false
+        }
+        let next = all.sorted {
+            rank($0.status) == rank($1.status) ? $0.id < $1.id : rank($0.status) > rank($1.status)
+        }
+        // A preview is only valid while its session remains in the live roster.
+        // Once a CLI closes/ages out and the scanner drops that session, keeping
+        // the old preview would make the folded UI report stale "Working" state.
+        if let preview,
+           !next.contains(where: { $0.id == preview.session.id && $0.source == preview.session.source }) {
+            self.preview = nil
+            previewExpiryTimer?.invalidate()
+            previewExpiryTimer = nil
+        }
+        announceChangedStatus(in: next, at: now)
+        // The scanner is intentionally quiet when no actual state changed. This
+        // avoids rebuilding the entire glass panel every refresh tick.
+        if next != sessions { sessions = next }
+    }
+
+    private func announceChangedStatus(in next: [AgentSessionState], at now: Date) {
+        let prior = Dictionary(uniqueKeysWithValues: sessions.map { (key($0.source, $0.id), $0.status) })
+        guard let changed = next.first(where: {
+            $0.status != .needsYou && prior[key($0.source, $0.id)] != $0.status
+        }) else { return }
+        preview = AgentSessionPreview(session: changed, shownAt: now)
+        previewExpiryTimer?.invalidate()
+        previewExpiryTimer = Timer.scheduledTimer(withTimeInterval: AgentSessionPreview.duration,
+                                                   repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let preview = self.preview,
+                      !preview.isVisible(at: Date()) else { return }
+                self.preview = nil
+            }
+        }
+    }
+
+    private func rank(_ status: AgentSessionStatus) -> Int {
+        switch status { case .needsYou: 4; case .question: 3; case .planning, .planReady: 2; case .working: 1; case .done, .interrupted: 0 }
+    }
+    private func isTerminal(_ status: AgentSessionStatus) -> Bool {
+        status.isClearable
+    }
+    private func key(_ source: AgentApprovalSource, _ id: String) -> String { "\(source.rawValue):\(id)" }
+
+    private func normalized(_ marker: AgentSessionMarker) -> AgentSessionMarker {
+        let hierarchyRoot = rootSessionID(for: marker.source, sessionID: marker.sessionID)
+        let presentationID: String
+        if let workingDirectory = marker.workingDirectory {
+            let probe = AgentApproval(id: "marker:\(marker.sessionID)", threadID: hierarchyRoot,
+                                      itemID: "marker", title: "", workingDirectory: workingDirectory,
+                                      source: marker.source, sessionGroupID: hierarchyRoot)
+            presentationID = AgentSessionWorkspaceMatcher.rootID(for: probe, among: scannedSessions)
+        } else {
+            presentationID = hierarchyRoot
+        }
+        return AgentSessionMarker(sessionID: presentationID, source: marker.source, status: marker.status,
+                                  detail: marker.detail, options: marker.options,
+                                  workingDirectory: marker.workingDirectory)
+    }
+
+    private func normalizeStoredMarkers() {
+        var rekeyed: [String: Marker] = [:]
+        for marker in markers.values {
+            let next = normalized(marker.value)
+            let nextKey = key(next.source, next.sessionID)
+            if let existing = rekeyed[nextKey], existing.receivedAt >= marker.receivedAt { continue }
+            rekeyed[nextKey] = Marker(value: next, receivedAt: marker.receivedAt)
+        }
+        markers = rekeyed
+    }
+
+    private func updateCodexHierarchy(_ next: CodexSessionHierarchy) {
+        let merged = codexHierarchy.merging(next)
+        guard merged != codexHierarchy else { return }
+        codexHierarchy = merged
+        normalizeStoredMarkers()
+        codexHierarchyObservers.values.forEach { $0(merged) }
+    }
+
+    private nonisolated static func scanExternalSessions(now: Date) -> ExternalSessionSnapshot {
+        let codex = codexSessions(now: now)
+        return .init(sessions: codex.sessions + claudeSessions(now: now), codexHierarchy: codex.hierarchy)
+    }
+
+    /// Codex stores provider-reported counters in its local JSONL transcripts.
+    /// They are cumulative per session, so `CodexTranscriptUsage` converts them
+    /// to timestamped deltas before they enter the local ledger.
+    private nonisolated static func importRecentCodexUsage(now: Date) {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/sessions", isDirectory: true)
+        let oldest = now.addingTimeInterval(-8 * 24 * 60 * 60)
+        for file in recentCodexFiles(root, since: oldest, now: now) {
+            let url = file.url
+            guard let data = read(url, limit: 0, tail: false) else { continue }
+                let sessionID = url.deletingPathExtension().lastPathComponent
+                let project = lines(data).first(where: { $0["type"] as? String == "session_meta" })
+                    .flatMap { $0["payload"] as? [String: Any] }
+                    .flatMap { projectName(for: string($0["cwd"])) }
+                if let context = CodexTranscriptContext.latest(in: data) {
+                    TokenMeter.shared.recordContext(provider: "Codex", project: project, used: context.used,
+                                                    window: context.window, at: file.modifiedAt)
+                }
+                for event in CodexTranscriptUsage.incrementalEvents(in: data, identifierPrefix: "codex:\(sessionID)")
+                where event.timestamp >= oldest && event.timestamp <= now {
+                    TokenMeter.shared.record(input: event.input, output: event.output,
+                                         provider: "Codex", recordedAt: event.timestamp,
+                                         identifier: event.id, project: project)
+                }
+        }
+    }
+
+    private nonisolated static func importRecentClaudeUsage(now: Date) {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects", isDirectory: true)
+        let oldest = now.addingTimeInterval(-8 * 24 * 60 * 60)
+        guard let files = FileManager.default.enumerator(at: root,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]) else { return }
+        for case let url as URL in files {
+            guard url.pathExtension == "jsonl", !url.path.contains("/subagents/"),
+                  let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                  values.isRegularFile == true, let modifiedAt = values.contentModificationDate,
+                  modifiedAt >= oldest, let data = read(url, limit: 0, tail: false)
+            else { continue }
+            let entries = lines(data)
+            let sessionID = entries.compactMap { string($0["sessionId"]) ?? string($0["session_id"]) }.first
+                ?? url.deletingPathExtension().lastPathComponent
+            let project = entries.compactMap { string($0["cwd"]) }.first.flatMap(projectName)
+            for event in ClaudeTranscriptUsage.events(in: data, identifierPrefix: "claude:\(sessionID)")
+            where event.timestamp >= oldest && event.timestamp <= now {
+                TokenMeter.shared.record(input: event.input, output: event.output, provider: "Claude",
+                                         recordedAt: event.timestamp, identifier: event.id, project: project)
+            }
+        }
+    }
+
+    private struct CodexRecord { let id: String; let parent: String?; let child: Bool; let state: AgentSessionState }
+    private struct CodexSessionSnapshot { let sessions: [AgentSessionState]; let hierarchy: CodexSessionHierarchy }
+    private nonisolated static func codexSessions(now: Date) -> CodexSessionSnapshot {
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions", isDirectory: true)
+        let records = recentCodexFiles(root, since: now.addingTimeInterval(-AgentSessionObservation.activeFileWindow), now: now)
+            .filter { $0.url.lastPathComponent.hasPrefix("rollout-") }
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+            .compactMap { parseCodex($0.url) }
+        let hierarchy = CodexSessionHierarchy(parentBySessionID: Dictionary(
+            uniqueKeysWithValues: records.compactMap { record in
+                guard record.child, let parent = record.parent else { return nil }
+                return (record.id, parent)
+            }))
+        let sessions = records.filter { !$0.child }.map {
+            var state = $0.state
+            state.subagentCount = hierarchy.subagentCount(for: $0.id)
+            return state
+        }
+        return .init(sessions: sessions, hierarchy: hierarchy)
+    }
+
+    private nonisolated static func parseCodex(_ url: URL) -> CodexRecord? {
+        guard let head = read(url, limit: 64 * 1024, tail: false),
+              let meta = lines(head).first(where: { $0["type"] as? String == "session_meta" })?["payload"] as? [String: Any],
+              let identity = CodexTranscriptStatus.identity(in: meta) else { return nil }
+        let id = identity.id
+        let tailData = read(url, limit: 1024 * 1024, tail: true) ?? Data()
+        let tailEntries = lines(tailData)
+        let context = CodexTranscriptContext.latest(in: tailData)
+        let used = context?.used
+        let window = context?.window
+        let model = string(meta["model"])
+            ?? tailEntries.reversed().compactMap { item in
+                guard let payload = item["payload"] as? [String: Any] else { return nil }
+                return string(payload["model"])
+            }.first
+        // Both plan mode and the turn-terminal events are read by
+        // `CodexTranscriptStatus`, which scopes completion to the newest turn
+        // (a rollout keeps every earlier turn's `task_complete`) and matches
+        // `turn_aborted` inside its `event_msg` envelope, where Codex actually
+        // writes it.
+        let resolvedStatus = CodexTranscriptStatus.reading(in: tailEntries).status
+        return .init(id: id, parent: identity.parentID, child: identity.isSubagent,
+                     state: .init(id: id, source: .codex, status: resolvedStatus,
+                                  contextUsed: used,
+                                  contextWindow: used.map { _ in
+                                      AgentModelContextWindow.window(
+                                          reported: window ?? number(meta["context_window"]),
+                                          model: model, source: .codex, observedUsed: used)
+                                  },
+                                  projectName: projectName(for: string(meta["cwd"])), modelName: model,
+                                  workingDirectory: string(meta["cwd"])))
+    }
+
+    private nonisolated static func claudeSessions(now: Date) -> [AgentSessionState] {
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true)
+        return recentFiles(root, now: now, predicate: { !$0.path.contains("/subagents/") })
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+            .prefix(12)
+            .compactMap { parseClaude($0.url, now: now) }
+    }
+
+    private nonisolated static func parseClaude(_ url: URL, now: Date) -> AgentSessionState? {
+        let entries = read(url, limit: 160 * 1024, tail: true).map(lines) ?? []
+        // The newest entry carrying a session id, not literally the last line:
+        // `file-history-snapshot` (and other bookkeeping records) have none and
+        // are routinely appended last, which used to drop the session entirely.
+        guard let id = ClaudeTranscriptStatus.sessionID(in: entries) else { return nil }
+        var used: Int?
+        for item in entries.reversed() {
+            guard item["type"] as? String == "assistant", let usage = (item["message"] as? [String: Any])?["usage"] as? [String: Any] else { continue }
+            used = (number(usage["input_tokens"]) ?? 0) + (number(usage["cache_read_input_tokens"]) ?? 0) + (number(usage["cache_creation_input_tokens"]) ?? 0); break
+        }
+        // Claude keeps each root transcript beside a directory named after that
+        // session; its child transcripts live inside that directory's `subagents`.
+        // Only children touched inside the same active window are counted: the
+        // directory keeps every child a session ever ran, and a badge claiming
+        // eight live sub-agents an hour after they finished is simply wrong.
+        let subdir = url.deletingLastPathComponent()
+            .appendingPathComponent(url.deletingPathExtension().lastPathComponent, isDirectory: true)
+            .appendingPathComponent("subagents", isDirectory: true)
+        let children = recentFiles(subdir, now: now, predicate: { _ in true }).count
+        let reading = ClaudeTranscriptStatus.reading(in: entries)
+        let resolvedStatus = reading.status
+        let workingDirectory = entries.reversed().compactMap { string($0["cwd"]) }.first
+        let model = ClaudeTranscriptStatus.modelName(in: entries)
+        // A Claude transcript never records its window, so it is derived from
+        // the model id and the session's own occupancy rather than assumed.
+        let window = used.map { _ in
+            AgentModelContextWindow.window(for: model, source: .claude, observedUsed: used)
+        }
+        return .init(id: id, source: .claude, status: resolvedStatus,
+                     contextUsed: used, contextWindow: window, subagentCount: children,
+                     projectName: projectName(for: workingDirectory), modelName: model,
+                     workingDirectory: workingDirectory,
+                     planSummary: ClaudeTranscriptStatus.planSummary(in: entries))
+    }
+
+    /// Codex shards transcripts by calendar date. Looking in just those recent
+    /// folders avoids repeatedly traversing the user's entire CLI history.
+    private nonisolated static func recentCodexFiles(_ root: URL, since: Date, now: Date) -> [(url: URL, modifiedAt: Date)] {
+        let calendar = Calendar.autoupdatingCurrent
+        let days = max(0, Int(ceil(now.timeIntervalSince(since) / (24 * 60 * 60))))
+        var results: [(url: URL, modifiedAt: Date)] = []
+        for dayOffset in 0...days {
+            guard let day = calendar.date(byAdding: .day, value: -dayOffset, to: now) else { continue }
+            let components = calendar.dateComponents([.year, .month, .day], from: day)
+            guard let year = components.year, let month = components.month, let date = components.day else { continue }
+            let directory = root.appendingPathComponent(String(format: "%04d/%02d/%02d", year, month, date), isDirectory: true)
+            let files = (try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            let recent = files.compactMap { url -> (url: URL, modifiedAt: Date)? in
+                guard url.pathExtension == "jsonl",
+                      let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                      values.isRegularFile == true,
+                      let modifiedAt = values.contentModificationDate,
+                      modifiedAt >= since else { return nil }
+                return (url, modifiedAt)
+            }
+            results.append(contentsOf: recent)
+        }
+        return results
+    }
+
+    private nonisolated static func recentFiles(_ root: URL, now: Date, predicate: (URL) -> Bool) -> [(url: URL, modifiedAt: Date)] {
+        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey], options: [.skipsHiddenFiles]) else { return [] }
+        return walker.compactMap { item -> (URL, Date)? in
+            guard let url = item as? URL, url.pathExtension == "jsonl", predicate(url),
+                  let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]), values.isRegularFile == true,
+                  let date = values.contentModificationDate,
+                  AgentSessionObservation.isWithinActiveWindow(date, now: now) else { return nil }
+            return (url, date)
+        }
+    }
+    private nonisolated static func read(_ url: URL, limit: Int, tail: Bool) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }; defer { try? handle.close() }
+        if tail, let size = try? handle.seekToEnd(), size > UInt64(limit) { try? handle.seek(toOffset: size - UInt64(limit)) }
+        return try? handle.readToEnd()
+    }
+    private nonisolated static func lines(_ data: Data) -> [[String: Any]] { String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } }
+    private nonisolated static func string(_ value: Any?) -> String? { guard let value = value as? String else { return nil }; let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines); return trimmed.isEmpty ? nil : trimmed }
+    private nonisolated static func projectName(for workingDirectory: String?) -> String? {
+        guard let workingDirectory else { return nil }
+        let name = (workingDirectory as NSString).lastPathComponent
+        return name.isEmpty || name == "/" ? nil : name
+    }
+    private nonisolated static func number(_ value: Any?) -> Int? { if let value = value as? Int { return value }; return (value as? NSNumber)?.intValue }
+}
+
+/// The **claude** dialect (`claude -p --output-format stream-json`). Assistant
+/// events carry content blocks — `text` (narration; the last one is the
+/// candidate report) and `tool_use` (the work trail: Bash commands, Edit/Write
+/// file changes, web lookups). The final `result` event is authoritative for
+/// both the report text and failure.
+private final class ClaudeAgentStreamState: AgentEventParser {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var stderrTail = ""
+    private var finalMessage = ""
+    private var failure: String?
+    private var sawTerminal = false
+    /// tool_use id → the log entry it opened, so the matching `tool_result`
+    /// (a later `user` event) can attach the tool's output to it.
+    private var openEntries: [String: UUID] = [:]
+    /// The message currently streaming, one slot per Anthropic `content_block`
+    /// index — so `--include-partial-messages` grows the paragraph in place and
+    /// the closing `assistant` event corrects it rather than printing it twice.
+    private var stream = StreamingBlocks()
+    /// What each streaming block index is (text vs thinking), learned from
+    /// `content_block_start` and needed by its deltas.
+    private var blockKinds: [Int: AgentLogEntry.Kind] = [:]
+    /// The single plan row, rewritten in place on every `TodoWrite`.
+    private var planEntry: UUID?
+
+    func ingest(_ data: Data) -> AgentProgress? {
+        lock.lock(); defer { lock.unlock() }
+        buffer.append(data)
+        var progress = AgentProgress()
+        return drainLines(into: &progress) ? progress : nil
+    }
+
+    /// Parse every complete (newline-terminated) line in `buffer` into
+    /// `progress`. Caller holds the lock.
+    private func drainLines(into progress: inout AgentProgress) -> Bool {
+        var any = false
+        while let nl = buffer.firstIndex(of: 0x0A) {
+            let line = buffer.subdata(in: buffer.startIndex..<nl)
+            buffer.removeSubrange(buffer.startIndex...nl)
+            guard !line.isEmpty,
+                  let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let type = obj["type"] as? String
+            else { continue }
+            switch type {
+            case "stream_event":
+                // The token-level half of the stream (`--include-partial-messages`).
+                // Raw Anthropic SSE: `content_block_start` says what block index
+                // N is, its deltas grow it, and the `assistant` event below hands
+                // over the authoritative whole text once the message closes.
+                guard let event = obj["event"] as? [String: Any],
+                      let kind = event["type"] as? String else { continue }
+                switch kind {
+                case "message_start":
+                    // A fresh index space. Anything still open belonged to a
+                    // message that never reported — keep what it streamed, just
+                    // stop writing into it.
+                    stream.closeAll()
+                    blockKinds.removeAll()
+                case "content_block_start":
+                    let index = event["index"] as? Int ?? 0
+                    switch (event["content_block"] as? [String: Any])?["type"] as? String {
+                    case "text":     blockKinds[index] = .plain
+                    case "thinking": blockKinds[index] = .thinking
+                    default:         blockKinds[index] = nil   // tool_use: not streamed
+                    }
+                case "content_block_delta":
+                    let index = event["index"] as? Int ?? 0
+                    guard let delta = event["delta"] as? [String: Any] else { continue }
+                    let text: String?
+                    switch delta["type"] as? String {
+                    case "text_delta":     text = delta["text"] as? String
+                    case "thinking_delta": text = delta["thinking"] as? String
+                    default:               text = nil     // signature / input_json
+                    }
+                    guard let text, !text.isEmpty else { continue }
+                    stream.append(text, slot: index,
+                                  kind: blockKinds[index] ?? .plain, into: &progress)
+                    progress.activity = stream.ticker(index)
+                    any = true
+                default:
+                    break   // content_block_stop / message_delta / message_stop
+                }
+            case "assistant":
+                guard let message = obj["message"] as? [String: Any],
+                      let content = message["content"] as? [[String: Any]] else { continue }
+                // Each API call reports its own usage — a live context-window
+                // read while the run streams (the result event refines it), and
+                // the run's real token cost for Stats. Only the per-call events
+                // are metered; the closing `result` total covers the same calls
+                // and would double them.
+                if let usage = message["usage"] as? [String: Any] {
+                    AnthropicUsage.record(usage, provider: "Claude")
+                    if let used = Self.contextTokens(usage) {
+                        progress.contextUsed = used
+                        any = true
+                    }
+                }
+                for (index, block) in content.enumerated() {
+                    switch block["type"] as? String {
+                    case "text":
+                        // Interim narration; the last text before the result is
+                        // the fallback report if the result event lacks one.
+                        // Each is also a narration entry in the work trail —
+                        // `replace` CORRECTS the one the deltas above already
+                        // built (or creates it, on a CLI that streams no
+                        // partials), so the paragraph is never printed twice.
+                        if let text = block["text"] as? String, !text.isEmpty {
+                            finalMessage = text
+                            stream.replace(text, slot: index, kind: .plain, into: &progress)
+                            any = true
+                        }
+                    case "thinking":
+                        if let text = block["thinking"] as? String, !text.isEmpty {
+                            stream.replace(text, slot: index, kind: .thinking, into: &progress)
+                            any = true
+                        }
+                    case "tool_use":
+                        guard let name = block["name"] as? String else { continue }
+                        let input = block["input"] as? [String: Any] ?? [:]
+                        // The plan is not a row in the trail — it's ONE row that
+                        // keeps being rewritten, wherever it first appeared.
+                        if name == "TodoWrite" {
+                            let items = Self.todos(input["todos"])
+                            guard !items.isEmpty else { continue }
+                            let encoded = AgentTodo.encode(items)
+                            if let planEntry {
+                                progress.rewrites.append((planEntry, AgentTodo.title(items), encoded))
+                            } else {
+                                let entry = AgentLogEntry(id: UUID(), title: AgentTodo.title(items),
+                                                          mono: false, detail: encoded, kind: .todo)
+                                planEntry = entry.id
+                                progress.entries.append(entry)
+                            }
+                            // Deliberately NOT registered in `openEntries`: the
+                            // tool's "Todos have been modified" result would
+                            // overwrite the checklist we just encoded.
+                            any = true
+                            continue
+                        }
+                        // Every tool call gets a work-trail entry; the handful
+                        // below also drive the collapsed activity ticker and the
+                        // changed-files summary, same as before.
+                        var entryTitle = name
+                        var entryKind = AgentLogEntry.Kind.plain
+                        var entryDetail: String? = nil
+                        switch name {
+                        case "Bash":
+                            if let cmd = input["command"] as? String, !cmd.isEmpty {
+                                progress.activity = "$ " + String(cmd.prefix(80))
+                                entryTitle = "$ " + String(cmd.prefix(200))
+                                any = true
+                            }
+                        case "Edit", "Write", "MultiEdit", "NotebookEdit":
+                            if let path = input["file_path"] as? String {
+                                let file = (path as NSString).lastPathComponent
+                                progress.changedFiles.append(file)
+                                // The call's own arguments ARE the patch — the
+                                // before/after text the model chose to write.
+                                // Drawn here rather than waiting for the tool
+                                // result, which only says "the file was updated".
+                                let patch = Self.patch(tool: name, input: input)
+                                let base = (name == "Write" ? "Creating " : "Editing ") + file
+                                progress.activity = base
+                                entryTitle = AgentDiff.title(base, patch: patch)
+                                if !patch.isEmpty {
+                                    entryKind = .diff
+                                    entryDetail = patch
+                                }
+                                any = true
+                            }
+                        case "WebSearch":
+                            if let query = input["query"] as? String, !query.isEmpty {
+                                progress.activity = "Searching " + String(query.prefix(60))
+                                entryTitle = "Searching " + String(query.prefix(200))
+                                any = true
+                            }
+                        case "WebFetch":
+                            if let url = input["url"] as? String, !url.isEmpty {
+                                progress.activity = "Reading " + String(url.prefix(60))
+                                entryTitle = "Reading " + String(url.prefix(200))
+                                any = true
+                            }
+                        case "Read", "Grep", "Glob":
+                            // Quieter reads — not on the ticker, but part of the
+                            // trail. Title = tool + its primary input.
+                            let arg = (input["file_path"] as? String)
+                                .map { ($0 as NSString).lastPathComponent }
+                                ?? (input["pattern"] as? String)
+                                ?? ""
+                            entryTitle = arg.isEmpty ? name : "\(name) \(String(arg.prefix(120)))"
+                        default:
+                            break
+                        }
+                        let entry = AgentLogEntry(id: UUID(), title: entryTitle, mono: true,
+                                                  detail: entryDetail, kind: entryKind)
+                        if let useID = block["id"] as? String { openEntries[useID] = entry.id }
+                        progress.entries.append(entry)
+                        any = true
+                    default:
+                        break
+                    }
+                }
+                // The message is closed: every block it streamed has now been
+                // corrected by its authoritative copy above, so the next
+                // message's blocks start fresh slots.
+                stream.closeAll()
+                blockKinds.removeAll()
+            case "user":
+                // Tool results ride back as `user` events — attach each output
+                // to the entry its tool_use opened.
+                guard let message = obj["message"] as? [String: Any],
+                      let content = message["content"] as? [[String: Any]] else { continue }
+                for block in content where block["type"] as? String == "tool_result" {
+                    guard let useID = block["tool_use_id"] as? String,
+                          let entryID = openEntries.removeValue(forKey: useID) else { continue }
+                    progress.completedEntries.append(entryID)
+                    let text = Self.resultText(block["content"])
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty {
+                        progress.details.append((entryID, String(text.prefix(2000)),
+                                                 (block["is_error"] as? Bool) == true))
+                        any = true
+                    }
+                }
+            case "system":
+                // The init event names the model the session resolved to (a full
+                // id like `claude-opus-4-8-…`, even when the run rode the user's
+                // CLI default) — the detail's info line reports it. It also
+                // carries the session id follow-ups resume; --resume forks a
+                // fresh id per round, so every round re-captures it here.
+                if obj["subtype"] as? String == "init" {
+                    if let model = obj["model"] as? String, !model.isEmpty {
+                        progress.model = model
+                        any = true
+                    }
+                    if let session = obj["session_id"] as? String, !session.isEmpty {
+                        progress.sessionID = session
+                        any = true
+                    }
+                }
+            case "result":
+                sawTerminal = true
+                if (obj["is_error"] as? Bool) == true {
+                    failure = (obj["result"] as? String)
+                        ?? (obj["subtype"] as? String)
+                        ?? "unknown error"
+                } else if let text = obj["result"] as? String, !text.isEmpty {
+                    finalMessage = text
+                }
+                // The run's authoritative token accounting: `usage` totals the
+                // final request, `modelUsage` names each model's window.
+                if let usage = obj["usage"] as? [String: Any],
+                   let used = Self.contextTokens(usage) {
+                    progress.contextUsed = used
+                    any = true
+                }
+                if let modelUsage = obj["modelUsage"] as? [String: Any] {
+                    let window = modelUsage.values
+                        .compactMap { ($0 as? [String: Any])?["contextWindow"] as? Int }
+                        .max()
+                    if let window, window > 0 {
+                        progress.contextWindow = window
+                        any = true
+                    }
+                }
+            default:
+                break   // stream_event, rate_limit_event, …
+            }
+        }
+        return any
+    }
+
+    /// Context-window occupancy from an Anthropic `usage` dict: the request's
+    /// fresh input plus everything read/written through the prompt cache —
+    /// i.e. the conversation the model actually saw this turn.
+    private static func contextTokens(_ usage: [String: Any]) -> Int? {
+        guard let input = usage["input_tokens"] as? Int else { return nil }
+        let cacheRead = usage["cache_read_input_tokens"] as? Int ?? 0
+        let cacheCreation = usage["cache_creation_input_tokens"] as? Int ?? 0
+        return input + cacheRead + cacheCreation
+    }
+
+    /// The patch a file-editing call is about to apply, from its own arguments.
+    /// Empty when the tool carries no before/after text (an argument shape we
+    /// don't know), in which case the row stays a plain "Editing …" line.
+    private static func patch(tool: String, input: [String: Any]) -> String {
+        switch tool {
+        case "Edit":
+            let old = input["old_string"] as? String ?? ""
+            let new = input["new_string"] as? String ?? ""
+            guard !old.isEmpty || !new.isEmpty else { return "" }
+            return AgentDiff.replacement(old: old, new: new)
+        case "MultiEdit":
+            let edits = input["edits"] as? [[String: Any]] ?? []
+            return AgentDiff.combined(edits.map {
+                AgentDiff.replacement(old: $0["old_string"] as? String ?? "",
+                                      new: $0["new_string"] as? String ?? "")
+            })
+        case "Write":
+            return AgentDiff.addition(input["content"] as? String ?? "")
+        case "NotebookEdit":
+            return AgentDiff.addition(input["new_source"] as? String ?? "")
+        default:
+            return ""
+        }
+    }
+
+    /// `TodoWrite`'s `todos` array → the plan row's items.
+    private static func todos(_ raw: Any?) -> [(text: String, status: AgentTodo.Status)] {
+        (raw as? [[String: Any]] ?? []).compactMap { item in
+            guard let text = (item["content"] as? String) ?? (item["activeForm"] as? String),
+                  !text.isEmpty else { return nil }
+            switch item["status"] as? String {
+            case "completed":   return (text, .done)
+            case "in_progress": return (text, .active)
+            default:            return (text, .pending)
+            }
+        }
+    }
+
+    /// A tool_result's `content` is either a plain string or an array of blocks
+    /// (text blocks for tool output, image blocks for screenshots). Distill the
+    /// text.
+    private static func resultText(_ content: Any?) -> String {
+        if let s = content as? String { return s }
+        guard let blocks = content as? [[String: Any]] else { return "" }
+        return blocks
+            .compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }
+            .joined(separator: "\n")
+    }
+
+    func appendStderr(_ data: Data) {
+        guard let s = String(data: data, encoding: .utf8) else { return }
+        lock.lock(); defer { lock.unlock() }
+        stderrTail += s
+        if stderrTail.count > 2000 { stderrTail = String(stderrTail.suffix(2000)) }
+    }
+
+    func finish() -> AgentSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        // Same residue flush as the codex parser: a final unterminated line is
+        // exactly where the `result` event would be.
+        if !buffer.isEmpty {
+            buffer.append(0x0A)
+            var residue = AgentProgress()
+            _ = drainLines(into: &residue)
+        }
+        let tail = stderrTail
+            .split(separator: "\n")
+            .map(String.init)
+            .last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+            ?? ""
+        return AgentSnapshot(finalMessage: finalMessage, failure: failure,
+                             stderrTail: tail, sawTerminal: sawTerminal)
+    }
+}
+
+/// The **grok** dialect (`grok --prompt-file … --output-format streaming-json`).
+/// Deliberately the thinnest of the three parsers, because grok's headless
+/// streaming-json surfaces only `text` (answer deltas), `thought` (reasoning
+/// deltas) and a terminal `end` — NO per-tool events, even when the run edits
+/// files or runs commands (verified). So there is no fine-grained work trail to
+/// build: the ticker shows the report streaming (or "Thinking…" during
+/// reasoning), and the whole report lands as one narration entry at `end`. The
+/// full per-command / per-file trail would need grok's ACP mode (`grok agent
+/// stdio`), a bidirectional JSON-RPC protocol incompatible with this subsystem's
+/// file-tailing, survive-app-quit design. The `end` event carries `sessionId`
+/// (what `grok --resume` continues) and `stopReason`; no token usage is emitted,
+/// so the context meter stays blank for grok.
+private final class GrokAgentStreamState: AgentEventParser {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var stderrTail = ""
+    private var finalMessage = ""
+    private var failure: String?
+    private var sawTerminal = false
+    /// The report and the reasoning, grown from their deltas. grok has no tool
+    /// events at all, so the narration slot stays open for the whole run — its
+    /// entry is therefore always the complete report, which is what lets the
+    /// detail page drop it in favour of the answer printed beneath.
+    private var stream = StreamingBlocks()
+
+    func ingest(_ data: Data) -> AgentProgress? {
+        lock.lock(); defer { lock.unlock() }
+        buffer.append(data)
+        var progress = AgentProgress()
+        return drainLines(into: &progress) ? progress : nil
+    }
+
+    /// Parse every complete (newline-terminated) line into `progress`. Caller
+    /// holds the lock.
+    private func drainLines(into progress: inout AgentProgress) -> Bool {
+        var any = false
+        while let nl = buffer.firstIndex(of: 0x0A) {
+            let line = buffer.subdata(in: buffer.startIndex..<nl)
+            buffer.removeSubrange(buffer.startIndex...nl)
+            guard !line.isEmpty,
+                  let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let type = obj["type"] as? String
+            else { continue }
+            switch type {
+            case "text":
+                if let t = obj["data"] as? String, !t.isEmpty {
+                    finalMessage += t
+                    // The report grows in the trail as it's written, and its tail
+                    // rolls through the ticker so the collapsed card shows motion
+                    // even without a tool trail.
+                    stream.append(t, slot: StreamingBlocks.narration,
+                                  kind: .plain, into: &progress)
+                    progress.activity = stream.ticker(StreamingBlocks.narration)
+                    any = true
+                }
+            case "thought":
+                // Reasoning deltas ride the same `data` field the answer does.
+                // They grow the folded "Thinking" row in the trail only — the
+                // ticker holds the calm phrase (see the codex parser).
+                if let t = obj["data"] as? String, !t.isEmpty {
+                    stream.append(t, slot: StreamingBlocks.thinking,
+                                  kind: .thinking, into: &progress)
+                }
+                progress.activity = L("agent.thinking")
+                any = true
+            case "end":
+                sawTerminal = true
+                if let sid = obj["sessionId"] as? String, !sid.isEmpty {
+                    progress.sessionID = sid
+                    any = true
+                }
+                // The turn's token accounting, when the `end` event carries it:
+                // `input_tokens` is the request's full prompt = what the turn
+                // occupied of the context window (same semantic as codex's).
+                if let usage = obj["usage"] as? [String: Any],
+                   let input = usage["input_tokens"] as? Int, input > 0 {
+                    progress.contextUsed = input
+                    TokenMeter.shared.record(input: input,
+                                             output: usage["output_tokens"] as? Int ?? 0,
+                                             provider: "Grok")
+                    any = true
+                }
+                let report = finalMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+                // A terminal stopReason that names an error, with no report, is a
+                // failure worth surfacing.
+                if report.isEmpty, let reason = obj["stopReason"] as? String {
+                    let r = reason.lowercased()
+                    if r.contains("error") || r.contains("refus") || r.contains("cancel") {
+                        failure = reason
+                    }
+                }
+                // The report is already in the trail — the deltas above built it.
+                stream.closeAll()
+            case "error":
+                sawTerminal = true
+                failure = (obj["message"] as? String)
+                    ?? (obj["data"] as? String)
+                    ?? (obj["error"] as? String)
+                    ?? "unknown error"
+            default:
+                break   // any other event types
+            }
+        }
+        return any
+    }
+
+    func appendStderr(_ data: Data) {
+        guard let s = String(data: data, encoding: .utf8) else { return }
+        lock.lock(); defer { lock.unlock() }
+        stderrTail += s
+        if stderrTail.count > 2000 { stderrTail = String(stderrTail.suffix(2000)) }
+    }
+
+    func finish() -> AgentSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        // A last line the stream never newline-terminated (the `end` event, if
+        // the process was killed mid-flush) still gets one parse.
+        if !buffer.isEmpty {
+            buffer.append(0x0A)
+            var residue = AgentProgress()
+            _ = drainLines(into: &residue)
+        }
+        let tail = stderrTail
+            .split(separator: "\n")
+            .map(String.init)
+            .last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+            ?? ""
+        return AgentSnapshot(finalMessage: finalMessage, failure: failure,
+                             stderrTail: tail, sawTerminal: sawTerminal)
+    }
+}
+
+/// The **Command Code** dialect (`cmd -p --output-format json`). The richest of the
+/// four: every agent event is forwarded as its own `{"type":"event","event":{…}}`
+/// frame, so the full work trail is available — `tool_running` opens an entry,
+/// `tool_completed` attaches its output, `model_request_*` names the model and the
+/// turn's token usage, `run_start` hands over the session id `cmd --resume`
+/// continues. The stream closes with one `{"type":"result",…}` line whose
+/// `finalText` is authoritative for the report and whose `subtype` decides
+/// success/failure.
+private final class CommandCodeAgentStreamState: AgentEventParser {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var stderrTail = ""
+    private var finalMessage = ""
+    private var streamedText = ""
+    private var failure: String?
+    private var sawTerminal = false
+    /// toolCallId → the log entry it opened, so `tool_completed` can attach the
+    /// tool's output to the entry `tool_running` created.
+    private var openEntries: [String: UUID] = [:]
+    /// toolCallId → tool name, so a completion knows what it completed (an error or
+    /// denial event may not carry the name).
+    private var openTools: [String: String] = [:]
+    /// The narration and the reasoning, grown from their `*_delta` events. A tool
+    /// call ends the current paragraph (see `tool_running`), so the trail reads as
+    /// prose · work · prose rather than one running block.
+    private var stream = StreamingBlocks()
+    /// The single plan row, rewritten in place on every `todo_write`.
+    private var planEntry: UUID?
+
+    func ingest(_ data: Data) -> AgentProgress? {
+        lock.lock(); defer { lock.unlock() }
+        buffer.append(data)
+        var progress = AgentProgress()
+        return drainLines(into: &progress) ? progress : nil
+    }
+
+    /// Parse every complete (newline-terminated) line into `progress`. Caller holds
+    /// the lock.
+    private func drainLines(into progress: inout AgentProgress) -> Bool {
+        var any = false
+        while let nl = buffer.firstIndex(of: 0x0A) {
+            let line = buffer.subdata(in: buffer.startIndex..<nl)
+            buffer.removeSubrange(buffer.startIndex...nl)
+            guard !line.isEmpty,
+                  let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let type = obj["type"] as? String
+            else { continue }
+            switch type {
+            case "event":
+                guard let event = obj["event"] as? [String: Any] else { continue }
+                if ingest(event: event, into: &progress) { any = true }
+            case "result":
+                sawTerminal = true
+                if let sid = obj["sessionId"] as? String, !sid.isEmpty {
+                    progress.sessionID = sid
+                    any = true
+                }
+                if let usage = obj["usage"] as? [String: Any],
+                   let input = usage["inputTokens"] as? Int, input > 0 {
+                    progress.contextUsed = input
+                    any = true
+                }
+                if let text = obj["finalText"] as? String, !text.isEmpty {
+                    finalMessage = text
+                }
+                if (obj["subtype"] as? String) == "error" {
+                    failure = (obj["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                        ?? "unknown error"
+                }
+                // `finalText` is authoritative — it replaces the paragraph the
+                // deltas built (creating it, if the run streamed none), so the
+                // trail's last narration is exactly the answer shown beneath it.
+                let report = finalMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !report.isEmpty {
+                    stream.replace(report, slot: StreamingBlocks.narration,
+                                   kind: .plain, into: &progress)
+                    any = true
+                }
+                stream.closeAll()
+            default:
+                break
+            }
+        }
+        return any
+    }
+
+    /// One `AgentEvent` frame. Returns whether it moved anything user-visible.
+    private func ingest(event: [String: Any], into progress: inout AgentProgress) -> Bool {
+        guard let type = event["type"] as? String else { return false }
+        switch type {
+        case "run_start":
+            // The handle `cmd --resume` continues from — emitted up front, so a
+            // follow-up stays possible even if the round is later interrupted.
+            guard let sid = event["sessionId"] as? String, !sid.isEmpty else { return false }
+            progress.sessionID = sid
+            return true
+        case "model_request_start":
+            guard let model = event["model"] as? String, !model.isEmpty else { return false }
+            progress.model = model
+            return true
+        case "model_request_end":
+            // `inputTokens` is the request's full prompt = what the turn occupied of
+            // the context window (the same semantic codex's `input_tokens` carries).
+            guard let usage = event["usage"] as? [String: Any],
+                  let input = usage["inputTokens"] as? Int, input > 0 else { return false }
+            progress.contextUsed = input
+            // One event per model call — summing them gives the run's real token
+            // cost for Stats. (camelCase keys here; this dialect is its own.)
+            TokenMeter.shared.record(input: input,
+                                     output: usage["outputTokens"] as? Int ?? 0,
+                                     provider: "Command Code")
+            return true
+        case "text_delta":
+            guard let delta = event["delta"] as? String, !delta.isEmpty else { return false }
+            streamedText += delta
+            // The paragraph grows in the trail as it's written, and its tail
+            // rolls through the ticker so the collapsed card shows motion
+            // between tool calls.
+            stream.close(StreamingBlocks.thinking)
+            stream.append(delta, slot: StreamingBlocks.narration,
+                          kind: .plain, into: &progress)
+            progress.activity = stream.ticker(StreamingBlocks.narration)
+            return true
+        case "thinking_start", "thinking_delta":
+            if let delta = event["delta"] as? String, !delta.isEmpty {
+                stream.close(StreamingBlocks.narration)
+                stream.append(delta, slot: StreamingBlocks.thinking,
+                              kind: .thinking, into: &progress)
+            }
+            progress.activity = L("agent.thinking")
+            return true
+        case "tool_running":
+            guard let id = event["toolCallId"] as? String,
+                  let name = event["toolName"] as? String else { return false }
+            openTools[id] = name
+            // A tool call closes whatever prose was being written: the next
+            // paragraph is a new thought, not a continuation of this one.
+            stream.closeAll()
+            // The plan is ONE row, rewritten wherever it first appeared.
+            let items = name == "todo_write" ? Self.todos(in: event) : []
+            if !items.isEmpty {
+                let encoded = AgentTodo.encode(items)
+                if let planEntry {
+                    progress.rewrites.append((planEntry, AgentTodo.title(items), encoded))
+                } else {
+                    let entry = AgentLogEntry(id: UUID(), title: AgentTodo.title(items),
+                                              mono: false, detail: encoded, kind: .todo)
+                    planEntry = entry.id
+                    progress.entries.append(entry)
+                }
+                return true
+            }
+            let title = Self.title(tool: name, description: event["description"] as? String)
+            progress.activity = String(title.prefix(80))
+            if openEntries[id] == nil {
+                // A write / edit carries the text it's about to apply — draw it.
+                let patch = Self.patch(tool: name, input: event["input"])
+                let entry = AgentLogEntry(
+                    id: UUID(),
+                    title: AgentDiff.title(String(title.prefix(200)), patch: patch),
+                    mono: Self.isMono(tool: name),
+                    detail: patch.isEmpty ? nil : patch,
+                    kind: patch.isEmpty ? .plain : .diff)
+                openEntries[id] = entry.id
+                progress.entries.append(entry)
+            }
+            return true
+        case "tool_completed":
+            guard let id = event["toolCallId"] as? String else { return false }
+            let name = (event["toolName"] as? String) ?? openTools[id] ?? ""
+            openTools[id] = nil
+            // A write / edit is a changed file — what the run's summary counts.
+            if ["write_file", "edit_file"].contains(name), let path = Self.path(in: event) {
+                progress.changedFiles.append((path as NSString).lastPathComponent)
+            }
+            guard let entryID = openEntries.removeValue(forKey: id) else { return true }
+            progress.completedEntries.append(entryID)
+            let output = Self.text(inResultOf: event["result"])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !output.isEmpty {
+                progress.details.append((entryID, String(output.suffix(2000)), false))
+            }
+            return true
+        case "tool_errored", "tool_denied":
+            guard let id = event["toolCallId"] as? String else { return false }
+            openTools[id] = nil
+            guard let entryID = openEntries.removeValue(forKey: id) else { return true }
+            progress.completedEntries.append(entryID)
+            guard let detail = event["error"] as? String, !detail.isEmpty else { return true }
+            // A failed call replaces whatever the row was showing — including a
+            // patch drawn from arguments the tool then refused.
+            progress.details.append((entryID, String(detail.suffix(2000)), true))
+            return true
+        case "run_error":
+            sawTerminal = true
+            failure = (event["error"] as? String)
+                ?? ((event["error"] as? [String: Any])?["message"] as? String)
+                ?? "unknown error"
+            return false
+        default:
+            return false   // turn_start / message_update / subagent_* / …
+        }
+    }
+
+    /// The work-trail title for a tool call. The CLI composes its own one-line
+    /// `description` for each call ("Read src/App.swift", "npm test") — that is the
+    /// best label available; the tool name is the fallback when it sends none.
+    private static func title(tool: String, description: String?) -> String {
+        let d = (description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard d.isEmpty else {
+            return ["shell_command", "powershell"].contains(tool) ? "$ " + d : d
+        }
+        return tool
+    }
+
+    /// Terminal-ish entries (commands, files, searches) render monospaced; the
+    /// conversational tools read as prose. Mirrors the codex/claude parsers.
+    private static func isMono(tool: String) -> Bool {
+        !["ask_user_question", "todo_write", "enter_plan_mode", "exit_plan_mode"]
+            .contains(tool)
+    }
+
+    /// The patch a write/edit is about to apply, when the call's input carries the
+    /// before/after text. Command Code's tool arguments follow the same shape
+    /// Claude's do; an input we can't read leaves the row a plain line.
+    private static func patch(tool: String, input: Any?) -> String {
+        guard ["edit_file", "write_file"].contains(tool),
+              let input = input as? [String: Any] else { return "" }
+        func str(_ dict: [String: Any], _ keys: [String]) -> String {
+            for k in keys { if let v = dict[k] as? String, !v.isEmpty { return v } }
+            return ""
+        }
+        let oldKeys = ["old_string", "oldText", "old_text", "old"]
+        let newKeys = ["new_string", "newText", "new_text", "new"]
+        // A batched edit (an `edits` array) is the shape both pi and Claude's
+        // MultiEdit use; a single replacement sits at the top level.
+        if let edits = input["edits"] as? [[String: Any]], !edits.isEmpty {
+            return AgentDiff.combined(edits.map {
+                AgentDiff.replacement(old: str($0, oldKeys), new: str($0, newKeys))
+            })
+        }
+        let old = str(input, oldKeys)
+        let new = str(input, newKeys)
+        if !old.isEmpty || !new.isEmpty { return AgentDiff.replacement(old: old, new: new) }
+        return AgentDiff.addition(str(input, ["content", "text"]))
+    }
+
+    /// The plan items a `todo_write` call carries, whichever of the two key
+    /// shapes it uses.
+    private static func todos(in event: [String: Any]) -> [(text: String, status: AgentTodo.Status)] {
+        guard let input = event["input"] as? [String: Any] else { return [] }
+        let raw = (input["todos"] as? [[String: Any]]) ?? (input["items"] as? [[String: Any]]) ?? []
+        return raw.compactMap { item in
+            guard let text = (item["content"] as? String) ?? (item["text"] as? String),
+                  !text.isEmpty else { return nil }
+            switch item["status"] as? String {
+            case "completed":   return (text, .done)
+            case "in_progress": return (text, .active)
+            default:
+                return (text, (item["completed"] as? Bool) == true ? .done : .pending)
+            }
+        }
+    }
+
+    /// The file a write/edit touched, from the call's own input when the event
+    /// carries it back.
+    private static func path(in event: [String: Any]) -> String? {
+        guard let input = event["input"] as? [String: Any],
+              let p = (input["file_path"] as? String) ?? (input["path"] as? String),
+              !p.isEmpty
+        else { return nil }
+        return p
+    }
+
+    /// Flatten a tool result's content blocks (`[{"type":"text","text":…}]`) into one
+    /// string; a bare string result passes through.
+    private static func text(inResultOf result: Any?) -> String {
+        if let s = result as? String { return s }
+        guard let blocks = result as? [[String: Any]] else { return "" }
+        return blocks.compactMap { $0["text"] as? String }.joined(separator: "\n")
+    }
+
+    func appendStderr(_ data: Data) {
+        guard let s = String(data: data, encoding: .utf8) else { return }
+        lock.lock(); defer { lock.unlock() }
+        stderrTail += s
+        if stderrTail.count > 2000 { stderrTail = String(stderrTail.suffix(2000)) }
+    }
+
+    func finish() -> AgentSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        // The result line is the LAST line, so a stream killed mid-flush leaves it
+        // unterminated in the buffer — terminate it and give it one final parse.
+        if !buffer.isEmpty {
+            buffer.append(0x0A)
+            var residue = AgentProgress()
+            _ = drainLines(into: &residue)
+        }
+        // A run cut short before its result line still has whatever it streamed.
+        if finalMessage.isEmpty { finalMessage = streamedText }
+        let tail = stderrTail
+            .split(separator: "\n")
+            .map(String.init)
+            .last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+            ?? ""
+        return AgentSnapshot(finalMessage: finalMessage, failure: failure,
+                             stderrTail: tail, sawTerminal: sawTerminal)
+    }
+}
+
+/// The **pi** dialect (`pi -p --mode json`). Structurally the closest to Command
+/// Code's — one JSON object per line, tool calls as their own frames — but the
+/// events are the framework's own (`docs/json.md`): a `session` header hands over
+/// the id `pi --session` continues, `tool_execution_start` / `tool_execution_end`
+/// bracket each call, `message_update.assistantMessageEvent` carries the token-level
+/// `text_delta` / `thinking_delta`, and each assistant `message_end` closes a model
+/// call with its real usage.
+///
+/// The one shape it lacks is a terminal *result* line: pi ends with `agent_end` +
+/// `agent_settled` and no distilled report, so the report is assembled from the
+/// assistant messages' own text — and a provider refusal arrives as a `message_end`
+/// whose `stopReason` is `"error"`, carrying `errorMessage`, rather than as an error
+/// event of its own.
+private final class PiAgentStreamState: AgentEventParser {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var stderrTail = ""
+    private var finalMessage = ""
+    private var streamedText = ""
+    private var failure: String?
+    private var sawTerminal = false
+    /// toolCallId → the log entry it opened, so `tool_execution_end` can attach the
+    /// tool's output to the entry `tool_execution_start` created.
+    private var openEntries: [String: UUID] = [:]
+    /// toolCallId → tool name, so a completion knows what it completed.
+    private var openTools: [String: String] = [:]
+    /// The narration and the reasoning, grown from `message_update`'s
+    /// token-level deltas; `message_end` hands over the authoritative text for
+    /// the paragraph they built.
+    private var stream = StreamingBlocks()
+
+    func ingest(_ data: Data) -> AgentProgress? {
+        lock.lock(); defer { lock.unlock() }
+        buffer.append(data)
+        var progress = AgentProgress()
+        return drainLines(into: &progress) ? progress : nil
+    }
+
+    /// Parse every complete (newline-terminated) line into `progress`. Caller holds
+    /// the lock.
+    private func drainLines(into progress: inout AgentProgress) -> Bool {
+        var any = false
+        while let nl = buffer.firstIndex(of: 0x0A) {
+            let line = buffer.subdata(in: buffer.startIndex..<nl)
+            buffer.removeSubrange(buffer.startIndex...nl)
+            guard !line.isEmpty,
+                  let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let type = obj["type"] as? String
+            else { continue }
+            switch type {
+            case "session":
+                // The header line, first out of every run — the handle
+                // `pi --session` continues from, available before any work starts
+                // so a follow-up stays possible even if the round is interrupted.
+                guard let sid = obj["id"] as? String, !sid.isEmpty else { continue }
+                progress.sessionID = sid
+                any = true
+            case "message_start":
+                guard let message = obj["message"] as? [String: Any],
+                      message["role"] as? String == "assistant",
+                      let model = message["model"] as? String, !model.isEmpty
+                else { continue }
+                // Reported as the app's own id space (`<pi-provider>/<model>`), so
+                // the chip matches the row that armed it.
+                if let provider = message["provider"] as? String, !provider.isEmpty {
+                    progress.model = "\(provider)/\(model)"
+                } else {
+                    progress.model = model
+                }
+                any = true
+            case "message_update":
+                guard let event = obj["assistantMessageEvent"] as? [String: Any],
+                      let kind = event["type"] as? String
+                else { continue }
+                switch kind {
+                case "text_delta":
+                    guard let delta = event["delta"] as? String, !delta.isEmpty else { continue }
+                    streamedText += delta
+                    // The paragraph grows in the trail as it's written, and its
+                    // tail rolls through the ticker so the collapsed card shows
+                    // motion between tool calls.
+                    stream.close(StreamingBlocks.thinking)
+                    stream.append(delta, slot: StreamingBlocks.narration,
+                                  kind: .plain, into: &progress)
+                    progress.activity = stream.ticker(StreamingBlocks.narration)
+                    any = true
+                case "thinking_start", "thinking_delta":
+                    if let delta = event["delta"] as? String, !delta.isEmpty {
+                        stream.close(StreamingBlocks.narration)
+                        stream.append(delta, slot: StreamingBlocks.thinking,
+                                      kind: .thinking, into: &progress)
+                    }
+                    progress.activity = L("agent.thinking")
+                    any = true
+                default:
+                    continue   // toolcall_start / text_end / thinking_end / …
+                }
+            case "message_end":
+                guard let message = obj["message"] as? [String: Any],
+                      message["role"] as? String == "assistant"
+                else { continue }
+                // One `message_end` per model call, carrying that call's real usage.
+                // `input` is the request's full prompt = what the turn occupied of
+                // the context window (the semantic codex's `input_tokens` carries).
+                if let usage = message["usage"] as? [String: Any] {
+                    let input = usage["input"] as? Int ?? 0
+                    let cacheRead = usage["cacheRead"] as? Int ?? 0
+                    // pi reports cache hits separately from fresh input, but both
+                    // occupy the window — the sum is what the meter should show.
+                    if input + cacheRead > 0 {
+                        progress.contextUsed = input + cacheRead
+                        any = true
+                    }
+                    TokenMeter.shared.record(input: input,
+                                             output: usage["output"] as? Int ?? 0,
+                                             provider: "Pi")
+                }
+                // The report is the assistant's own text, whichever call produced
+                // it — and it's authoritative for the paragraph the deltas built,
+                // so it replaces that entry rather than adding a second copy.
+                if let text = Self.text(in: message["content"]), !text.isEmpty {
+                    finalMessage = text
+                    stream.replace(text, slot: StreamingBlocks.narration,
+                                   kind: .plain, into: &progress)
+                    any = true
+                }
+                stream.closeAll()
+                if message["stopReason"] as? String == "error" {
+                    sawTerminal = true
+                    failure = (message["errorMessage"] as? String)
+                        .flatMap { $0.isEmpty ? nil : $0 } ?? "unknown error"
+                }
+            case "tool_execution_start":
+                guard let id = obj["toolCallId"] as? String,
+                      let name = obj["toolName"] as? String else { continue }
+                openTools[id] = name
+                // A tool call closes whatever prose was being written: the next
+                // paragraph is a new thought, not a continuation of this one.
+                stream.closeAll()
+                let title = Self.title(tool: name, args: obj["args"] as? [String: Any])
+                progress.activity = String(title.prefix(80))
+                if openEntries[id] == nil {
+                    // A write / edit carries the text it's about to apply — draw it.
+                    let patch = Self.patch(tool: name, args: obj["args"])
+                    let entry = AgentLogEntry(
+                        id: UUID(),
+                        title: AgentDiff.title(String(title.prefix(200)), patch: patch),
+                        mono: true,
+                        detail: patch.isEmpty ? nil : patch,
+                        kind: patch.isEmpty ? .plain : .diff)
+                    openEntries[id] = entry.id
+                    progress.entries.append(entry)
+                }
+                any = true
+            case "tool_execution_end":
+                guard let id = obj["toolCallId"] as? String else { continue }
+                let name = (obj["toolName"] as? String) ?? openTools[id] ?? ""
+                openTools[id] = nil
+                // A write / edit is a changed file — what the run's summary counts.
+                if ["write", "edit"].contains(name), let path = Self.path(in: obj["args"]) {
+                    progress.changedFiles.append((path as NSString).lastPathComponent)
+                }
+                any = true
+                guard let entryID = openEntries.removeValue(forKey: id) else { continue }
+                progress.completedEntries.append(entryID)
+                let output = Self.text(inResultOf: obj["result"])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !output.isEmpty {
+                    progress.details.append((entryID, String(output.suffix(2000)), false))
+                }
+            case "agent_end", "agent_settled":
+                // pi's terminal pair. There is no distilled result line, so the
+                // report is whatever the assistant last said — already in the
+                // trail, put there by the deltas and corrected at `message_end`.
+                sawTerminal = true
+                if finalMessage.isEmpty { finalMessage = streamedText }
+                stream.closeAll()
+            default:
+                break   // agent_start / turn_start / turn_end / queue_update / …
+            }
+        }
+        return any
+    }
+
+    /// The work-trail title for a tool call. pi sends no prose `description` (its own
+    /// UI renders each tool's arguments), so the title is composed from the one
+    /// argument that names what the call is doing — the command, the path, the
+    /// pattern — falling back to the bare tool name.
+    private static func title(tool: String, args: [String: Any]?) -> String {
+        func arg(_ keys: [String]) -> String? {
+            for k in keys {
+                if let v = args?[k] as? String,
+                   !v.trimmingCharacters(in: .whitespaces).isEmpty { return v }
+            }
+            return nil
+        }
+        switch tool {
+        case "bash":
+            return "$ " + (arg(["command"]) ?? "")
+        case "read", "write", "edit", "ls":
+            return [tool, arg(["path", "file_path"])].compactMap { $0 }.joined(separator: " ")
+        case "grep", "find":
+            return [tool, arg(["pattern", "query", "regex"])]
+                .compactMap { $0 }.joined(separator: " ")
+        default:
+            return tool
+        }
+    }
+
+    /// The patch a write/edit is about to apply, from the call's own arguments.
+    /// pi's `edit` carries an ARRAY of replacements (`edits: [{oldText, newText}]`,
+    /// verified against the installed build) and `write` the whole file; key
+    /// names are probed rather than assumed, and an unreadable shape leaves the
+    /// row a plain line rather than a wrong patch.
+    private static func patch(tool: String, args: Any?) -> String {
+        guard ["write", "edit"].contains(tool),
+              let args = args as? [String: Any] else { return "" }
+        func str(_ dict: [String: Any], _ keys: [String]) -> String {
+            for k in keys { if let v = dict[k] as? String, !v.isEmpty { return v } }
+            return ""
+        }
+        let oldKeys = ["oldText", "old_string", "old_text", "old"]
+        let newKeys = ["newText", "new_string", "new_text", "new"]
+        if let edits = args["edits"] as? [[String: Any]], !edits.isEmpty {
+            return AgentDiff.combined(edits.map {
+                AgentDiff.replacement(old: str($0, oldKeys), new: str($0, newKeys))
+            })
+        }
+        let old = str(args, oldKeys)
+        let new = str(args, newKeys)
+        if !old.isEmpty || !new.isEmpty { return AgentDiff.replacement(old: old, new: new) }
+        return AgentDiff.addition(str(args, ["content", "text"]))
+    }
+
+    /// The file a write/edit touched, from the call's own arguments.
+    private static func path(in args: Any?) -> String? {
+        guard let args = args as? [String: Any],
+              let p = (args["path"] as? String) ?? (args["file_path"] as? String),
+              !p.isEmpty
+        else { return nil }
+        return p
+    }
+
+    /// Flatten an assistant message's content blocks into its answer text, dropping
+    /// the `thinking` and `toolCall` blocks that share the array.
+    private static func text(in content: Any?) -> String? {
+        guard let blocks = content as? [[String: Any]] else { return nil }
+        let parts = blocks.compactMap { block -> String? in
+            guard block["type"] as? String == "text" else { return nil }
+            return block["text"] as? String
+        }
+        return parts.isEmpty ? nil : parts.joined()
+    }
+
+    /// Flatten a tool result's content blocks (`{"content":[{"type":"text",…}]}`) into
+    /// one string; a bare string result passes through.
+    private static func text(inResultOf result: Any?) -> String {
+        if let s = result as? String { return s }
+        let blocks = (result as? [String: Any])?["content"] as? [[String: Any]]
+            ?? result as? [[String: Any]]
+        guard let blocks else { return "" }
+        return blocks.compactMap { $0["text"] as? String }.joined(separator: "\n")
+    }
+
+    func appendStderr(_ data: Data) {
+        guard let s = String(data: data, encoding: .utf8) else { return }
+        lock.lock(); defer { lock.unlock() }
+        stderrTail += s
+        if stderrTail.count > 2000 { stderrTail = String(stderrTail.suffix(2000)) }
+    }
+
+    func finish() -> AgentSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        // A stream killed mid-flush leaves its last line unterminated in the buffer —
+        // terminate it and give it one final parse.
+        if !buffer.isEmpty {
+            buffer.append(0x0A)
+            var residue = AgentProgress()
+            _ = drainLines(into: &residue)
+        }
+        // A run cut short before its terminal pair still has whatever it streamed.
+        if finalMessage.isEmpty { finalMessage = streamedText }
+        let tail = stderrTail
+            .split(separator: "\n")
+            .map(String.init)
+            .last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+            ?? ""
+        return AgentSnapshot(finalMessage: finalMessage, failure: failure,
+                             stderrTail: tail, sawTerminal: sawTerminal)
+    }
+}

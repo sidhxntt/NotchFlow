@@ -1,0 +1,43 @@
+<h2>Three ways to achieve full feature parity</h2>
+<p class="subtitle">All three include Notchi chat/agents and all Boring Notch features. The difference is where the product boundary lives.</p>
+
+<div class="cards">
+  <div class="card" data-choice="adapter" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:linear-gradient(145deg,#050505,#172033);padding:20px;min-height:190px">
+      <div style="padding:14px;border:1px solid #6366f1;border-radius:13px;color:#fff;font-weight:700">Notchi app + UI</div>
+      <div style="text-align:center;font-size:24px;margin:9px;color:#c4b5fd">↓</div>
+      <div style="padding:14px;border:1px solid #475569;border-radius:13px;color:#e2e8f0">Ported Boring services<br><small>adapters · one state model</small></div>
+    </div>
+    <div class="card-body">
+      <h3>A. Native integration — recommended</h3>
+      <p>Keep one Notchi application, port Boring’s services and models into feature modules, and rebuild every visible surface in the Notchi design system.</p>
+    </div>
+  </div>
+  <div class="card" data-choice="merge" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:linear-gradient(145deg,#050505,#33201c);padding:20px;min-height:190px">
+      <div style="padding:14px;border:1px solid #fb923c;border-radius:13px;color:#fff;font-weight:700">Combined source target</div>
+      <div style="text-align:center;font-size:24px;margin:9px;color:#fdba74">↕</div>
+      <div style="padding:14px;border:1px solid #475569;border-radius:13px;color:#e2e8f0">Notchi + Boring views<br><small>shared globals &amp; dependencies</small></div>
+    </div>
+    <div class="card-body">
+      <h3>B. Literal source merge</h3>
+      <p>Copy the Boring project almost wholesale into the root target and replace or suppress its UI. Fastest initial transplant; highest collision and maintenance risk.</p>
+    </div>
+  </div>
+  <div class="card" data-choice="sidecar" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:linear-gradient(145deg,#050505,#123128);padding:20px;min-height:190px">
+      <div style="padding:14px;border:1px solid #34d399;border-radius:13px;color:#fff;font-weight:700">Notchi app</div>
+      <div style="text-align:center;font-size:24px;margin:9px;color:#6ee7b7">⇄ IPC</div>
+      <div style="padding:14px;border:1px solid #475569;border-radius:13px;color:#e2e8f0">Boring helper app<br><small>separate lifecycle</small></div>
+    </div>
+    <div class="card-body">
+      <h3>C. Sidecar integration</h3>
+      <p>Keep Boring as a helper process and surface its state in Notchi. Least intrusive initially, but violates the single-app product goal and complicates installation.</p>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros"><h4>Why A is the fit</h4><ul><li>One app and one <code>make run</code></li><li>Notchi stays visually and behaviorally coherent</li><li>Boring features become agent-callable capabilities</li></ul></div>
+  <div class="cons"><h4>Cost</h4><ul><li>It is a real port, not a blind copy</li><li>Private/XPC code needs isolated optional modules</li><li>Full parity should be delivered in phases</li></ul></div>
+</div>

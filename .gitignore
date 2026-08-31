@@ -1,0 +1,71 @@
+# Xcode build output
+build/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Agent local state — never published
+.claude/
+.codex/
+.commandcode/
+.superpowers/
+.agents/
+references/
+
+# Local scratch notes
+temp.md
+
+# Internal working docs — kept local only, never published
+AGENTS.md
+CLAUDE.md
+
+# Landing page / front-end — kept local only, deployed via Vercel, never
+# published to this repo. Includes ROADMAP/reviews docs that lived here too.
+docs/
+# Guard for the local-only roadmap docs above — useless to anyone cloning the
+# repo (they have no roadmap files), and its text describes the internal flow.
+scripts/check-roadmap.sh
+
+# Marketing video projects — local-only HyperFrames source + heavy binary
+# artifacts (PNG snapshots, mp3 SFX). Like docs/, these are promo assets that
+# don't belong in the app repo.
+videos/
+
+# Generated / scratch output — promo renders, exported docs, PDF page dumps,
+# preview HTML. All regenerable, none of it belongs in the app repo.
+output/
+tmp/
+.readme-preview.html
+
+# Local dev seeding tool — writes fake history into Application Support.
+scripts/seed-history.py
+
+# Misc
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3

@@ -1,0 +1,153 @@
+name: Release
+
+# Push a tag like v1.0.0 to build the app and publish a GitHub Release.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # needed to create the release
+
+jobs:
+  build:
+    # macos-26 ships Xcode 26.x, required for the macOS 26 Liquid Glass
+    # APIs (.glassEffect). Older runners (macos-14/15) cannot compile this.
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Guard against version regression
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Refuse to publish a tag whose version is OLDER than the newest
+          # already-published release. This catches a mistaken push to a stale
+          # tag (e.g. a `--follow-tags` push re-sending an old v1.0.8) before it
+          # can overwrite "Latest" with a regression.
+          new="${GITHUB_REF_NAME#v}"
+          # Compare against the HIGHEST version across all published releases —
+          # NOT GitHub's "Latest" marker, which can itself be wrong (a stale tag
+          # re-published out of order can grab "Latest"). sort -V gives us the
+          # true newest version regardless of which release is flagged Latest.
+          latest="$(gh release list --json tagName --jq '.[].tagName' 2>/dev/null | sed 's/^v//' | sort -V | tail -n1 || true)"
+          if [ -z "$latest" ]; then
+            echo "No published release yet — nothing to compare against. Proceeding."
+            exit 0
+          fi
+          highest="$(printf '%s\n%s\n' "$new" "$latest" | sort -V | tail -n1)"
+          if [ "$new" != "$latest" ] && [ "$highest" = "$latest" ]; then
+            echo "::error::Refusing to publish v$new — it is older than the newest published release v$latest. This usually means the wrong tag was pushed (e.g. via --follow-tags). Push the intended tag explicitly: git push origin v<new>."
+            exit 1
+          fi
+          echo "Version check OK: publishing v$new (newest published is v$latest)."
+
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.5.app
+          xcodebuild -version
+
+      # Signing with a real certificate is what keeps the app's designated
+      # requirement stable across releases. With the previous ad-hoc signature
+      # the DR was a bare `cdhash H"..."` — the hash of one exact binary — so
+      # every release invalidated the TCC record behind the Accessibility grant
+      # and users had to re-authorise the app each time. See
+      # scripts/make-signing-cert.sh.
+      - name: Import signing certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.SIGNING_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        run: |
+          if [ -z "$CERT_P12_BASE64" ] || [ -z "$CERT_PASSWORD" ]; then
+            echo "::error::Missing SIGNING_CERT_P12 / SIGNING_CERT_PASSWORD secrets. Run scripts/make-signing-cert.sh locally and upload them. Refusing to publish an ad-hoc-signed build: it would reset every user's Accessibility permission."
+            exit 1
+          fi
+          KEYCHAIN="$RUNNER_TEMP/notchflow-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "SIGN_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/id.p12"
+          security import "$RUNNER_TEMP/id.p12" -k "$KEYCHAIN" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+
+          # A self-signed certificate that is merely present is NOT usable:
+          # `find-identity` reports CSSMERR_TP_NOT_TRUSTED and codesign fails with
+          # "no identity found". It has to be trusted for the codeSign policy.
+          openssl pkcs12 -in "$RUNNER_TEMP/id.p12" -clcerts -nokeys \
+            -passin "pass:$CERT_PASSWORD" -out "$RUNNER_TEMP/cert.pem" -legacy 2>/dev/null \
+            || openssl pkcs12 -in "$RUNNER_TEMP/id.p12" -clcerts -nokeys \
+                 -passin "pass:$CERT_PASSWORD" -out "$RUNNER_TEMP/cert.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain "$RUNNER_TEMP/cert.pem"
+
+          # codesign resolves identities through the search list.
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"')
+
+          rm -f "$RUNNER_TEMP/id.p12"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: Build (Release)
+        run: |
+          # Stamp the tag into the bundle (Info.plist reads $(MARKETING_VERSION));
+          # the in-app updater compares this version against the latest release.
+          # Signing is deliberately left off here and done in the next step, so
+          # that CI and the local dev loop go through the exact same script.
+          xcodebuild \
+            -project NotchFlow.xcodeproj \
+            -scheme NotchFlow \
+            -configuration Release \
+            -derivedDataPath build \
+            MARKETING_VERSION="${GITHUB_REF_NAME#v}" \
+            CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Sign
+        env:
+          NOTCHFLOW_SIGN_KEYCHAIN: ${{ env.SIGN_KEYCHAIN }}
+          # No ad-hoc fallback in CI. A silently ad-hoc-signed release is the
+          # exact regression this whole change exists to prevent.
+          NOTCHFLOW_SIGN_REQUIRED: "1"
+        run: |
+          APP="build/Build/Products/Release/NotchFlow.app"
+          test -d "$APP" || { echo "::error::App not found at $APP"; exit 1; }
+          ./scripts/codesign-app.sh "$APP"
+
+      - name: Package
+        run: |
+          APP="build/Build/Products/Release/NotchFlow.app"
+          # Zip preserving the bundle (ditto, not zip, for correct macOS metadata).
+          ditto -c -k --keepParent "$APP" "NotchFlow-${GITHUB_REF_NAME}.zip"
+          ls -la NotchFlow-*.zip
+
+      - name: Clean up keychain
+        if: always()
+        run: |
+          if [ -n "${SIGN_KEYCHAIN:-}" ] && [ -f "$SIGN_KEYCHAIN" ]; then
+            security list-keychains -d user -s $(security list-keychains -d user | tr -d '"' | grep -v "$SIGN_KEYCHAIN") || true
+            security delete-keychain "$SIGN_KEYCHAIN" || true
+          fi
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: NotchFlow-*.zip
+          generate_release_notes: true
+          body: |
+            ### Install
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/install.sh | bash
+            ```
+
+            Or download the `.zip` below, unzip, and drag **NotchFlow.app** into Applications.
+
+            > The app is not notarized. The installer clears the quarantine flag for you;
+            > if you install manually, run `xattr -dr com.apple.quarantine /Applications/NotchFlow.app`.

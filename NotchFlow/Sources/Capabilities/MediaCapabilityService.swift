@@ -1,0 +1,606 @@
+import AppKit
+import Foundation
+
+public enum MediaCommand: Equatable, Sendable {
+    case playPause, next, previous
+    case seek(TimeInterval)
+    case setVolume(Double)
+}
+
+@MainActor
+public protocol MediaControlling: AnyObject {
+    var source: MediaSource { get }
+    var state: MediaState { get }
+    func refresh() async -> MediaState
+    func perform(_ command: MediaCommand) async
+}
+
+@MainActor
+protocol MediaArtworkProviding: AnyObject {
+    func artwork(for state: MediaState) -> Data?
+}
+
+@MainActor
+protocol MediaErrorReporting: AnyObject {
+    var mediaError: String? { get }
+}
+
+/// The media framework reports artwork independently from the richer direct
+/// Spotify/Music metadata. Keep the most recently reported image per source so
+/// a harmless title-format difference cannot hide a valid cover.
+public struct MediaArtworkCache: Sendable {
+    /// Covers above this are not album art — refuse them rather than write
+    /// megabytes to the cache directory on every track change.
+    public static let maximumArtworkBytes = 4 * 1024 * 1024
+
+    private var artworkBySource: [MediaSource: Data] = [:]
+
+    public init() {}
+
+    public mutating func store(_ artwork: Data, for source: MediaSource) {
+        guard !artwork.isEmpty, artwork.count <= Self.maximumArtworkBytes else { return }
+        artworkBySource[source] = artwork
+    }
+
+    public func artwork(for source: MediaSource) -> Data? {
+        artworkBySource[source]
+    }
+
+    public var sources: [MediaSource] { Array(artworkBySource.keys) }
+}
+
+/// Ports Boring Notch's media-controller concept into NotchFlow's single state store.
+/// The active audible controller wins unless a caller has explicitly pinned a source.
+@MainActor
+public final class MediaCapabilityService {
+    private var controllers: [any MediaControlling]
+    private var pinnedSource: MediaSource?
+    public private(set) var state: MediaState = .inactive
+    /// A playback command or Automation request can fail while the media state
+    /// remains valid. Keep the reason separate so the UI never has to pretend a
+    /// blank player means nothing happened.
+    public private(set) var mediaError: String?
+
+    public init(controllers: [any MediaControlling]? = nil) {
+        if let controllers {
+            self.controllers = controllers
+        } else {
+            var defaults: [any MediaControlling] = [
+                AppleScriptMediaController(source: .appleMusic),
+                AppleScriptMediaController(source: .spotify)
+            ]
+            if let browserNowPlaying = MediaRemoteAdapterController() {
+                defaults.append(browserNowPlaying)
+            } else {
+                NSLog("NotchFlow media adapter is unavailable; browser now-playing sessions will not be observed.")
+            }
+            self.controllers = defaults
+        }
+    }
+
+    public func refresh() async -> MediaState {
+        var candidates: [MediaState] = []
+        for controller in controllers {
+            candidates.append(await controller.refresh())
+        }
+        mediaError = controllers.compactMap { ($0 as? any MediaErrorReporting)?.mediaError }.first
+        candidates = enrichingArtwork(in: candidates)
+        if let pinnedSource, let pinned = candidates.first(where: { $0.source == pinnedSource }) {
+            state = pinned
+        } else {
+            let playing = candidates.filter(\.isActive)
+            let visible = playing.isEmpty ? candidates.filter(\.hasTrack) : playing
+            state = visible.max(by: Self.ranksBelow) ?? .inactive
+        }
+        return state
+    }
+
+    /// Which of two candidates the notch should show. A dedicated player only
+    /// outranks a browser session while it is actually doing something more
+    /// recent than the browser: AppleScript's `current track` stays populated
+    /// in Music.app for days after playback stops, so an unconditional
+    /// dedicated-wins rule would let a stale Music.app window beat a browser
+    /// tab that was playing moments ago and has only just paused. Starting
+    /// Spotify (or Music) still hands over the notch immediately, since a
+    /// dedicated source that is actually playing always wins. Within the same
+    /// rank, or when neither dedicated source is playing, the most recently
+    /// audible one wins, as before.
+    static func ranksBelow(_ lhs: MediaState, _ rhs: MediaState) -> Bool {
+        let lhsDedicated = lhs.source != .nowPlaying
+        let rhsDedicated = rhs.source != .nowPlaying
+        if lhsDedicated != rhsDedicated {
+            let dedicated = lhsDedicated ? lhs : rhs
+            let browser = lhsDedicated ? rhs : lhs
+            let dedicatedWins = dedicated.isPlaying || dedicated.lastAudibleAt > browser.lastAudibleAt
+            return lhsDedicated ? !dedicatedWins : dedicatedWins
+        }
+        return lhs.lastAudibleAt < rhs.lastAudibleAt
+    }
+
+    public func select(_ source: MediaSource?) async {
+        pinnedSource = source
+        _ = await refresh()
+    }
+
+    public func perform(_ command: MediaCommand) async {
+        let target = controllers.first(where: { $0.source == state.source }) ?? controllers.first
+        guard let target else { return }
+        await target.perform(command)
+        state = enrichingArtwork(in: [await target.refresh()]).first ?? .inactive
+        mediaError = (target as? any MediaErrorReporting)?.mediaError
+    }
+
+    /// Direct player controls return metadata but not album artwork. Reapply the
+    /// adapter's cached artwork on every refresh path, including the immediate
+    /// one after pause/play, so the UI never flashes its placeholder.
+    private func enrichingArtwork(in candidates: [MediaState]) -> [MediaState] {
+        let artworkProviders = controllers.compactMap { $0 as? any MediaArtworkProviding }
+        return candidates.map { candidate in
+            guard candidate.artworkData == nil,
+                  let artwork = artworkProviders.lazy.compactMap({ $0.artwork(for: candidate) }).first else {
+                return candidate
+            }
+            var enriched = candidate
+            enriched.artworkData = artwork
+            return enriched
+        }
+    }
+
+    public func launch(_ source: MediaSource) {
+        let target = source.launchTarget
+        if let identifier = target.applicationBundleIdentifier,
+           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, _ in }
+        } else if let url = target.fallbackURL {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+/// Metadata emitted by Boring Notch's MediaRemote adapter for the system's
+/// current browser/media session. Native Music and Spotify are filtered by the
+/// controller below so they continue to use their richer AppleScript controls.
+public struct MediaRemotePayload: Codable, Sendable {
+    public let title: String?
+    public let artist: String?
+    public let album: String?
+    public let duration: TimeInterval?
+    public let durationMicros: TimeInterval?
+    public let elapsedTime: TimeInterval?
+    public let elapsedTimeMicros: TimeInterval?
+    public let elapsedTimeNow: TimeInterval?
+    public let elapsedTimeNowMicros: TimeInterval?
+    public let artworkData: String?
+    public let bundleIdentifier: String?
+    public let parentApplicationBundleIdentifier: String?
+    public let playing: Bool?
+
+    public func mediaState(previous: MediaState) -> MediaState {
+        guard let title, !title.isEmpty else { return .inactive }
+        return MediaState(
+            source: .nowPlaying,
+            title: title,
+            artist: artist ?? "",
+            album: album ?? "",
+            isPlaying: playing ?? false,
+            position: (elapsedTimeNow ?? elapsedTime
+                       ?? elapsedTimeNowMicros.map { $0 / 1_000_000 }
+                       ?? elapsedTimeMicros.map { $0 / 1_000_000 } ?? 0),
+            duration: duration ?? durationMicros.map { $0 / 1_000_000 } ?? 0,
+            volume: previous.volume,
+            artworkData: artworkData.flatMap { Data(base64Encoded: $0) },
+            lastAudibleAt: playing == true ? .now : previous.lastAudibleAt
+        )
+    }
+
+    var originatingBundleIdentifier: String? {
+        parentApplicationBundleIdentifier ?? bundleIdentifier
+    }
+
+    public var artworkSource: MediaSource {
+        switch originatingBundleIdentifier {
+        case "com.spotify.client": .spotify
+        case "com.apple.Music": .appleMusic
+        default: .nowPlaying
+        }
+    }
+}
+
+/// `mediaremote-adapter.pl stream` wraps each now-playing update in a data
+/// envelope. Keeping this decode separate also lets direct adapter payloads
+/// remain accepted for diagnostics and future adapters.
+public struct MediaRemoteStreamEnvelope: Decodable, Sendable {
+    public let payload: MediaRemotePayload?
+
+    public static func decodePayload(from data: Data) throws -> MediaRemotePayload? {
+        if let envelope = try? JSONDecoder().decode(Self.self, from: data) {
+            return envelope.payload
+        }
+        return try JSONDecoder().decode(MediaRemotePayload.self, from: data)
+    }
+}
+
+/// Boring Notch's MediaRemote adapter gives us macOS Now Playing sessions,
+/// including supported Safari/Chromium web players, without browser-specific
+/// scripting. It is intentionally a cache: `refresh()` remains instant while
+/// the helper continuously streams new metadata into `state`.
+@MainActor
+public final class MediaRemoteAdapterController: MediaControlling, MediaArtworkProviding, MediaErrorReporting {
+    public let source: MediaSource = .nowPlaying
+    public private(set) var state: MediaState = .inactive
+    public private(set) var mediaError: String?
+    private let scriptURL: URL
+    private let frameworkURL: URL
+    private var process: Process?
+    private var lineBuffer = ""
+    private var artworkCache = MediaArtworkCache()
+    /// False only while tearing down, so a helper exit can be told apart from a
+    /// deliberate stop.
+    private var wantsStreaming = true
+
+    public init?() {
+        guard let scriptURL = Bundle.main.url(forResource: "mediaremote-adapter", withExtension: "pl"),
+              let frameworkURL = Bundle.main.privateFrameworksURL?.appendingPathComponent("MediaRemoteAdapter.framework") else {
+            return nil
+        }
+        self.scriptURL = scriptURL
+        self.frameworkURL = frameworkURL
+        // Spotify and Apple Music covers arrive ONLY on the framework's stream
+        // (their own metadata path carries no image), so an in-memory-only cache
+        // meant every relaunch showed the placeholder until the next track
+        // change. Seed from disk so the cover the app had is the cover it opens
+        // with.
+        seedArtworkFromDisk()
+        beginStreaming()
+    }
+
+    deinit {
+        // Terminating alone leaves the handler racing a dead process; clear the
+        // respawn intent first so the exit isn't read as a crash.
+        wantsStreaming = false
+        process?.terminate()
+    }
+
+    public func refresh() async -> MediaState { state }
+
+    func artwork(for state: MediaState) -> Data? {
+        artworkCache.artwork(for: state.source)
+    }
+
+    public func perform(_ command: MediaCommand) async {
+        let arguments: [String]
+        switch command {
+        case .playPause: arguments = ["send", "2"]
+        case .next: arguments = ["send", "4"]
+        case .previous: arguments = ["send", "5"]
+        case let .seek(position): arguments = ["seek", String(Int64(max(0, position) * 1_000_000))]
+        case .setVolume: return // MediaRemote does not expose browser volume control.
+        }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        task.arguments = [scriptURL.path, frameworkURL.path] + arguments
+        do {
+            try task.run()
+            mediaError = nil
+        } catch {
+            mediaError = "Couldn't control the browser player: \(error.localizedDescription)"
+        }
+    }
+
+    private func beginStreaming() {
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        task.arguments = [scriptURL.path, frameworkURL.path, "stream", "--no-diff", "--debounce=250"]
+        task.standardOutput = pipe
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            Task { @MainActor [weak self] in
+                self?.consume(data)
+            }
+        }
+        // The helper is the app's only window onto the system's now-playing
+        // state. If it dies — crash, a stray `pkill`, a framework hiccup —
+        // nothing else brings it back, and the media surface stays frozen on its
+        // last payload for the rest of the app's life. So it is restarted, with
+        // a pause so a helper that cannot start does not spin.
+        task.terminationHandler = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, wantsStreaming, process === task else { return }
+                process = nil
+                self.mediaError = "Browser now-playing helper stopped; reconnecting."
+                try? await Task.sleep(for: .seconds(2))
+                guard wantsStreaming, process == nil else { return }
+                beginStreaming()
+            }
+        }
+        do {
+            try task.run()
+            process = task
+        } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
+            task.terminationHandler = nil
+            mediaError = "Couldn't start browser now-playing: \(error.localizedDescription)"
+        }
+    }
+
+    private func consume(_ data: Data) {
+        lineBuffer += String(decoding: data, as: UTF8.self)
+        while let newline = lineBuffer.firstIndex(of: "\n") {
+            let line = String(lineBuffer[..<newline])
+            lineBuffer.removeSubrange(...newline)
+            guard let payload = try? MediaRemoteStreamEnvelope.decodePayload(from: Data(line.utf8)) else { continue }
+            let payloadState = payload.mediaState(previous: state)
+            // The adapter emits an empty payload when every now-playing session
+            // has stopped. It is a state transition, not malformed data: keeping
+            // the last populated card here made finished playback look eternal.
+            guard payloadState.hasTrack,
+                  let bundleIdentifier = payload.originatingBundleIdentifier else {
+                state = .inactive
+                continue
+            }
+            if let artwork = payloadState.artworkData, payloadState.hasTrack {
+                let source = payload.artworkSource
+                let known = artworkCache.artwork(for: source)
+                artworkCache.store(artwork, for: source)
+                if known != artwork { persistArtwork(artwork, for: source) }
+            }
+            guard bundleIdentifier != "com.spotify.client", bundleIdentifier != "com.apple.Music" else { continue }
+            state = payloadState
+        }
+    }
+
+    // MARK: - Artwork on disk
+
+    /// Caches, not Application Support: a cover is recoverable from the player,
+    /// so it belongs where the system may reclaim it.
+    private static func artworkDirectory() -> URL? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        else { return nil }
+        let bundle = Bundle.main.bundleIdentifier ?? "notchflow"
+        return caches.appendingPathComponent(bundle, isDirectory: true)
+            .appendingPathComponent("media-artwork", isDirectory: true)
+    }
+
+    private static func artworkURL(for source: MediaSource) -> URL? {
+        artworkDirectory()?.appendingPathComponent("\(source.rawValue).artwork")
+    }
+
+    private func persistArtwork(_ data: Data, for source: MediaSource) {
+        guard data.count <= MediaArtworkCache.maximumArtworkBytes,
+              let directory = Self.artworkDirectory(),
+              let url = Self.artworkURL(for: source) else { return }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private func seedArtworkFromDisk() {
+        for source in MediaSource.allCases {
+            guard let url = Self.artworkURL(for: source),
+                  let data = try? Data(contentsOf: url) else { continue }
+            artworkCache.store(data, for: source)
+        }
+    }
+}
+
+/// A direct adaptation of Boring Notch's AppleScript Spotify/Apple Music controls.
+/// It intentionally has no Boring UI dependency and can run inside NotchFlow's target.
+@MainActor
+public final class AppleScriptMediaController: MediaControlling, MediaErrorReporting {
+    private struct PlaybackSnapshot: Sendable {
+        let isPlaying: Bool
+        let title: String
+        let artist: String
+        let album: String
+        let position: Double
+        let duration: Double
+        let volume: Double
+    }
+    private struct PlaybackResult: Sendable {
+        let snapshot: PlaybackSnapshot?
+        let error: String?
+    }
+
+    public let source: MediaSource
+    public private(set) var state: MediaState
+    public private(set) var mediaError: String?
+
+    /// The cover for `artworkTrack`, fetched from the player itself. MediaRemote
+    /// does not reliably carry artwork for Spotify or Music (a browser session
+    /// holding the now-playing slot emits none at all), so waiting on the stream
+    /// left these two showing the placeholder. Both apps expose their own art:
+    /// Spotify an image URL, Music the raw bytes.
+    private var artwork: Data?
+    /// The track the cached cover belongs to — "title|album", so the fetch runs
+    /// once per track rather than on every one-second refresh.
+    private var artworkTrack: String?
+    private let session: URLSession
+
+    public init(source: MediaSource, session: URLSession = .shared) {
+        self.source = source
+        self.session = session
+        self.state = MediaState(source: source)
+    }
+
+    public func refresh() async -> MediaState {
+        let bundleID = source == .spotify ? "com.spotify.client" : "com.apple.Music"
+        guard NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == bundleID }) else {
+            state = MediaState(source: source)
+            artwork = nil
+            artworkTrack = nil
+            return state
+        }
+        let script: String
+        if source == .spotify {
+            script = """
+            tell application "Spotify"
+                try
+                    set t to current track
+                    return {(player state is playing), name of t, artist of t, album of t, player position, (duration of t) / 1000, sound volume}
+                on error errMsg number errNum
+                    return {"__notch_error__", errNum, errMsg}
+                end try
+            end tell
+            """
+        } else {
+            script = """
+            tell application "Music"
+                try
+                    set t to current track
+                    return {(player state is playing), name of t, artist of t, album of t, player position, duration of t, sound volume}
+                on error errMsg number errNum
+                    return {"__notch_error__", errNum, errMsg}
+                end try
+            end tell
+            """
+        }
+        // NSAppleScript performs a synchronous Apple event. It may wait for a
+        // busy player or Automation consent, so never run it on the UI actor.
+        let result = await Task.detached(priority: .userInitiated) {
+            Self.playbackResult(script)
+        }.value
+        if let error = result.error { mediaError = error }
+        guard let snapshot = result.snapshot else {
+            // A player with no current track reports an AppleScript error. That
+            // is an inactive state, not a reason to leave yesterday's song up.
+            if result.error == nil { state = MediaState(source: source) }
+            return state
+        }
+        let playing = snapshot.isPlaying
+        let title = snapshot.title
+        let album = snapshot.album
+        await refreshArtwork(title: title, album: album)
+        state = MediaState(source: source,
+                           title: title,
+                           artist: snapshot.artist,
+                           album: album,
+                           isPlaying: playing,
+                           position: snapshot.position,
+                           duration: snapshot.duration,
+                           volume: snapshot.volume,
+                           artworkData: artwork,
+                           lastAudibleAt: playing ? .now : state.lastAudibleAt)
+        mediaError = nil
+        return state
+    }
+
+    /// Fetches the cover once per track. A failure caches `nil` for that track
+    /// rather than retrying every second — the enrichment path can still fill it
+    /// from MediaRemote if the stream happens to carry one.
+    private func refreshArtwork(title: String, album: String) async {
+        guard !title.isEmpty else {
+            artwork = nil
+            artworkTrack = nil
+            return
+        }
+        let track = "\(title)|\(album)"
+        guard artworkTrack != track else { return }
+        artworkTrack = track
+        artwork = source == .spotify ? await spotifyArtwork() : await musicArtwork()
+    }
+
+    /// Spotify hands out an image URL (`https://i.scdn.co/image/…`), so the cover
+    /// is one small download — cached against the track above.
+    private func spotifyArtwork() async -> Data? {
+        let script = "tell application \"Spotify\" to return artwork url of current track"
+        let raw = await Task.detached(priority: .utility) {
+            Self.runScalar(script)?.stringValue
+        }.value
+        guard let raw, let url = URL(string: raw), url.scheme?.hasPrefix("http") == true else { return nil }
+        guard let (data, _) = try? await session.data(from: url), !data.isEmpty else { return nil }
+        return data.count <= MediaArtworkCache.maximumArtworkBytes ? data : nil
+    }
+
+    /// Music keeps the image locally, so its bytes come straight back over the
+    /// Apple event — no network at all.
+    private func musicArtwork() async -> Data? {
+        let script = """
+        tell application "Music"
+            try
+                return raw data of artwork 1 of current track
+            on error
+                return missing value
+            end try
+        end tell
+        """
+        let data = await Task.detached(priority: .utility) {
+            Self.runScalar(script)?.data
+        }.value
+        guard let data, !data.isEmpty else { return nil }
+        return data.count <= MediaArtworkCache.maximumArtworkBytes ? data : nil
+    }
+
+    public func perform(_ command: MediaCommand) async {
+        let appName = source == .spotify ? "Spotify" : "Music"
+        let action: String = switch command {
+        case .playPause: "playpause"
+        case .next: "next track"
+        case .previous: "previous track"
+        case .seek(let time): "set player position to \(max(0, time))"
+        case .setVolume(let volume): "set sound volume to \(Int(max(0, min(1, volume)) * 100))"
+        }
+        let script = "tell application \"\(appName)\" to \(action)"
+        let error = await Task.detached(priority: .userInitiated) {
+            Self.automationError(from: script)
+        }.value
+        mediaError = error
+    }
+
+    nonisolated private static func playbackResult(_ source: String) -> PlaybackResult {
+        guard let values = run(source) else { return .init(snapshot: nil, error: nil) }
+        if values.count == 3, values[0].stringValue == "__notch_error__" {
+            let code = values[1].int32Value
+            return .init(snapshot: nil, error: code == -1743
+                         ? "Allow NotchFlow to control the player in System Settings → Privacy & Security → Automation."
+                         : nil)
+        }
+        guard values.count == 7 else { return .init(snapshot: nil, error: nil) }
+        return .init(snapshot: PlaybackSnapshot(isPlaying: values[0].booleanValue,
+                                                title: values[1].stringValue ?? "",
+                                                artist: values[2].stringValue ?? "",
+                                                album: values[3].stringValue ?? "",
+                                                position: values[4].doubleValue,
+                                                duration: values[5].doubleValue,
+                                                volume: Double(values[6].int32Value) / 100),
+                     error: nil)
+    }
+
+    nonisolated private static func automationError(from source: String) -> String? {
+        var error: NSDictionary?
+        _ = NSAppleScript(source: source)?.executeAndReturnError(&error)
+        let code = error?[NSAppleScript.errorNumber] as? Int
+        let message = error?[NSAppleScript.errorMessage] as? String ?? ""
+        return messageForAutomationFailure(message, code: code)
+    }
+
+    nonisolated private static func messageForAutomationFailure(_ message: String, code: Int?) -> String? {
+        guard code == -1743 else { return nil }
+        return "Allow NotchFlow to control the player in System Settings → Privacy & Security → Automation."
+    }
+
+    nonisolated private static func run(_ source: String) -> [NSAppleEventDescriptor]? {
+        guard let result = runScalar(source) else { return nil }
+        return Self.listItems(from: result)
+    }
+
+    /// The raw descriptor, for scripts that answer with ONE value (an artwork URL
+    /// string, a blob of image bytes). `listItems` would flatten those to an
+    /// empty array — a scalar reports no items.
+    nonisolated private static func runScalar(_ source: String) -> NSAppleEventDescriptor? {
+        var error: NSDictionary?
+        guard let result = NSAppleScript(source: source)?.executeAndReturnError(&error),
+              error == nil else { return nil }
+        return result
+    }
+
+    /// Playback commands return a scalar descriptor (often `null`), whereas a
+    /// metadata refresh returns an AppleScript list. Never index a scalar result:
+    /// AppKit traps on the invalid one-based index and terminates the app.
+    nonisolated static func listItems(from result: NSAppleEventDescriptor) -> [NSAppleEventDescriptor] {
+        guard result.numberOfItems > 0 else { return [] }
+        return (1...result.numberOfItems).compactMap { result.atIndex($0) }
+    }
+}

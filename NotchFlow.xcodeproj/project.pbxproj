@@ -1,0 +1,740 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1000010 /* NotchFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001 /* NotchFlowApp.swift */; };
+		A1000011 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000002 /* AppDelegate.swift */; };
+		A1000012 /* NotchPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000003 /* NotchPanel.swift */; };
+		A1000013 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000004 /* DesignSystem.swift */; };
+		A1000014 /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000005 /* AIService.swift */; };
+		A1000015 /* NotchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000006 /* NotchModel.swift */; };
+		A1000016 /* GlassBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000007 /* GlassBackground.swift */; };
+		A1000C10 /* Handwriting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000C11 /* Handwriting.swift */; };
+		A1000C12 /* StrokeInk.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000C13 /* StrokeInk.swift */; };
+		A1000017 /* NotchBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000008 /* NotchBody.swift */; };
+		A1000018 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000009 /* Components.swift */; };
+		A100001A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000A /* ContentView.swift */; };
+		A100001B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000C /* SettingsView.swift */; };
+		A1000051 /* InlineSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000050 /* InlineSettingsView.swift */; };
+		A1000731 /* ModelPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000730 /* ModelPickerView.swift */; };
+		A1000741 /* VendorLogos.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000740 /* VendorLogos.swift */; };
+		A1000C21 /* ImageStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000C20 /* ImageStack.swift */; };
+		A10007E1 /* LucideIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10007E0 /* LucideIcons.swift */; };
+		A100001C /* HotKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000D /* HotKey.swift */; };
+		A1000A21 /* ForceClickHerald.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000A20 /* ForceClickHerald.swift */; };
+		A100001D /* APIKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000E /* APIKeyStore.swift */; };
+		A1000060 /* NotesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000061 /* NotesService.swift */; };
+		A1000750 /* FileNotesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000751 /* FileNotesService.swift */; };
+		A1000064 /* IntentEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000065 /* IntentEngine.swift */; };
+		A1000068 /* RemindersService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000069 /* RemindersService.swift */; };
+		A10000AA /* DiagnosticsLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000BB /* DiagnosticsLog.swift */; };
+		A1000A10 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000A11 /* MenuBarController.swift */; };
+		A1000072 /* UpdaterService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000073 /* UpdaterService.swift */; };
+		A1000074 /* MouseVelocityTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000075 /* MouseVelocityTracker.swift */; };
+		A1000076 /* OpenRouterAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000077 /* OpenRouterAuth.swift */; };
+		A1000790 /* CodexCLIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000791 /* CodexCLIService.swift */; };
+		A1001800 /* CodexAppServerBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001801 /* CodexAppServerBridge.swift */; };
+		A100AA01 /* AgentTranscriptStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA02 /* AgentTranscriptStatus.swift */; };
+		A100AA31 /* AIActivityProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA32 /* AIActivityProject.swift */; };
+		A100AA03 /* AgentModelContextWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA04 /* AgentModelContextWindow.swift */; };
+		A100AA05 /* RestingNotchPriority.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA06 /* RestingNotchPriority.swift */; };
+		A100AA07 /* AlertBannerText.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA08 /* AlertBannerText.swift */; };
+		A1001802 /* AgentApprovalQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001803 /* AgentApprovalQueue.swift */; };
+		A1001804 /* ClaudeHookBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001805 /* ClaudeHookBridge.swift */; };
+		A1001806 /* ClaudeHookPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001807 /* ClaudeHookPayload.swift */; };
+		A1001808 /* CodexAppServerNotification.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001809 /* CodexAppServerNotification.swift */; };
+		A1001810 /* CodexTerminalHookPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001811 /* CodexTerminalHookPayload.swift */; };
+		A1001812 /* CodexTerminalHookBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001813 /* CodexTerminalHookBridge.swift */; };
+		A1000900 /* GrokCLIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000901 /* GrokCLIService.swift */; };
+		A1000920 /* CommandCodeCLIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000921 /* CommandCodeCLIService.swift */; };
+		A1000B10 /* PiCLIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000B11 /* PiCLIService.swift */; };
+		A1000922 /* ShellEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000923 /* ShellEnvironment.swift */; };
+		A10007A0 /* AgentTaskService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10007A1 /* AgentTaskService.swift */; };
+		A10007B0 /* ClaudeCLIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10007B1 /* ClaudeCLIService.swift */; };
+		A10007C0 /* ProxyConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10007C1 /* ProxyConfig.swift */; };
+		A10007D0 /* DetachedSessionWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10007D1 /* DetachedSessionWindow.swift */; };
+		A1000078 /* Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000079 /* Localization.swift */; };
+		A1000080 /* WhatsNewService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000081 /* WhatsNewService.swift */; };
+		A1000340 /* StatsPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000341 /* StatsPane.swift */; };
+		A1000342 /* TokenMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000343 /* TokenMeter.swift */; };
+		A10000C0 /* OnboardingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000C1 /* OnboardingService.swift */; };
+		A10000C2 /* IntroAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000C3 /* IntroAnimation.swift */; };
+		A10000C4 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000C5 /* NotificationService.swift */; };
+		A1000082 /* WhatsNewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000083 /* WhatsNewView.swift */; };
+		A10003AA /* HistoryArchiveWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10003BB /* HistoryArchiveWindow.swift */; };
+		A1000066 /* IntentExamples.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000067 /* IntentExamples.swift */; };
+		A1000071 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000070 /* Assets.xcassets */; };
+		A10004A1 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = A10004A0 /* Fonts */; };
+		A10004B1 /* intro-sunrise.m4a in Resources */ = {isa = PBXBuildFile; fileRef = A10004B0 /* intro-sunrise.m4a */; };
+		A1000C15 /* strokes.bin in Resources */ = {isa = PBXBuildFile; fileRef = A1000C14 /* strokes.bin */; };
+		A10004B3 /* buy-me-a-coffee.gif in Resources */ = {isa = PBXBuildFile; fileRef = A10004B2 /* buy-me-a-coffee.gif */; };
+		A1002001 /* mediaremote-adapter.pl in Resources */ = {isa = PBXBuildFile; fileRef = A1002002 /* mediaremote-adapter.pl */; };
+		A1002003 /* MediaRemoteAdapter.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A1002004 /* MediaRemoteAdapter.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A1000710 /* AgentHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000720 /* AgentHarness.swift */; };
+		A1000711 /* AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000721 /* AgentTools.swift */; };
+		A1000912 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1000913 /* PrivacyInfo.xcprivacy */; };
+		A1001011 /* NotchCapabilityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001001 /* NotchCapabilityStore.swift */; };
+		A1001012 /* MediaCapabilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001002 /* MediaCapabilityService.swift */; };
+		A1001013 /* NotchNowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001003 /* NotchNowPlayingView.swift */; };
+		A1001014 /* NotchShelfView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001004 /* NotchShelfView.swift */; };
+		A1001015 /* UtilityCapabilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001005 /* UtilityCapabilityService.swift */; };
+		A1001016 /* NotchUtilitiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001006 /* NotchUtilitiesView.swift */; };
+		A1001017 /* ShelfItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001007 /* ShelfItem.swift */; };
+		A1001018 /* ShelfPersistenceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001008 /* ShelfPersistenceService.swift */; };
+		A1001019 /* ShelfDropService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001009 /* ShelfDropService.swift */; };
+		A1001020 /* AudioDeviceCapabilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001010 /* AudioDeviceCapabilityService.swift */; };
+		A1001023 /* NotchQuickUtilitiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001022 /* NotchQuickUtilitiesView.swift */; };
+		A1001025 /* FocusTimerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001024 /* FocusTimerStore.swift */; };
+		A1001205 /* AppSupportPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001204 /* AppSupportPaths.swift */; };
+		A1001209 /* CallWindowWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001208 /* CallWindowWatcher.swift */; };
+		A1001211 /* WeatherService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001210 /* WeatherService.swift */; };
+		A1001227 /* ShortcutsCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001226 /* ShortcutsCatalog.swift */; };
+		A1001225 /* ShortcutsUtilityOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001224 /* ShortcutsUtilityOverlayView.swift */; };
+		A1001223 /* DeviceUtilityOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001222 /* DeviceUtilityOverlayView.swift */; };
+		A1001221 /* PowerUtilityOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001220 /* PowerUtilityOverlayView.swift */; };
+		A1001215 /* SystemUtilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001214 /* SystemUtilityService.swift */; };
+		A1001401 /* FileConversionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001400 /* FileConversionService.swift */; };
+		A1001301 /* SystemMonitorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001300 /* SystemMonitorService.swift */; };
+		A1001303 /* ActivityMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001302 /* ActivityMonitorView.swift */; };
+		A1001305 /* AIActivityMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001304 /* AIActivityMonitorView.swift */; };
+		A1001901 /* UtilityFeatureRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001900 /* UtilityFeatureRegistry.swift */; };
+		A1001903 /* UtilityProcessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001902 /* UtilityProcessPolicy.swift */; };
+		A1001905 /* ClipboardHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001904 /* ClipboardHistoryStore.swift */; };
+		A1001907 /* TextSnippetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001906 /* TextSnippetStore.swift */; };
+		A1001909 /* URLCleaningService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001908 /* URLCleaningService.swift */; };
+		A1001911 /* SustainedAlertGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001910 /* SustainedAlertGate.swift */; };
+		A1001913 /* UtilitySettingsBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001912 /* UtilitySettingsBackup.swift */; };
+		A1001915 /* WindowLayoutPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001914 /* WindowLayoutPlanner.swift */; };
+		A1001917 /* DiskImageInstallPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001916 /* DiskImageInstallPlanner.swift */; };
+		A1001919 /* CommandQueryEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001918 /* CommandQueryEvaluator.swift */; };
+		A1001921 /* ClipboardHistoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001920 /* ClipboardHistoryService.swift */; };
+		A1001923 /* ClipboardHistoryOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001922 /* ClipboardHistoryOverlayView.swift */; };
+		A1001213 /* MeetingLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001212 /* MeetingLink.swift */; };
+		A1001203 /* AlertBannerWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001202 /* AlertBannerWatcher.swift */; };
+		A1001201 /* AlertFeedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001200 /* AlertFeedStore.swift */; };
+		A1001091 /* QuickReminderStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001090 /* QuickReminderStore.swift */; };
+		A1001093 /* QuickReminderOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001092 /* QuickReminderOverlayView.swift */; };
+		A1001027 /* QuickNoteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001026 /* QuickNoteStore.swift */; };
+		A1001029 /* NotchUtilityOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001028 /* NotchUtilityOverlay.swift */; };
+		A1001031 /* FocusTimerOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001030 /* FocusTimerOverlayView.swift */; };
+		A1001033 /* QuickNoteOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001032 /* QuickNoteOverlayView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A1000001 /* NotchFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchFlowApp.swift; sourceTree = "<group>"; };
+		A1000002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		A1000003 /* NotchPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchPanel.swift; sourceTree = "<group>"; };
+		A1000004 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		A1000005 /* AIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIService.swift; sourceTree = "<group>"; };
+		A1000720 /* AgentHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHarness.swift; sourceTree = "<group>"; };
+		A1000721 /* AgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTools.swift; sourceTree = "<group>"; };
+		A1000006 /* NotchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchModel.swift; sourceTree = "<group>"; };
+		A1000061 /* NotesService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesService.swift; sourceTree = "<group>"; };
+		A1000751 /* FileNotesService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileNotesService.swift; sourceTree = "<group>"; };
+		A1000065 /* IntentEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentEngine.swift; sourceTree = "<group>"; };
+		A1000069 /* RemindersService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemindersService.swift; sourceTree = "<group>"; };
+		A10000BB /* DiagnosticsLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsLog.swift; sourceTree = "<group>"; };
+		A1000A11 /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
+		A1000073 /* UpdaterService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterService.swift; sourceTree = "<group>"; };
+		A1000075 /* MouseVelocityTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MouseVelocityTracker.swift; sourceTree = "<group>"; };
+		A1000077 /* OpenRouterAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenRouterAuth.swift; sourceTree = "<group>"; };
+		A1000791 /* CodexCLIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexCLIService.swift; sourceTree = "<group>"; };
+		A1001801 /* CodexAppServerBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAppServerBridge.swift; sourceTree = "<group>"; };
+		A100AA02 /* AgentTranscriptStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AgentTranscriptStatus.swift; sourceTree = "<group>"; };
+		A100AA32 /* AIActivityProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AIActivityProject.swift; sourceTree = "<group>"; };
+		A100AA04 /* AgentModelContextWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AgentModelContextWindow.swift; sourceTree = "<group>"; };
+		A100AA06 /* RestingNotchPriority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/RestingNotchPriority.swift; sourceTree = "<group>"; };
+		A100AA08 /* AlertBannerText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AlertBannerText.swift; sourceTree = "<group>"; };
+		A1001803 /* AgentApprovalQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AgentApprovalQueue.swift; sourceTree = "<group>"; };
+		A1001805 /* ClaudeHookBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeHookBridge.swift; sourceTree = "<group>"; };
+		A1001807 /* ClaudeHookPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/ClaudeHookPayload.swift; sourceTree = "<group>"; };
+		A1001809 /* CodexAppServerNotification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/CodexAppServerNotification.swift; sourceTree = "<group>"; };
+		A1001811 /* CodexTerminalHookPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/CodexTerminalHookPayload.swift; sourceTree = "<group>"; };
+		A1001813 /* CodexTerminalHookBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexTerminalHookBridge.swift; sourceTree = "<group>"; };
+		A1000901 /* GrokCLIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokCLIService.swift; sourceTree = "<group>"; };
+		A1000921 /* CommandCodeCLIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCodeCLIService.swift; sourceTree = "<group>"; };
+		A1000B11 /* PiCLIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiCLIService.swift; sourceTree = "<group>"; };
+		A1000923 /* ShellEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellEnvironment.swift; sourceTree = "<group>"; };
+		A10007A1 /* AgentTaskService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTaskService.swift; sourceTree = "<group>"; };
+		A10007B1 /* ClaudeCLIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCLIService.swift; sourceTree = "<group>"; };
+		A10007C1 /* ProxyConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyConfig.swift; sourceTree = "<group>"; };
+		A10007D1 /* DetachedSessionWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetachedSessionWindow.swift; sourceTree = "<group>"; };
+		A1000079 /* Localization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization.swift; sourceTree = "<group>"; };
+		A1000081 /* WhatsNewService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhatsNewService.swift; sourceTree = "<group>"; };
+		A1000341 /* StatsPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsPane.swift; sourceTree = "<group>"; };
+		A1000343 /* TokenMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenMeter.swift; sourceTree = "<group>"; };
+		A10000C1 /* OnboardingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingService.swift; sourceTree = "<group>"; };
+		A10000C3 /* IntroAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntroAnimation.swift; sourceTree = "<group>"; };
+		A10000C5 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		A1000083 /* WhatsNewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhatsNewView.swift; sourceTree = "<group>"; };
+		A10003BB /* HistoryArchiveWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryArchiveWindow.swift; sourceTree = "<group>"; };
+		A1000067 /* IntentExamples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentExamples.swift; sourceTree = "<group>"; };
+		A1000007 /* GlassBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassBackground.swift; sourceTree = "<group>"; };
+		A1000C11 /* Handwriting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Handwriting.swift; sourceTree = "<group>"; };
+		A1000C13 /* StrokeInk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StrokeInk.swift; sourceTree = "<group>"; };
+		A1000008 /* NotchBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchBody.swift; sourceTree = "<group>"; };
+		A1000009 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		A100000A /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A100000C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A1000050 /* InlineSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineSettingsView.swift; sourceTree = "<group>"; };
+		A1000730 /* ModelPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPickerView.swift; sourceTree = "<group>"; };
+		A1000740 /* VendorLogos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VendorLogos.swift; sourceTree = "<group>"; };
+		A1000C20 /* ImageStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageStack.swift; sourceTree = "<group>"; };
+		A10007E0 /* LucideIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LucideIcons.swift; sourceTree = "<group>"; };
+		A100000D /* HotKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKey.swift; sourceTree = "<group>"; };
+		A1000A20 /* ForceClickHerald.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceClickHerald.swift; sourceTree = "<group>"; };
+		A100000E /* APIKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIKeyStore.swift; sourceTree = "<group>"; };
+		A1000913 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A1001001 /* NotchCapabilityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/NotchCapabilityStore.swift; sourceTree = "<group>"; };
+		A1001002 /* MediaCapabilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/MediaCapabilityService.swift; sourceTree = "<group>"; };
+		A1001003 /* NotchNowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchNowPlayingView.swift; sourceTree = "<group>"; };
+		A1001004 /* NotchShelfView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchShelfView.swift; sourceTree = "<group>"; };
+		A1001005 /* UtilityCapabilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/UtilityCapabilityService.swift; sourceTree = "<group>"; };
+		A1001006 /* NotchUtilitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchUtilitiesView.swift; sourceTree = "<group>"; };
+		A1001007 /* ShelfItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/ShelfItem.swift; sourceTree = "<group>"; };
+		A1001008 /* ShelfPersistenceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/ShelfPersistenceService.swift; sourceTree = "<group>"; };
+		A1001009 /* ShelfDropService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/ShelfDropService.swift; sourceTree = "<group>"; };
+		A1001010 /* AudioDeviceCapabilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AudioDeviceCapabilityService.swift; sourceTree = "<group>"; };
+		A1001022 /* NotchQuickUtilitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchQuickUtilitiesView.swift; sourceTree = "<group>"; };
+		A1001024 /* FocusTimerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/FocusTimerStore.swift; sourceTree = "<group>"; };
+		A1001204 /* AppSupportPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AppSupportPaths.swift; sourceTree = "<group>"; };
+		A1001208 /* CallWindowWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallWindowWatcher.swift; sourceTree = "<group>"; };
+		A1001210 /* WeatherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/WeatherService.swift; sourceTree = "<group>"; };
+		A1001226 /* ShortcutsCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsCatalog.swift; sourceTree = "<group>"; };
+		A1001224 /* ShortcutsUtilityOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsUtilityOverlayView.swift; sourceTree = "<group>"; };
+		A1001222 /* DeviceUtilityOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceUtilityOverlayView.swift; sourceTree = "<group>"; };
+		A1001220 /* PowerUtilityOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerUtilityOverlayView.swift; sourceTree = "<group>"; };
+		A1001214 /* SystemUtilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/SystemUtilityService.swift; sourceTree = "<group>"; };
+		A1001400 /* FileConversionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/FileConversionService.swift; sourceTree = "<group>"; };
+		A1001300 /* SystemMonitorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/SystemMonitorService.swift; sourceTree = "<group>"; };
+		A1001302 /* ActivityMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityMonitorView.swift; sourceTree = "<group>"; };
+		A1001304 /* AIActivityMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIActivityMonitorView.swift; sourceTree = "<group>"; };
+		A1001900 /* UtilityFeatureRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/UtilityFeatureRegistry.swift; sourceTree = "<group>"; };
+		A1001902 /* UtilityProcessPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/UtilityProcessPolicy.swift; sourceTree = "<group>"; };
+		A1001904 /* ClipboardHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/ClipboardHistoryStore.swift; sourceTree = "<group>"; };
+		A1001906 /* TextSnippetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/TextSnippetStore.swift; sourceTree = "<group>"; };
+		A1001908 /* URLCleaningService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/URLCleaningService.swift; sourceTree = "<group>"; };
+		A1001910 /* SustainedAlertGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/SustainedAlertGate.swift; sourceTree = "<group>"; };
+		A1001912 /* UtilitySettingsBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/UtilitySettingsBackup.swift; sourceTree = "<group>"; };
+		A1001914 /* WindowLayoutPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/WindowLayoutPlanner.swift; sourceTree = "<group>"; };
+		A1001916 /* DiskImageInstallPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/DiskImageInstallPlanner.swift; sourceTree = "<group>"; };
+		A1001918 /* CommandQueryEvaluator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/CommandQueryEvaluator.swift; sourceTree = "<group>"; };
+		A1001920 /* ClipboardHistoryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/ClipboardHistoryService.swift; sourceTree = "<group>"; };
+		A1001922 /* ClipboardHistoryOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardHistoryOverlayView.swift; sourceTree = "<group>"; };
+		A1001212 /* MeetingLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/MeetingLink.swift; sourceTree = "<group>"; };
+		A1001202 /* AlertBannerWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertBannerWatcher.swift; sourceTree = "<group>"; };
+		A1001200 /* AlertFeedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AlertFeedStore.swift; sourceTree = "<group>"; };
+		A1001090 /* QuickReminderStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/QuickReminderStore.swift; sourceTree = "<group>"; };
+		A1001092 /* QuickReminderOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickReminderOverlayView.swift; sourceTree = "<group>"; };
+		A1001026 /* QuickNoteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/QuickNoteStore.swift; sourceTree = "<group>"; };
+		A1001028 /* NotchUtilityOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchUtilityOverlay.swift; sourceTree = "<group>"; };
+		A1001030 /* FocusTimerOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusTimerOverlayView.swift; sourceTree = "<group>"; };
+		A1001032 /* QuickNoteOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickNoteOverlayView.swift; sourceTree = "<group>"; };
+		A100000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1000070 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A10004A0 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Fonts; sourceTree = "<group>"; };
+		A10004B0 /* intro-sunrise.m4a */ = {isa = PBXFileReference; lastKnownFileType = file; path = "intro-sunrise.m4a"; sourceTree = "<group>"; };
+		A1000C14 /* strokes.bin */ = {isa = PBXFileReference; lastKnownFileType = file; path = strokes.bin; sourceTree = "<group>"; };
+		A10004B2 /* buy-me-a-coffee.gif */ = {isa = PBXFileReference; lastKnownFileType = image.gif; path = "buy-me-a-coffee.gif"; sourceTree = "<group>"; };
+		A1002002 /* mediaremote-adapter.pl */ = {isa = PBXFileReference; lastKnownFileType = text.script.perl; path = references/boring.notch/mediaremote-adapter/mediaremote-adapter.pl; sourceTree = SOURCE_ROOT; };
+		A1002004 /* MediaRemoteAdapter.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = references/boring.notch/mediaremote-adapter/MediaRemoteAdapter.framework; sourceTree = SOURCE_ROOT; };
+		A1000100 /* NotchFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NotchFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A1000200 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A1000203 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				A1002003 /* MediaRemoteAdapter.framework in Embed Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXGroup section */
+		A1000300 = {
+			isa = PBXGroup;
+			children = (
+				A1000301 /* NotchFlow */,
+				A1000302 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A1000301 /* NotchFlow */ = {
+			isa = PBXGroup;
+			children = (
+				A1000310 /* Sources */,
+				A1000311 /* Resources */,
+			);
+			path = NotchFlow;
+			sourceTree = "<group>";
+		};
+		A1000310 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				A1000001 /* NotchFlowApp.swift */,
+				A1000002 /* AppDelegate.swift */,
+				A1000A11 /* MenuBarController.swift */,
+				A1000003 /* NotchPanel.swift */,
+				A1000004 /* DesignSystem.swift */,
+				A1000005 /* AIService.swift */,
+				A1000720 /* AgentHarness.swift */,
+				A1000721 /* AgentTools.swift */,
+				A1000006 /* NotchModel.swift */,
+				A1001001 /* NotchCapabilityStore.swift */,
+				A1001002 /* MediaCapabilityService.swift */,
+				A1001003 /* NotchNowPlayingView.swift */,
+				A1001004 /* NotchShelfView.swift */,
+				A1001005 /* UtilityCapabilityService.swift */,
+				A1001006 /* NotchUtilitiesView.swift */,
+				A1001007 /* ShelfItem.swift */,
+				A1001008 /* ShelfPersistenceService.swift */,
+				A1001009 /* ShelfDropService.swift */,
+				A1001010 /* AudioDeviceCapabilityService.swift */,
+				A1001022 /* NotchQuickUtilitiesView.swift */,
+				A1001024 /* FocusTimerStore.swift */,
+				A1001803 /* AgentApprovalQueue.swift */,
+				A100AA06 /* RestingNotchPriority.swift */,
+				A100AA08 /* AlertBannerText.swift */,
+				A100AA04 /* AgentModelContextWindow.swift */,
+				A100AA02 /* AgentTranscriptStatus.swift */,
+				A100AA32 /* AIActivityProject.swift */,
+				A1001805 /* ClaudeHookBridge.swift */,
+				A1001807 /* ClaudeHookPayload.swift */,
+				A1001809 /* CodexAppServerNotification.swift */,
+				A1001811 /* CodexTerminalHookPayload.swift */,
+				A1001204 /* AppSupportPaths.swift */,
+				A1001208 /* CallWindowWatcher.swift */,
+				A1001210 /* WeatherService.swift */,
+				A1001226 /* ShortcutsCatalog.swift */,
+				A1001224 /* ShortcutsUtilityOverlayView.swift */,
+				A1001222 /* DeviceUtilityOverlayView.swift */,
+				A1001220 /* PowerUtilityOverlayView.swift */,
+				A1001214 /* SystemUtilityService.swift */,
+				A1001400 /* FileConversionService.swift */,
+				A1001300 /* SystemMonitorService.swift */,
+				A1001900 /* UtilityFeatureRegistry.swift */,
+				A1001902 /* UtilityProcessPolicy.swift */,
+				A1001904 /* ClipboardHistoryStore.swift */,
+				A1001906 /* TextSnippetStore.swift */,
+				A1001908 /* URLCleaningService.swift */,
+				A1001910 /* SustainedAlertGate.swift */,
+				A1001912 /* UtilitySettingsBackup.swift */,
+				A1001914 /* WindowLayoutPlanner.swift */,
+				A1001916 /* DiskImageInstallPlanner.swift */,
+				A1001918 /* CommandQueryEvaluator.swift */,
+				A1001920 /* ClipboardHistoryService.swift */,
+				A1001922 /* ClipboardHistoryOverlayView.swift */,
+				A1001302 /* ActivityMonitorView.swift */,
+				A1001304 /* AIActivityMonitorView.swift */,
+				A1001212 /* MeetingLink.swift */,
+				A1001202 /* AlertBannerWatcher.swift */,
+				A1001200 /* AlertFeedStore.swift */,
+				A1001090 /* QuickReminderStore.swift */,
+				A1001092 /* QuickReminderOverlayView.swift */,
+				A1001026 /* QuickNoteStore.swift */,
+				A1001028 /* NotchUtilityOverlay.swift */,
+				A1001030 /* FocusTimerOverlayView.swift */,
+				A1001032 /* QuickNoteOverlayView.swift */,
+				A1000061 /* NotesService.swift */,
+				A1000751 /* FileNotesService.swift */,
+				A1000069 /* RemindersService.swift */,
+				A10000BB /* DiagnosticsLog.swift */,
+				A1000073 /* UpdaterService.swift */,
+				A1000075 /* MouseVelocityTracker.swift */,
+				A1000077 /* OpenRouterAuth.swift */,
+				A1000791 /* CodexCLIService.swift */,
+				A1001801 /* CodexAppServerBridge.swift */,
+				A1001813 /* CodexTerminalHookBridge.swift */,
+				A1000901 /* GrokCLIService.swift */,
+				A1000921 /* CommandCodeCLIService.swift */,
+				A1000B11 /* PiCLIService.swift */,
+				A1000923 /* ShellEnvironment.swift */,
+				A10007A1 /* AgentTaskService.swift */,
+				A10007B1 /* ClaudeCLIService.swift */,
+				A10007C1 /* ProxyConfig.swift */,
+				A10007D1 /* DetachedSessionWindow.swift */,
+				A1000079 /* Localization.swift */,
+				A1000081 /* WhatsNewService.swift */,
+				A1000341 /* StatsPane.swift */,
+				A1000343 /* TokenMeter.swift */,
+				A10000C1 /* OnboardingService.swift */,
+				A10000C3 /* IntroAnimation.swift */,
+				A10000C5 /* NotificationService.swift */,
+				A1000083 /* WhatsNewView.swift */,
+				A10003BB /* HistoryArchiveWindow.swift */,
+				A1000065 /* IntentEngine.swift */,
+				A1000067 /* IntentExamples.swift */,
+				A1000007 /* GlassBackground.swift */,
+				A1000C11 /* Handwriting.swift */,
+				A1000C13 /* StrokeInk.swift */,
+				A1000008 /* NotchBody.swift */,
+				A1000009 /* Components.swift */,
+				A100000A /* ContentView.swift */,
+				A100000C /* SettingsView.swift */,
+				A1000050 /* InlineSettingsView.swift */,
+				A1000730 /* ModelPickerView.swift */,
+				A1000740 /* VendorLogos.swift */,
+				A1000C20 /* ImageStack.swift */,
+				A10007E0 /* LucideIcons.swift */,
+				A100000D /* HotKey.swift */,
+				A1000A20 /* ForceClickHerald.swift */,
+				A100000E /* APIKeyStore.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		A1000311 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A100000B /* Info.plist */,
+				A1000070 /* Assets.xcassets */,
+				A10004A0 /* Fonts */,
+				A10004B0 /* intro-sunrise.m4a */,
+				A1000C14 /* strokes.bin */,
+				A10004B2 /* buy-me-a-coffee.gif */,
+				A1002002 /* mediaremote-adapter.pl */,
+				A1002004 /* MediaRemoteAdapter.framework */,
+				A1000913 /* PrivacyInfo.xcprivacy */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		A1000302 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1000100 /* NotchFlow.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A1000400 /* NotchFlow */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000500 /* Build configuration list for PBXNativeTarget "NotchFlow" */;
+			buildPhases = (
+				A1000201 /* Sources */,
+				A1000200 /* Frameworks */,
+				A1000202 /* Resources */,
+				A1000203 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NotchFlow;
+			productName = NotchFlow;
+			productReference = A1000100 /* NotchFlow.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A1000600 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					A1000400 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = A1000601 /* Build configuration list for PBXProject "NotchFlow" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A1000300;
+			productRefGroup = A1000302 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A1000400 /* NotchFlow */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A1000202 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000912 /* PrivacyInfo.xcprivacy in Resources */,
+				A1000071 /* Assets.xcassets in Resources */,
+				A10004A1 /* Fonts in Resources */,
+				A10004B1 /* intro-sunrise.m4a in Resources */,
+				A1000C15 /* strokes.bin in Resources */,
+				A10004B3 /* buy-me-a-coffee.gif in Resources */,
+				A1002001 /* mediaremote-adapter.pl in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A1000201 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000010 /* NotchFlowApp.swift in Sources */,
+				A1000011 /* AppDelegate.swift in Sources */,
+				A1000A10 /* MenuBarController.swift in Sources */,
+				A1000012 /* NotchPanel.swift in Sources */,
+				A1000013 /* DesignSystem.swift in Sources */,
+				A1000014 /* AIService.swift in Sources */,
+				A1000710 /* AgentHarness.swift in Sources */,
+				A1000711 /* AgentTools.swift in Sources */,
+				A1000015 /* NotchModel.swift in Sources */,
+				A1000060 /* NotesService.swift in Sources */,
+				A1000750 /* FileNotesService.swift in Sources */,
+				A1000068 /* RemindersService.swift in Sources */,
+				A10000AA /* DiagnosticsLog.swift in Sources */,
+				A1000072 /* UpdaterService.swift in Sources */,
+				A1000074 /* MouseVelocityTracker.swift in Sources */,
+				A1000076 /* OpenRouterAuth.swift in Sources */,
+				A1000790 /* CodexCLIService.swift in Sources */,
+				A1001800 /* CodexAppServerBridge.swift in Sources */,
+				A1001802 /* AgentApprovalQueue.swift in Sources */,
+				A100AA05 /* RestingNotchPriority.swift in Sources */,
+				A100AA07 /* AlertBannerText.swift in Sources */,
+				A100AA03 /* AgentModelContextWindow.swift in Sources */,
+				A100AA01 /* AgentTranscriptStatus.swift in Sources */,
+				A100AA31 /* AIActivityProject.swift in Sources */,
+				A1001804 /* ClaudeHookBridge.swift in Sources */,
+				A1001806 /* ClaudeHookPayload.swift in Sources */,
+				A1001808 /* CodexAppServerNotification.swift in Sources */,
+				A1001810 /* CodexTerminalHookPayload.swift in Sources */,
+				A1001812 /* CodexTerminalHookBridge.swift in Sources */,
+				A1000900 /* GrokCLIService.swift in Sources */,
+				A1000920 /* CommandCodeCLIService.swift in Sources */,
+				A1000B10 /* PiCLIService.swift in Sources */,
+				A1000922 /* ShellEnvironment.swift in Sources */,
+				A10007A0 /* AgentTaskService.swift in Sources */,
+				A10007B0 /* ClaudeCLIService.swift in Sources */,
+				A10007C0 /* ProxyConfig.swift in Sources */,
+				A10007D0 /* DetachedSessionWindow.swift in Sources */,
+				A1000078 /* Localization.swift in Sources */,
+				A1000080 /* WhatsNewService.swift in Sources */,
+				A1000340 /* StatsPane.swift in Sources */,
+				A1000342 /* TokenMeter.swift in Sources */,
+				A10000C0 /* OnboardingService.swift in Sources */,
+				A10000C2 /* IntroAnimation.swift in Sources */,
+				A10000C4 /* NotificationService.swift in Sources */,
+				A1000082 /* WhatsNewView.swift in Sources */,
+				A10003AA /* HistoryArchiveWindow.swift in Sources */,
+				A1000064 /* IntentEngine.swift in Sources */,
+				A1000066 /* IntentExamples.swift in Sources */,
+				A1000016 /* GlassBackground.swift in Sources */,
+				A1000C10 /* Handwriting.swift in Sources */,
+				A1000C12 /* StrokeInk.swift in Sources */,
+				A1000017 /* NotchBody.swift in Sources */,
+				A1000018 /* Components.swift in Sources */,
+				A100001A /* ContentView.swift in Sources */,
+				A100001B /* SettingsView.swift in Sources */,
+				A1000051 /* InlineSettingsView.swift in Sources */,
+				A1000731 /* ModelPickerView.swift in Sources */,
+				A1000741 /* VendorLogos.swift in Sources */,
+				A1000C21 /* ImageStack.swift in Sources */,
+				A10007E1 /* LucideIcons.swift in Sources */,
+				A100001C /* HotKey.swift in Sources */,
+				A1000A21 /* ForceClickHerald.swift in Sources */,
+				A100001D /* APIKeyStore.swift in Sources */,
+				A1001011 /* NotchCapabilityStore.swift in Sources */,
+				A1001012 /* MediaCapabilityService.swift in Sources */,
+				A1001013 /* NotchNowPlayingView.swift in Sources */,
+				A1001014 /* NotchShelfView.swift in Sources */,
+				A1001015 /* UtilityCapabilityService.swift in Sources */,
+				A1001016 /* NotchUtilitiesView.swift in Sources */,
+				A1001017 /* ShelfItem.swift in Sources */,
+				A1001018 /* ShelfPersistenceService.swift in Sources */,
+				A1001019 /* ShelfDropService.swift in Sources */,
+				A1001020 /* AudioDeviceCapabilityService.swift in Sources */,
+				A1001023 /* NotchQuickUtilitiesView.swift in Sources */,
+				A1001025 /* FocusTimerStore.swift in Sources */,
+				A1001205 /* AppSupportPaths.swift in Sources */,
+				A1001209 /* CallWindowWatcher.swift in Sources */,
+				A1001211 /* WeatherService.swift in Sources */,
+				A1001227 /* ShortcutsCatalog.swift in Sources */,
+				A1001225 /* ShortcutsUtilityOverlayView.swift in Sources */,
+				A1001223 /* DeviceUtilityOverlayView.swift in Sources */,
+				A1001221 /* PowerUtilityOverlayView.swift in Sources */,
+				A1001215 /* SystemUtilityService.swift in Sources */,
+				A1001401 /* FileConversionService.swift in Sources */,
+				A1001301 /* SystemMonitorService.swift in Sources */,
+				A1001901 /* UtilityFeatureRegistry.swift in Sources */,
+				A1001903 /* UtilityProcessPolicy.swift in Sources */,
+				A1001905 /* ClipboardHistoryStore.swift in Sources */,
+				A1001907 /* TextSnippetStore.swift in Sources */,
+				A1001909 /* URLCleaningService.swift in Sources */,
+				A1001911 /* SustainedAlertGate.swift in Sources */,
+				A1001913 /* UtilitySettingsBackup.swift in Sources */,
+				A1001915 /* WindowLayoutPlanner.swift in Sources */,
+				A1001917 /* DiskImageInstallPlanner.swift in Sources */,
+				A1001919 /* CommandQueryEvaluator.swift in Sources */,
+				A1001921 /* ClipboardHistoryService.swift in Sources */,
+				A1001923 /* ClipboardHistoryOverlayView.swift in Sources */,
+				A1001303 /* ActivityMonitorView.swift in Sources */,
+				A1001305 /* AIActivityMonitorView.swift in Sources */,
+				A1001213 /* MeetingLink.swift in Sources */,
+				A1001203 /* AlertBannerWatcher.swift in Sources */,
+				A1001201 /* AlertFeedStore.swift in Sources */,
+				A1001091 /* QuickReminderStore.swift in Sources */,
+				A1001093 /* QuickReminderOverlayView.swift in Sources */,
+				A1001027 /* QuickNoteStore.swift in Sources */,
+				A1001029 /* NotchUtilityOverlay.swift in Sources */,
+				A1001031 /* FocusTimerOverlayView.swift in Sources */,
+				A1001033 /* QuickNoteOverlayView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A1000700 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A1000701 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEPLOYMENT_POSTPROCESSING = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				SEPARATE_STRIP = YES;
+				STRIPFLAGS = "-rSTx";
+				STRIP_INSTALLED_PRODUCT = YES;
+				STRIP_STYLE = all;
+				STRIP_SWIFT_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		A1000702 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = NotchFlow/Resources/NotchFlow.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NotchFlow/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.notchflow.app;
+				PRODUCT_NAME = NotchFlow;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A1000703 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = NotchFlow/Resources/NotchFlow.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NotchFlow/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.notchflow.app;
+				PRODUCT_NAME = NotchFlow;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1000601 /* Build configuration list for PBXProject "NotchFlow" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000700 /* Debug */,
+				A1000701 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000500 /* Build configuration list for PBXNativeTarget "NotchFlow" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000702 /* Debug */,
+				A1000703 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A1000600 /* Project object */;
+}
