@@ -43,15 +43,22 @@ public enum AlertBannerText {
 
     /// The caller-shaped first line and the message, out of a banner's texts.
     public static func split(_ nodes: [Node]) -> (title: String, body: String) {
-        let values = nodes.map(\.value).filter { !$0.isEmpty }
+        // A recognised subtitle is metadata owned by the posting app, never
+        // either user-facing field. Excluding it before either positional
+        // fallback matters when macOS keeps one identifier but renames the
+        // other: otherwise an unnamed body becomes "WhatsApp Incoming call".
+        let contentValues = nodes
+            .filter { $0.identifier != "subtitle" }
+            .map(\.value)
+            .filter { !$0.isEmpty }
 
         // "title" and "body" are not in any SDK header — they were read off the
         // live tree — so each is resolved independently and each has its own
         // positional fallback. A release that renames one must not take the
         // other down with it.
-        let title = value(of: "title", in: nodes) ?? values.first ?? ""
+        let title = value(of: "title", in: nodes) ?? contentValues.first ?? ""
         let body = value(of: "body", in: nodes)
-            ?? values.filter { $0 != title }.joined(separator: " ")
+            ?? contentValues.filter { $0 != title }.joined(separator: " ")
 
         return (title, body)
     }

@@ -128,7 +128,6 @@ enum Tokens {
     static let openWidthIdle: CGFloat = 540
     static let openWidthLoad: CGFloat = 560
     static let openWidthResult: CGFloat = 600
-    static let openWidthSettings: CGFloat = 580   // inline settings form
     static let openWidthWhatsNew: CGFloat = 600   // release-notes reading column
 }
 
@@ -734,8 +733,25 @@ struct ScrollOffsetObserver: NSViewRepresentable {
             report(clip)
         }
 
+        /// Reports **distance scrolled from the top**, which is what every caller
+        /// means by "offset" — they all gate a top taper on it.
+        ///
+        /// The raw `bounds.origin.y` is not that number. In an unflipped
+        /// coordinate space the top of the document is its MAXIMUM y, so a
+        /// document taller than the clip rests at a large positive origin and
+        /// every caller's taper came on before the user had scrolled anything.
+        /// That went unnoticed while the only overflowing panes were long ones the
+        /// user was expected to scroll; it became visible the moment the compact
+        /// settings window made ordinary panes overflow, dimming the first caption
+        /// of a pane sitting untouched at its top.
         private func report(_ clip: NSClipView) {
-            onChange(clip.bounds.origin.y)
+            let y = clip.bounds.origin.y
+            guard !clip.isFlipped, let document = clip.documentView else {
+                onChange(y)
+                return
+            }
+            let travel = max(0, document.bounds.height - clip.bounds.height)
+            onChange(max(0, travel - y))
         }
     }
 }

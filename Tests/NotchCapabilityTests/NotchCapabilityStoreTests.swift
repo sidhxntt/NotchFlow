@@ -24,17 +24,6 @@ final class NotchCapabilityStoreTests: XCTestCase {
     }
 
     @MainActor
-    private final class ArtworkRecordingMediaController: MediaControlling, MediaArtworkProviding {
-        let source: MediaSource = .spotify
-        var state = MediaState(source: .spotify, title: "Loser", artist: "Tame Impala", isPlaying: true)
-        let cover = Data("cover".utf8)
-
-        func refresh() async -> MediaState { state }
-        func perform(_ command: MediaCommand) async { state.isPlaying.toggle() }
-        func artwork(for state: MediaState) -> Data? { cover }
-    }
-
-    @MainActor
     func testPlayingMediaBecomesTheCollapsedActivity() {
         let store = NotchCapabilityStore()
 
@@ -68,18 +57,6 @@ final class NotchCapabilityStoreTests: XCTestCase {
         await service.perform(.next)
 
         XCTAssertEqual(spotify.commands, [.next])
-    }
-
-    @MainActor
-    func testMediaTransportRefreshRetainsCachedArtwork() async {
-        let spotify = ArtworkRecordingMediaController()
-        let service = MediaCapabilityService(controllers: [spotify])
-
-        _ = await service.refresh()
-        await service.perform(.playPause)
-
-        XCTAssertEqual(service.state.artworkData, spotify.cover)
-        XCTAssertFalse(service.state.isPlaying)
     }
 
     @MainActor
@@ -240,53 +217,6 @@ final class NotchCapabilityStoreTests: XCTestCase {
         let result = NSAppleEventDescriptor(string: "done")
 
         XCTAssertTrue(AppleScriptMediaController.listItems(from: result).isEmpty)
-    }
-
-    func testMediaRemotePayloadMapsBrowserPlaybackIntoNowPlayingState() throws {
-        let data = Data("{\"bundleIdentifier\":\"com.google.Chrome\",\"title\":\"Browser Track\",\"artist\":\"Web Artist\",\"duration\":180,\"elapsedTimeNow\":42,\"playing\":true}".utf8)
-        let payload = try JSONDecoder().decode(MediaRemotePayload.self, from: data)
-
-        let state = payload.mediaState(previous: .inactive)
-
-        XCTAssertEqual(state.source, .nowPlaying)
-        XCTAssertEqual(state.title, "Browser Track")
-        XCTAssertEqual(state.position, 42)
-        XCTAssertTrue(state.isPlaying)
-    }
-
-    func testMediaRemoteStreamEnvelopeExtractsTheArtworkPayload() throws {
-        let data = Data("{\"type\":\"data\",\"payload\":{\"bundleIdentifier\":\"com.spotify.client\",\"title\":\"Loser\",\"artworkData\":\"Y292ZXI=\"}}".utf8)
-
-        let payload = try MediaRemoteStreamEnvelope.decodePayload(from: data)
-
-        XCTAssertEqual(payload?.title, "Loser")
-        XCTAssertEqual(payload?.artworkData, "Y292ZXI=")
-    }
-
-    func testMediaRemotePayloadIdentifiesNativeArtworkSource() throws {
-        let data = Data("{\"bundleIdentifier\":\"com.spotify.client\",\"title\":\"Track\"}".utf8)
-        let payload = try JSONDecoder().decode(MediaRemotePayload.self, from: data)
-
-        XCTAssertEqual(payload.artworkSource, .spotify)
-    }
-
-    func testArtworkCacheKeepsTheLatestCoverForItsMediaSource() {
-        var cache = MediaArtworkCache()
-        let firstArtwork = Data("first-cover".utf8)
-        let latestArtwork = Data("latest-cover".utf8)
-
-        cache.store(firstArtwork, for: .spotify)
-        cache.store(latestArtwork, for: .spotify)
-
-        XCTAssertEqual(cache.artwork(for: .spotify), latestArtwork)
-    }
-
-    func testMediaRemotePayloadWithoutATrackRestoresTheEmptyMediaState() throws {
-        let data = Data("{\"bundleIdentifier\":\"com.google.Chrome\",\"playing\":false}".utf8)
-        let payload = try JSONDecoder().decode(MediaRemotePayload.self, from: data)
-        let previous = MediaState(source: .nowPlaying, title: "Previous browser track", lastAudibleAt: .now)
-
-        XCTAssertEqual(payload.mediaState(previous: previous), .inactive)
     }
 
     @MainActor
@@ -868,21 +798,6 @@ final class NotchCapabilityStoreTests: XCTestCase {
 
         XCTAssertEqual(settler.observe(max), .connected(max))
         XCTAssertEqual(settler.device, max)
-    }
-
-    func testArtworkCacheKeepsOneCoverPerSourceAndRefusesJunk() {
-        var cache = MediaArtworkCache()
-        let cover = Data(repeating: 0xAB, count: 64)
-
-        cache.store(cover, for: .spotify)
-        cache.store(Data(), for: .appleMusic)
-        cache.store(Data(repeating: 0x01, count: MediaArtworkCache.maximumArtworkBytes + 1),
-                    for: .nowPlaying)
-
-        XCTAssertEqual(cache.artwork(for: .spotify), cover)
-        XCTAssertNil(cache.artwork(for: .appleMusic), "an empty payload is not a cover")
-        XCTAssertNil(cache.artwork(for: .nowPlaying), "an oversized payload is not album art")
-        XCTAssertEqual(cache.sources, [.spotify])
     }
 
     // MARK: - Quick reminder

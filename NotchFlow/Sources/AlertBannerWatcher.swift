@@ -99,6 +99,9 @@ final class AlertBannerWatcher {
     /// Emitted when a banner we reported leaves the screen.
     var onVanished: ((Int) -> Void)?
 
+    /// Emitted on each sweep for a banner macOS is still showing.
+    var onVisible: ((Int) -> Void)?
+
     private var observer: AXObserver?
     private var appElement: AXUIElement?
     private var watchedPID: pid_t?
@@ -227,6 +230,10 @@ final class AlertBannerWatcher {
             guard let banner = extract(from: group) else { continue }
             live[banner.token] = TrackedBanner(identity: identity, element: group)
             onBanner?(banner)
+        }
+
+        for (token, tracked) in live where onScreen[tracked.identity] != nil {
+            onVisible?(token)
         }
     }
 

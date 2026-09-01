@@ -19,13 +19,9 @@ enum HistoryArchiveScope: String {
 /// persisted history data itself (read-only browsing + delete) and the
 /// Notes/Reminders jump, which is an explicit "leave the app" action by nature.
 ///
-/// Visually it wears the **same Liquid Glass language as the notch island**: a
-/// transparent window filled with one dark smoked-glass slab (real system
-/// `.glassEffect` on macOS 26+, a dark blur below), the island's specular hairline
-/// rim, and the panel's whole token/chip vocabulary — glass capsules for the
-/// search field and filters, `Tokens.text*` ink, `glassCapsule`/`GlassPressStyle`
-/// chips — so opening History reads as the same surface as the notch, not a stock
-/// AppKit window.
+/// It follows the same native Liquid Glass window language as Settings: standard
+/// macOS title-bar material, a calm system-material content surface, and no custom
+/// smoked overlay that lets the desktop wallpaper compete with the archive.
 @MainActor
 final class HistoryArchiveWindowController: NSObject, NSWindowDelegate {
     static let shared = HistoryArchiveWindowController()
@@ -64,26 +60,13 @@ final class HistoryArchiveWindowController: NSObject, NSWindowDelegate {
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 860, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = L("history.window.title")
-        window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 680, height: 400)
-
-        // Go transparent so the dark Liquid Glass slab the SwiftUI content draws is
-        // the ONLY visible surface — no stock light `windowBackgroundColor` behind
-        // it. The traffic-light controls and the drag-to-move titlebar stay (it's a
-        // `.titled` window with `fullSizeContentView`), but the title text and the
-        // titlebar's own material are hidden so the glass reaches edge to edge.
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.titleVisibility = .hidden
-        // Force the dark side of every system control (traffic lights aside, the
-        // resize cursor, focus rings, text-selection) so they read against the dark
-        // glass instead of flipping to a light-mode treatment on a light desktop.
         window.appearance = NSAppearance(named: .darkAqua)
 
         window.contentView = NSHostingView(
@@ -110,48 +93,26 @@ final class HistoryArchiveWindowController: NSObject, NSWindowDelegate {
 
 // MARK: - Window glass surface
 
-/// The window's background — a rectangular sibling of the notch island's
-/// `GlassMaterial`: one even slab of dark smoked Liquid Glass (real system glass on
-/// macOS 26+, a dark blur below) wrapped in the island's specular hairline rim, so
-/// the whole History window reads as the same material as the notch. Rectangular
-/// (the window is resizable), so it uses a plain `Rectangle`/rounded-none surface
-/// rather than the `NotchShape` silhouette.
+/// The archive has one quiet, system-material background. Unlike the notch's
+/// floating island, this is a conventional resizable window, so the system titlebar
+/// and material—not a bespoke dark slab—provide the glass treatment.
 private struct WindowGlassBackground: View {
     var body: some View {
         Rectangle()
-            .fill(.clear)
-            .nativeGlass(in: Rectangle())
-            // One even dark veil so the slab reads as dark smoked glass and keeps
-            // text legible — the same idea as the panel's `darkVeil`, flattened to a
-            // single value since a rectangular window has no notch/melt band. The
-            // baked glass tint (see `GlassMaterial.bakedTint`) already carries part
-            // of the darkening, so this veil layers to the panel's settled tone.
-            .overlay(Color.black.opacity(0.30))
-            .overlay(
-                // A whisper-thin top sheen — the same touch of depth the island's
-                // veil paints just under its lip.
-                LinearGradient(
-                    colors: [.white.opacity(0.05), .white.opacity(0.0)],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(height: 90)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .blendMode(.plusLighter)
-                .allowsHitTesting(false)
-            )
+            .fill(.regularMaterial)
             .ignoresSafeArea()
     }
 }
 
-/// A soft glass hairline used in place of AppKit's `Divider()` — the same
-/// whisper-white rule the notch panel uses to separate sections, so seams read as
-/// light caught on the glass rather than a stock grey line.
+/// Use macOS's own adaptive separator so the split panes match Settings.
 private struct GlassHairline: View {
     var horizontal: Bool = true
     var body: some View {
-        Rectangle()
-            .fill(Tokens.hairline)
-            .frame(width: horizontal ? nil : 1, height: horizontal ? 1 : nil)
+        if horizontal {
+            Divider()
+        } else {
+            Divider().frame(width: 1)
+        }
     }
 }
 
@@ -160,9 +121,7 @@ private struct GlassHairline: View {
 /// The archive's content: a master list on the left (search + source filter + every
 /// retained item) and a detail pane on the right that renders the selected
 /// conversation's full transcript. Entirely self-hosted — selecting a row only
-/// changes this window's own `selection`, nothing outside it. Everything sits over
-/// the one `WindowGlassBackground` slab; the panes are transparent so the glass
-/// shows through the whole window.
+/// changes this window's own `selection`, nothing outside it.
 private struct HistoryArchiveView: View {
     @ObservedObject var model: NotchModel
     let scope: HistoryArchiveScope
@@ -215,21 +174,6 @@ private struct HistoryArchiveView: View {
         }
         .frame(minWidth: 560, minHeight: 380)
         .background(WindowGlassBackground())
-        // The specular hairline rim that wraps the whole window, the same lit bevel
-        // the island wears — stamped over the composited content so it traces the
-        // window edge crisply.
-        .overlay(
-            Rectangle()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [.white.opacity(0.14), .white.opacity(0.05)],
-                        startPoint: .top, endPoint: .bottom
-                    ),
-                    lineWidth: 0.75
-                )
-                .blendMode(.plusLighter)
-                .allowsHitTesting(false)
-        )
         .ignoresSafeArea()
     }
 
@@ -245,9 +189,6 @@ private struct HistoryArchiveView: View {
                 list(items: items)
             }
         }
-        // Transparent: the window glass shows through. A whisper-faint left-column
-        // wash sets the master apart from the detail without a solid fill.
-        .background(Color.white.opacity(0.02))
     }
 
     private func header(count: Int) -> some View {
@@ -269,13 +210,9 @@ private struct HistoryArchiveView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            // The search field wears the panel's glass-capsule chrome — a real
-            // translucent glass pill with the specular rim, matching the notch's
-            // own input affordances.
-            .glassCapsule(in: Capsule(), brighter: false)
-            .contentShape(Capsule())
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             filterRow(count: count)
         }

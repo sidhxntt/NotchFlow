@@ -135,6 +135,10 @@ public final class AlertFeedStore: ObservableObject {
     /// Identity of the app whose burst is showing, so the ear can name it and
     /// resolve its icon.
     private var identities: [String: (bundleID: String?, appName: String)] = [:]
+    /// Every visible banner's group, keyed by the token supplied by the
+    /// Accessibility watcher. This lets a visible banner keep its priority over
+    /// passive work and media previews.
+    private var bannerGroupsByToken: [Int: String] = [:]
 
     private var call: AlertCall?
     private var callStartedAt: Date?
@@ -161,6 +165,7 @@ public final class AlertFeedStore: ObservableObject {
         if let ownBundleID, banner.bundleID == ownBundleID { return }
 
         identities[banner.groupKey] = (banner.bundleID, banner.appName)
+        bannerGroupsByToken[banner.token] = banner.groupKey
 
         if let classified = Self.classifyCall(banner) {
             // A call takes the strip outright: drop whatever burst was showing
@@ -231,6 +236,7 @@ public final class AlertFeedStore: ObservableObject {
     /// The watcher noticed a banner leave the screen. For a call that means it
     /// was resolved elsewhere (answered on the phone, caller gave up).
     public func bannerVanished(token: Int, now: Date) {
+        bannerGroupsByToken[token] = nil
         guard let call, call.token == token else { return }
         // A call we answered from the notch keeps its banner for the duration of
         // the conversation on some apps and loses it on others; either way, once
@@ -238,6 +244,16 @@ public final class AlertFeedStore: ObservableObject {
         self.call = nil
         callStartedAt = nil
         publish(now: now)
+    }
+
+    /// Refresh the dwell for the notification that macOS is still displaying.
+    /// Calls already occupy the slot until their source resolves them.
+    public func bannerIsVisible(token: Int, now: Date) {
+        guard call == nil,
+              let group = bannerGroupsByToken[token],
+              group == currentGroup
+        else { return }
+        slotExpiresAt = now.addingTimeInterval(Self.burstWindow)
     }
 
     /// A source telling us the call's state changed underneath us — answered on
@@ -424,6 +440,14 @@ public final class AlertFeedStore: ObservableObject {
         return callPhrases.contains { body.hasPrefix($0) }
     }
 
+    /// Whether a call application's own window describes a call already in
+    /// progress. Unlike a notification banner this is intentionally a contains
+    /// match: the surrounding window text also includes the caller and app.
+    static func looksLikeCallWindowText(_ texts: [String]) -> Bool {
+        let text = normalizedForMatching(texts.joined(separator: " "))
+        return callWindowPhrases.contains { text.contains($0) }
+    }
+
     /// How the call apps word it, spaces stripped to match `normalizedForMatching`.
     /// Same reasoning as the button vocabulary: the banner is written in the
     /// SYSTEM's language, so every language we ship is live at once.
@@ -441,6 +465,13 @@ public final class AlertFeedStore: ObservableObject {
         "appelentrant", "appelvocal", "appelvidéo", "appelvideo",
         // es
         "llamadaentrante", "llamadadevoz", "videollamada",
+    ]
+
+    /// Window-local vocabulary is deliberately separate from `callPhrases`.
+    /// A bare "call" is sufficient evidence beside a hang-up button in a call
+    /// app's window, but would be too broad for a notification banner.
+    static let callWindowPhrases: Set<String> = [
+        "call", "通话", "通話", "着信", "통화", "appel", "llamada",
     ]
 
     /// The banner's title is the caller on every call app we checked (FaceTime,

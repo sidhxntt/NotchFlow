@@ -84,7 +84,7 @@ enum FileNotesService {
 
     private static let folderKey = "markdownNotesFolder"
 
-    /// The folder that receives the day files. Defaults to ~/Documents/Notch Notes
+    /// The folder that receives the day files. Defaults to ~/Documents/Notch_Flow_Notes
     /// until the user picks their own (Settings → General); created on demand at
     /// each write, so deleting it never breaks the pipeline — it just comes back.
     static var folderPath: String {
@@ -94,7 +94,7 @@ enum FileNotesService {
                 return stored
             }
             return (NSHomeDirectory() as NSString)
-                .appendingPathComponent("Documents/Notch Notes")
+                .appendingPathComponent("Documents/Notch_Flow_Notes")
         }
         set {
             UserDefaults.standard.set(newValue, forKey: folderKey)

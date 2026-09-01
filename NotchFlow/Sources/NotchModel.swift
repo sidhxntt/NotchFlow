@@ -882,7 +882,6 @@ final class NotchModel: ObservableObject {
         var turns: [Turn]
         var text: String
         var threadHistoryID: UUID
-        var showSettings: Bool
         var showWhatsNew: Bool
         var showHistory: Bool
         var closedAt: Date
@@ -1350,7 +1349,7 @@ final class NotchModel: ObservableObject {
     /// Nil only on the pages that own the whole body (settings, What's New),
     /// which have nothing to carry.
     var detachableSession: DetachedSession? {
-        guard open, !showSettings, !showWhatsNew else { return nil }
+        guard open, !showWhatsNew else { return nil }
         if let id = agentDetailTaskID { return .agentTask(id: id) }
         if mode != .idle, !turns.isEmpty, !showHistory {
             return .thread(id: threadHistoryID)
@@ -3096,18 +3095,18 @@ final class NotchModel: ObservableObject {
         case "model", "ai_provider", "ai_model", "api_key",
              "custom_provider_name", "custom_provider_url", "custom_provider_model",
              "custom_instructions":
-            return "model"
+            return "chat"
         case "search", "search_backend", "search_api_key":
             // Search lives inside Model now — its rows are a group on that pane.
             return "model"
         case "capture", "notes", "note_destination", "notes_folder", "copy_sense",
              "selection_context":
-            return "capture"
+            return "chat"
         case "general", "app_language", "launch_at_login", "dock_icon", "menu_bar_icon",
              "proxy":
-            return "general"
+            return "global"
         case "shortcuts", "summon_shortcut", "action_shortcut", "prompt_shortcut":
-            return "shortcuts"
+            return "agent"
         case "appearance", "display_placement", "hide_in_fullscreen", "live_activity",
              "hover_sensitivity", "force_click":
             return "appearance"
@@ -3120,18 +3119,17 @@ final class NotchModel: ObservableObject {
         }
     }
 
-    /// Open the inline Settings surface directly on one category. This is a
+    /// Open the standalone Settings window directly on one category. This is a
     /// navigation-only capability: it writes no preference and therefore never
     /// enters the confirmation path.
     @discardableResult
     private func openAppSettingsSection(_ requested: String) -> Bool {
         let section: InlineSettingsView.Section
         switch Self.settingToken(requested) {
-        case "model":      section = .model
-        case "capture":    section = .capture
-        case "general":    section = .general
+        case "chat":       section = .chat
+        case "global":     section = .global
         case "appearance": section = .appearance
-        case "shortcuts":  section = .shortcuts
+        case "agent":      section = .agent
         case "stats":      section = .stats
         case "about":      section = .about
         default: return false
@@ -4210,13 +4208,9 @@ final class NotchModel: ObservableObject {
             filteredHistoryCache = nil
         }
     }
-    /// Whether the inline settings panel is showing in place of the recent list.
-    /// Replaces the old native Settings window — the gear (and ⌘,) flip this, and
-    /// the idle view swaps the RECENT block for the settings form when it's true.
-    @Published var showSettings = false
     /// The "What's New" release-notes panel — ⌘↵ (and the input-row cue) flip this.
-    /// Like settings, it owns the whole idle body when true and the back chevron /
-    /// Esc returns to the prompt. Mutually exclusive with `showSettings`.
+    /// It owns the notch's idle body while visible; the back chevron / Esc returns
+    /// to the prompt.
     @Published var showWhatsNew = false
     /// Arms the destructive "Clear recent history?" confirmation. Lives on the
     /// model (not the view) so the Clear pill can raise it while the centered
@@ -5077,48 +5071,16 @@ final class NotchModel: ObservableObject {
         }
     }
 
-    /// Toggle the inline settings panel. Opening it folds the recent list away
-    /// (they share the same slot below the prompt) and drops any keyboard
-    /// highlight; closing returns to the bare idle prompt.
+    /// Open the separate macOS Settings window. The notch deliberately remains
+    /// on its current surface instead of replacing its content with preferences.
     func toggleSettings() {
-        showSettings.toggle()
-        if showSettings {
-            showWhatsNew = false
-            showHistory = false
-            highlightedHistoryIndex = nil
-        }
+        NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
     }
 
-    /// Open the panel straight into settings — the path the gear and ⌘, take.
-    /// Works whether the panel was resting or already open on some other view.
-    /// `display` says which screen should host it (AppDelegate passes the screen
-    /// under the mouse when ⌘, fires from anywhere); nil keeps the current one.
+    /// Compatibility route for callers that still ask the model to open Settings.
+    /// Preferences now live in their own scene, so this never opens the notch.
     func openSettings(on display: CGDirectDisplayID? = nil) {
-        // Summoned by keyboard, not approached by mouse — a stale entry vector
-        // from an earlier hover must not kick the settings unfurl sideways.
-        entryVelocity = .zero
-        if let display { activeDisplay = display }
-        // Same closed→open-edge rule as openPanel: adopt the pre-open resting
-        // baseline so a copy-then-⌘, still leaves the clipboard eligible for the
-        // first Ask, and a re-open while already open doesn't clobber it.
-        if !open {
-            pasteboardChangeCountAtOpen = pasteboardChangeCountAtRest
-        }
-        // Cancel any in-flight close dissolve (see `openPanel`), and any pending
-        // leave watch — this keyboard summon supersedes it.
-        closing = false
-        cancelLeaveWatch()
-        open = true
-        mode = .idle
-        showSettings = true
-        showWhatsNew = false
-        showHistory = false
-        highlightedHistoryIndex = nil
-    }
-
-    /// Leave settings and return to the idle prompt (panel stays open).
-    func closeSettings() {
-        showSettings = false
+        NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
     }
 
     /// Open the panel straight into the "What's New" release notes — the path ⌘↵,
@@ -5140,7 +5102,6 @@ final class NotchModel: ObservableObject {
         open = true
         mode = .idle
         showWhatsNew = true
-        showSettings = false
         showHistory = false
         highlightedHistoryIndex = nil
         WhatsNewService.shared.markSeen()
@@ -5370,10 +5331,10 @@ final class NotchModel: ObservableObject {
         // un-expiring `savedIdleDraft` below. Unconditional overwrite is safe:
         // every close is preceded by an open, and every open consumed or cleared
         // the previous snapshot.
-        parkedSession = (mode != .idle || showSettings || showWhatsNew || showHistory)
+        parkedSession = (mode != .idle || showWhatsNew || showHistory)
             ? ParkedSession(mode: mode, turns: turns, text: text,
                             threadHistoryID: threadHistoryID,
-                            showSettings: showSettings, showWhatsNew: showWhatsNew,
+                            showWhatsNew: showWhatsNew,
                             showHistory: showHistory, closedAt: Date(),
                             measuredAnswerHeight: lastMeasuredAnswerHeight,
                             fromPromptShortcut: fromPromptShortcut)
@@ -5413,7 +5374,6 @@ final class NotchModel: ObservableObject {
         isResultMetadataMenuOpen = false
         text = ""; turns = []
         showHistory = false
-        showSettings = false
         showWhatsNew = false
         confirmingClear = false
         highlightedHistoryIndex = nil
@@ -5462,7 +5422,6 @@ final class NotchModel: ObservableObject {
         agentDetailTaskID = nil
         text = ""; turns = []
         showHistory = false
-        showSettings = false
         highlightedHistoryIndex = nil
         // Clear the note/reminder-save state, exactly like `fullClose` does (XII-86).
         // Backing out with Back while a Note/Reminder write is still in flight (e.g.
@@ -5551,8 +5510,7 @@ final class NotchModel: ObservableObject {
     /// context badge onto any of them would be noise at best.
     var acceptsSelectionContext: Bool {
         selectionContextEnabled
-            && mode == .idle && turns.isEmpty
-            && !showSettings && !showWhatsNew
+            && mode == .idle && turns.isEmpty && !showWhatsNew
             && !agentComposeActive
             && promptShortcutContext == nil
     }
@@ -5937,7 +5895,6 @@ final class NotchModel: ObservableObject {
         // The drop landing — the trackpad answers the release like Finder's snap.
         Haptics.alignment()
         withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-            if showSettings { showSettings = false }
             if showWhatsNew { showWhatsNew = false }
             if mode != .idle { newChat() }
         }
@@ -7667,7 +7624,6 @@ final class NotchModel: ObservableObject {
     /// give up to the idle prompt when the round died wordless — never restore
     /// `.load`, nothing would ever feed those thinking dots again.
     private func restoreParkedSession(_ parked: ParkedSession) {
-        showSettings = parked.showSettings
         showWhatsNew = parked.showWhatsNew
         showHistory = parked.showHistory
         guard parked.mode != .idle else {
@@ -8692,9 +8648,6 @@ final class NotchModel: ObservableObject {
     // MARK: - Open width per state (matches the prototype's s-* widths)
 
     var openWidth: CGFloat {
-        // Settings needs a touch more room for the provider/model rows; it only
-        // ever shows over the idle view, so it wins regardless of `mode`.
-        if showSettings { return Tokens.openWidthSettings }
         // What's New is a reading surface — give it the same comfortable column
         // as the result view. Also shows only over idle, so it wins like settings.
         if showWhatsNew { return Tokens.openWidthWhatsNew }

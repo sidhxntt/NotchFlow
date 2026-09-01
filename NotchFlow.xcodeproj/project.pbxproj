@@ -74,8 +74,6 @@
 		A10004B1 /* intro-sunrise.m4a in Resources */ = {isa = PBXBuildFile; fileRef = A10004B0 /* intro-sunrise.m4a */; };
 		A1000C15 /* strokes.bin in Resources */ = {isa = PBXBuildFile; fileRef = A1000C14 /* strokes.bin */; };
 		A10004B3 /* buy-me-a-coffee.gif in Resources */ = {isa = PBXBuildFile; fileRef = A10004B2 /* buy-me-a-coffee.gif */; };
-		A1002001 /* mediaremote-adapter.pl in Resources */ = {isa = PBXBuildFile; fileRef = A1002002 /* mediaremote-adapter.pl */; };
-		A1002003 /* MediaRemoteAdapter.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A1002004 /* MediaRemoteAdapter.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A1000710 /* AgentHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000720 /* AgentHarness.swift */; };
 		A1000711 /* AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000721 /* AgentTools.swift */; };
 		A1000912 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1000913 /* PrivacyInfo.xcprivacy */; };
@@ -243,8 +241,6 @@
 		A10004B0 /* intro-sunrise.m4a */ = {isa = PBXFileReference; lastKnownFileType = file; path = "intro-sunrise.m4a"; sourceTree = "<group>"; };
 		A1000C14 /* strokes.bin */ = {isa = PBXFileReference; lastKnownFileType = file; path = strokes.bin; sourceTree = "<group>"; };
 		A10004B2 /* buy-me-a-coffee.gif */ = {isa = PBXFileReference; lastKnownFileType = image.gif; path = "buy-me-a-coffee.gif"; sourceTree = "<group>"; };
-		A1002002 /* mediaremote-adapter.pl */ = {isa = PBXFileReference; lastKnownFileType = text.script.perl; path = references/boring.notch/mediaremote-adapter/mediaremote-adapter.pl; sourceTree = SOURCE_ROOT; };
-		A1002004 /* MediaRemoteAdapter.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = references/boring.notch/mediaremote-adapter/MediaRemoteAdapter.framework; sourceTree = SOURCE_ROOT; };
 		A1000100 /* NotchFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NotchFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -257,19 +253,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		A1000203 /* Embed Frameworks */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				A1002003 /* MediaRemoteAdapter.framework in Embed Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXGroup section */
 		A1000300 = {
@@ -414,8 +397,6 @@
 				A10004B0 /* intro-sunrise.m4a */,
 				A1000C14 /* strokes.bin */,
 				A10004B2 /* buy-me-a-coffee.gif */,
-				A1002002 /* mediaremote-adapter.pl */,
-				A1002004 /* MediaRemoteAdapter.framework */,
 				A1000913 /* PrivacyInfo.xcprivacy */,
 			);
 			path = Resources;
@@ -439,7 +420,6 @@
 				A1000201 /* Sources */,
 				A1000200 /* Frameworks */,
 				A1000202 /* Resources */,
-				A1000203 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -494,7 +474,6 @@
 				A10004B1 /* intro-sunrise.m4a in Resources */,
 				A1000C15 /* strokes.bin in Resources */,
 				A10004B3 /* buy-me-a-coffee.gif in Resources */,
-				A1002001 /* mediaremote-adapter.pl in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1936,10 +1936,8 @@ enum ModelCatalog {
 
     /// In-memory cache of the last successful live fetch per provider, so the
     /// network hit (plus, for OpenRouter, the extra `UsageRankings` call) isn't
-    /// repeated every time Settings reopens. `InlineSettingsView` is "closed ==
-    /// destroyed" (`NotchBody.swift`'s `if model.showSettings { InlineSettingsView(…) }`),
-    /// which wipes its own `@State private var liveByProvider` — this cache lives
-    /// on the type instead, so it survives that teardown across the app's whole
+    /// repeated every time the Settings window is recreated. The cache lives on
+    /// the type, so it survives settings-window teardown across the app's whole
     /// process lifetime (until `ttl` lapses or the key changes).
     ///
     /// Keyed by provider, but an entry also carries the `apiKey` it was fetched

@@ -76,6 +76,19 @@ func titleAndBodyFallBackSeparately() {
     #expect(body == "Incoming call")
 }
 
+@Test("a named title with an unnamed body still drops the subtitle")
+func namedTitleFallsBackToBodyWithoutReintroducingTheSubtitle() {
+    // If a future macOS release retains `title` but renames `body`, the
+    // fallback must still omit the app-owned subtitle. Otherwise the body
+    // becomes "WhatsApp Incoming call" and no longer starts with a call phrase.
+    let (title, body) = AlertBannerText.split([node("title", "Priya"),
+                                               node("subtitle", "WhatsApp"),
+                                               node(nil, "Incoming call")])
+
+    #expect(title == "Priya")
+    #expect(body == "Incoming call")
+}
+
 @Test("empty texts never become the title or body")
 func emptyNodesAreIgnored() {
     let (title, body) = AlertBannerText.split([node("title", ""), node(nil, "Priya"),
@@ -132,4 +145,16 @@ func noTextsSplitsToEmpty() {
         #expect(phrase.unicodeScalars.allSatisfy { $0.value < 0x4E00 || $0.value > 0x9FFF },
                 "phrase contains a CJK ideograph: \(phrase)")
     }
+}
+
+@Test("a Korean connected-call window remains detectable")
+@MainActor func koreanConnectedCallWindowTextMatchesItsHangulPhrase() {
+    // This protects the watcher-facing matcher, not just banner vocabulary.
+    // Replacing U+D1B5 통 with the visual lookalike U+901A 通 makes this exact
+    // live-window text stop matching.
+    #expect(AlertFeedStore.looksLikeCallWindowText([
+        "\u{200E}WhatsApp",
+        "\u{200E}Priya",
+        "\u{200E}음성 통화",
+    ]))
 }

@@ -95,7 +95,16 @@ private struct PermissionStatusPill: View {
 /// this; the back chevron returns to the idle prompt.
 struct InlineSettingsView: View {
     @ObservedObject var model: NotchModel
+    @ObservedObject private var capabilities = NotchCapabilityStore.shared
+    /// The same settings controls can also live in the standalone macOS Settings
+    /// window. In that case the native window provides navigation and chrome;
+    /// this view supplies only the selected pane and its established behaviour.
+    private let presentedInSettingsWindow: Bool
     @ObservedObject private var clipboardHistory = ClipboardHistoryService.shared
+    /// The Pomodoro durations the Utilities pane edits. Observed rather than
+    /// mirrored: both minute counts are backed by `@Published` storage, so the
+    /// rows follow a change made from the overlay's own pickers too.
+    @ObservedObject private var focusTimer = FocusTimerStore.shared
     /// Self-update state (shared app-wide — the gear badge reads the same object).
     /// Drives the Version row: a quiet number normally, an Update action when a
     /// newer release is known.
@@ -285,11 +294,12 @@ struct InlineSettingsView: View {
     /// The left-hand category list — the point of the column is that the next
     /// setting gets a home without redesigning the panel.
     enum Section: String, CaseIterable, Identifiable {
-        case model = "Model"     // who answers: provider, API key, model override — and the search backend behind it
-        case capture = "Capture" // how a line gets in and where it lands: copy sensing, selected text, Force Click, note destination
-        case appearance = "Appearance" // notch style, interaction, and display placement
-        case shortcuts = "Shortcuts" // editable keyboard controls, its own top-level settings category
-        case general = "General" // language, app presence, permissions, + Advanced (proxy)
+        case chat = "Chat"       // inherited Notchi assistant, capture, and search settings
+        case agent = "Agent"     // task and prompt shortcuts
+        case media = "Media"     // system now-playing behaviour
+        case utilities = "Utilities" // clipboard and utility services
+        case appearance = "Appearance" // global notch style and display placement
+        case global = "Global"   // app presence, permissions, language, and network
         case stats = "Stats"     // what the archive adds up to — read-only
         case about = "About"     // version + self-update
         case licenses = "Licenses" // third-party attribution and licences
@@ -316,11 +326,12 @@ struct InlineSettingsView: View {
         /// identity); this is what the user actually reads.
         var title: String {
             switch self {
-            case .model:      return L("sidebar.model")
-            case .capture:    return L("sidebar.capture")
-            case .general:    return L("sidebar.general")
-            case .shortcuts:  return L("sidebar.shortcuts")
+            case .chat:       return "Chat"
+            case .agent:      return "Agent"
+            case .media:      return "Media"
+            case .utilities:  return "Utilities"
             case .appearance: return L("sidebar.appearance")
+            case .global:     return "Global"
             case .stats:      return L("sidebar.stats")
             case .about:      return L("sidebar.about")
             case .licenses:   return L("about.licenses")
@@ -332,7 +343,14 @@ struct InlineSettingsView: View {
     /// root's `.id(loc.language)` — keeps the user on the pane they were on (e.g.
     /// General, where the language picker lives) instead of snapping back to Model.
     private var section: Section {
-        get { Section(rawValue: model.settingsSection) ?? .model }
+        get {
+            switch model.settingsSection {
+            case "Model", "Capture": return .chat
+            case "Shortcuts": return .agent
+            case "General": return .global
+            default: return Section(rawValue: model.settingsSection) ?? .chat
+            }
+        }
         nonmutating set { model.settingsSection = newValue.rawValue }
     }
 
@@ -454,6 +472,25 @@ struct InlineSettingsView: View {
     /// line has somewhere to send a user who wants it and hasn't been asked yet.
     @State private var locationPermission: SettingsPermissionStatus = .checking
 
+    /// The Utilities and Media panes' stored knobs, mirrored into view state for
+    /// the same reason as the Agent pane's below: they live on value types in
+    /// `Capabilities`, which nothing there may make observable.
+    @State private var mediaInClosedNotch: Bool = MediaPresentationPolicy.showsInClosedNotch
+    @State private var temperatureUnit: WeatherUnitPreference = WeatherUnitPreference.current
+    @State private var quickActionsHidden: Set<String> = QuickUtilityStrip.hidden
+    /// The clipboard limit is a plain stored property on the service (not
+    /// `@Published`), so the menu title reads this mirror rather than the service.
+    @State private var clipboardLimit: Int = ClipboardHistoryService.shared.limit
+
+    /// The Agent pane's four stored knobs, mirrored into view state. They live on
+    /// value types in `Capabilities` (nothing there may depend on SwiftUI), so
+    /// there is no publisher to observe — the mirror is what redraws the row, and
+    /// each setter writes both.
+    @State private var permissionDelay: TimeInterval = AgentPermissionPolicy.delay
+    @State private var stalledAfter: TimeInterval = AgentSessionTerminal.stalledAfter
+    @State private var sessionWindow: TimeInterval = AgentSessionObservation.activeFileWindow
+    @State private var showsSubagents: Bool = AgentDisplayPolicy.showsSubagents
+
     /// The day the Stats grid's pointer is on. Lives here, not in the pane,
     /// because the readout naming it is drawn in the panel header — the pane's
     /// own corners are all spoken for.
@@ -465,11 +502,25 @@ struct InlineSettingsView: View {
     /// The token odometer's reading, refreshed alongside the digest.
     @State private var statsTokens = TokenMeter.Reading(total: 0)
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
+    init(model: NotchModel, presentedInSettingsWindow: Bool = false) {
+        _model = ObservedObject(wrappedValue: model)
+        self.presentedInSettingsWindow = presentedInSettingsWindow
+    }
 
-            if section.isDetail {
+    var body: some View {
+        Group {
+            if presentedInSettingsWindow {
+                // Keep every mature setting and its interaction intact while the
+                // desktop window supplies the native sidebar and title bar.
+                paneContent
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+
+                    if section.isDetail {
                 // A pushed sub-page (the Shortcuts reference under About): the
                 // category column steps aside and the page takes the whole panel,
                 // so it reads as one level deeper rather than another tab. The
@@ -477,27 +528,29 @@ struct InlineSettingsView: View {
                 // No `.fixedSize(vertical:)` needed here: alone in the column, the
                 // pane's own exact height (content, capped at Recent's) is the
                 // whole page height.
-                paneContent
-                    .padding(.horizontal, 8)
-                    .padding(.top, 12)
-            } else {
-                HStack(alignment: .top, spacing: 0) {
+                        paneContent
+                            .padding(.horizontal, 8)
+                            .padding(.top, 12)
+                    } else {
+                        HStack(alignment: .top, spacing: 0) {
                     // The sidebar drops by the pane's runway too, so the first
                     // category stays level with the pane's first row — the runway
                     // moves BOTH columns down, it doesn't stagger them.
-                    sidebar
-                        .padding(.top, Self.paneTopRunway)
+                            sidebar
+                                .padding(.top, Self.paneTopRunway)
 
-                    paneContent
-                        .padding(.leading, 14)
-                }
+                            paneContent
+                                .padding(.leading, 14)
+                        }
                 // Take the columns' own height, nothing more: the pane already
                 // carries an exact height (content, capped at Recent's), so this
                 // no longer unfolds the scroll — it only stops the scroll behind
                 // it from stretching the island.
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 8)
-                .padding(.top, 12)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 12)
+                    }
+                }
             }
         }
         .overlay {
@@ -531,7 +584,7 @@ struct InlineSettingsView: View {
             // commits the moment a key lands, and nothing changes before that).
             if let pending = model.pendingModelSetup {
                 model.pendingModelSetup = nil
-                section = .model
+                section = .chat
                 pendingModel = PendingModel(provider: pending.provider, id: pending.id)
                 setKeyScope(pending.provider)
                 keySectionOpen = true
@@ -547,6 +600,14 @@ struct InlineSettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .appIconAppearanceChanged)) { _ in
             appIconAppearanceRevision &+= 1
+        }
+        // Turning agentic mode off from the Global row retires Chat, Agent, and
+        // Stats (see `sidebarSections`). Without this, a user who was reading one
+        // of those and then flipped the toggle stayed on a pane with no sidebar
+        // row left to point at it.
+        .onChange(of: capabilities.agenticModeEnabled) {
+            guard !sidebarSections.contains(section), !section.isDetail else { return }
+            withAnimation(.easeOut(duration: 0.16)) { section = .media }
         }
         .onChange(of: orAuth.phase) {
             // The OAuth flow just wrote a key from outside this view — sync the
@@ -578,8 +639,13 @@ struct InlineSettingsView: View {
     /// resized on every category switch (and re-measured on every layout pass) —
     /// a fixed frame is both steadier to look at and cheaper to draw.
     private static let headerChrome: CGFloat = 12 + 26 + 4 + 12
-    private var settingsPaneHeight: CGFloat {
-        NotchBody.immersiveListHeight - Self.headerChrome
+    /// The in-notch pane's fixed height. `nil` in the desktop window, where the
+    /// pane takes whatever height the window has: a hard number there capped the
+    /// scroll view well short of the window's bottom, so the last rows of a long
+    /// category (Chat's Capture group, Agent's shortcut reference) sat below the
+    /// clip with dead space under them and no way to scroll to them.
+    private var settingsPaneHeight: CGFloat? {
+        presentedInSettingsWindow ? nil : NotchBody.immersiveListHeight - Self.headerChrome
     }
 
     /// Carries the open pane's measured content height out of the scroll view.
@@ -596,6 +662,16 @@ struct InlineSettingsView: View {
     /// rows — the ragged right half is what read as clutter. A fixed pixel column
     /// can't do this job: French and Spanish labels are visibly longer than the
     /// English ones, so the number would either clip or waste half the pane.
+    /// Carries the scroll viewport's height out of the pane. Separate from
+    /// `PaneContentHeightKey` because one is the document and the other the clip;
+    /// the taper gating needs both (see `paneOverflows`).
+    private struct PaneViewportHeightKey: PreferenceKey {
+        static let defaultValue: CGFloat = 0
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+            value = max(value, nextValue())
+        }
+    }
+
     private struct LabelColumnWidthKey: PreferenceKey {
         static let defaultValue: CGFloat = 0
         static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -616,6 +692,9 @@ struct InlineSettingsView: View {
     /// the first row is still fully solid.
     private static let paneTopRunway: CGFloat = 14
     private static let paneTopFade: CGFloat = 34
+    /// The matching empty inset below the pane's last row, so the bottom taper has
+    /// something to dissolve into. Named because `paneOverflows` has to count it.
+    private static let paneBottomRunway: CGFloat = 20
 
     /// Whether the open pane is scrolled off its top — all the top taper needs to
     /// know. A Bool, not the live offset: driving the gradient's LENGTH from the
@@ -623,10 +702,23 @@ struct InlineSettingsView: View {
     /// scrolling crawl. This flips once.
     @State private var paneScrolledOffTop = false
 
+    /// The open pane's measured row height, and the height of the scroll viewport
+    /// showing it. Both are needed because the viewport is no longer a constant:
+    /// in the desktop window it is whatever the window gives us.
+    @State private var paneContentHeight: CGFloat = 0
+    @State private var paneViewportHeight: CGFloat = 0
+
     /// Whether the open pane's rows are taller than the room under the runway.
-    /// Starts `true` so a pane that does overflow never shows an un-tapered first
-    /// frame; the measurement corrects it on the same layout pass.
-    @State private var paneOverflows = true
+    /// `true` until the viewport has been measured, so a pane that does overflow
+    /// never shows an un-tapered first frame.
+    private var paneOverflows: Bool {
+        guard paneViewportHeight > 0 else { return true }
+        // Both runways are empty by definition, so a pane whose only scrollable
+        // slack is that padding has nothing for a taper to dissolve — only the
+        // rows count. The top runway is still charged against the viewport
+        // because it does occupy room the rows can't use.
+        return paneContentHeight + Self.paneTopRunway > paneViewportHeight + 0.5
+    }
 
     /// The open section's pane. Lives apart from `body` because it is drawn in
     /// two different frames — in the right-hand column beside the sidebar for a
@@ -644,7 +736,7 @@ struct InlineSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     switch section {
-            case .model:
+            case .chat:
                 // Two steps, in the order you make them: pick the backend,
                 // then pick one of *its* models. The API key stays supporting
                 // cast — folded into `keySection`, which only unfolds when the
@@ -677,22 +769,24 @@ struct InlineSettingsView: View {
                 case .exa:      exaKeyRow
                 case .anysearch: anySearchKeyRow
                 }
-            case .capture:
-                // The whole path a line takes into the notch, in the order it
-                // travels: what the panel picks up when it opens, how it gets
-                // its subject, then where a jot finally files. These rows used
-                // to be split across Notes and General, which put "what gets
-                // captured" and "where it goes" on different pages.
+                Text("Capture")
+                    .captionLabel()
+                    .padding(.top, 2)
                 copySenseRow
-                clipboardHistoryRow
                 selectionContextRow
                 noteDestinationRow
-            case .general:
-                // What's left once the capture rows moved out is genuinely
-                // app-level: how it talks to you, where the app itself appears in
-                // macOS, what the system lets it touch, and the escape hatch.
-                // Dock and menu-bar presence belong beside launch-at-login rather
-                // than among the notch's own visual and interaction settings.
+            case .agent:
+                agentSettingsSection
+                Text("Keyboard")
+                    .captionLabel()
+                    .padding(.top, 2)
+                shortcutsSection
+            case .media:
+                mediaSettingsSection
+            case .utilities:
+                utilitiesSettingsSection
+            case .global:
+                agenticModeRow
                 appLanguageRow
                 Text(L("general.appPresence"))
                     .captionLabel()
@@ -702,8 +796,6 @@ struct InlineSettingsView: View {
                 menuBarIconRow
                 permissionsSection
                 advancedSection
-            case .shortcuts:
-                shortcutsSection
             case .appearance:
                 // Three small, literal groups: visual style, how the notch reacts,
                 // and which displays carry it. App-level presence in macOS (launch,
@@ -758,7 +850,7 @@ struct InlineSettingsView: View {
             // covered. The bottom keeps its own runway — that edge tapers at all
             // times.
             .padding(.top, Self.paneTopRunway)
-            .padding(.bottom, 20)
+            .padding(.bottom, Self.paneBottomRunway)
             // Zero-size probe on the scroll CONTENT: it reads the real clip view's
             // offset. Only the crossing matters, so state changes at most once per
             // scroll gesture rather than on every tick.
@@ -768,19 +860,31 @@ struct InlineSettingsView: View {
             }
             }
             .onPreferenceChange(PaneContentHeightKey.self) { height in
-                // The runway is empty by definition, so the rows only overflow
-                // once they outgrow what is left under it.
-                let over = height > settingsPaneHeight - Self.paneTopRunway + 0.5
-                if over != paneOverflows { paneOverflows = over }
+                if abs(height - paneContentHeight) > 0.5 { paneContentHeight = height }
+            }
+            .onPreferenceChange(PaneViewportHeightKey.self) { height in
+                if abs(height - paneViewportHeight) > 0.5 { paneViewportHeight = height }
             }
             .onPreferenceChange(LabelColumnWidthKey.self) { width in
                 if abs(width - labelColumnWidth) > 0.5 { labelColumnWidth = width }
             }
             .scrollIndicators(.never)
-            // One fixed height for every pane (see `settingsPaneHeight`) — the
-            // island never resizes between categories, and a greedy ScrollView
-            // never gets to claim the whole panel.
+            // In the notch: one fixed height for every pane (see
+            // `settingsPaneHeight`) — the island never resizes between categories,
+            // and a greedy ScrollView never gets to claim the whole panel. In the
+            // desktop window the opposite is wanted: fill it, so the scroll's clip
+            // reaches the window's bottom edge and the last row is reachable.
             .frame(height: settingsPaneHeight)
+            .frame(maxHeight: presentedInSettingsWindow ? .infinity : nil)
+            // How tall the visible pane actually is — the number `paneOverflows`
+            // compares the rows against. Read on the scroll container, not its
+            // content, so it reports the clip rather than the document.
+            .background(
+                GeometryReader { g in
+                    Color.clear.preference(key: PaneViewportHeightKey.self,
+                                           value: g.size.height)
+                }
+            )
             // Key the scroll container by the open section: each category gets
             // its OWN scroll state, so leaving Model scrolled halfway doesn't
             // carry that offset into General (and vice versa) — a fresh scroll
@@ -792,7 +896,7 @@ struct InlineSettingsView: View {
             // lands silently: the animation here would otherwise double the
             // section's own `.easeOut` and stall the open.
             .onChange(of: setupRequired) { _, required in
-                guard required, section == .model else { return }
+                guard required, section == .chat else { return }
                 DispatchQueue.main.async { proxy.scrollTo(Self.keySectionAnchor, anchor: .top) }
             }
             // The top taper exists only once the pane is actually scrolled: a
@@ -824,9 +928,21 @@ struct InlineSettingsView: View {
 
     // MARK: - Sidebar
 
+    /// The categories worth showing for the way the app is configured right now.
+    /// Chat, Agent, and Stats all describe the agentic layer — Stats is the
+    /// archive that layer writes — so companion mode retires all three instead of
+    /// offering pages about a surface the notch no longer has a tab for. Agentic
+    /// mode itself is a Global row, which never leaves.
+    private var sidebarSections: [Section] {
+        Section.sidebarCases.filter {
+            capabilities.agenticModeEnabled
+                || ($0 != .chat && $0 != .agent && $0 != .stats)
+        }
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 2) {
-            ForEach(Section.sidebarCases) { s in
+            ForEach(sidebarSections) { s in
                 SidebarItem(
                     title: s.title,
                     selected: section == s,
@@ -889,10 +1005,8 @@ struct InlineSettingsView: View {
 
     // MARK: - Header
 
-    /// The back pill names wherever you are and walks out of it: on a category
-    /// that's "Settings" → leave settings; on a pushed sub-page it takes the
-    /// page's own name and steps back one level to the section that owns it,
-    /// so the pill never skips a floor.
+    /// This legacy header is retained only for pushed detail panes. Settings is
+    /// hosted by the standalone macOS window, which supplies its own chrome.
     private var header: some View {
         HStack(spacing: 10) {
             PanelBackPill(
@@ -903,9 +1017,7 @@ struct InlineSettingsView: View {
                 if let parent = section.parent {
                     withAnimation(.easeOut(duration: 0.16)) { section = parent }
                 } else {
-                    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                        model.closeSettings()
-                    }
+                    model.toggleSettings()
                 }
             }
 
@@ -2421,7 +2533,9 @@ struct InlineSettingsView: View {
     /// summon shortcut has been forgotten. The choice applies immediately
     /// (AppDelegate adds/removes the status item).
     private var menuBarIconRow: some View {
-        settingRow(label: L("general.menuBarIcon.toggle"), aligned: true) {
+        settingRow(label: L("general.menuBarIcon.toggle"),
+                   aligned: true,
+                   forceStacked: true) {
             Toggle("", isOn: Binding(
                 get: { menuBarIconVisibility == .shown },
                 set: { Haptics.levelChange(); selectMenuBarIconVisibility($0 ? .shown : .hidden) }
@@ -2452,17 +2566,11 @@ struct InlineSettingsView: View {
     /// and summarize, with no Automation prompt. The folder sub-row (current path
     /// + chooser) only appears while the Markdown destination is active.
     private var noteDestinationRow: some View {
-        settingRow(label: L("general.noteDestination")) {
-            // Path sub-row lives in the row's content column so it left-aligns
-            // with the menu above it — no guessed label-width offset.
+        settingRow(label: L("general.noteDestination"), forceStacked: true) {
+            // Keep the expandable folder detail above the menu. Native menus open
+            // downward, so this avoids the menu covering the path or its Choose
+            // action while it is open.
             VStack(alignment: .leading, spacing: 8) {
-                GlassMenu(title: noteDestination.label) {
-                    ForEach(NoteDestination.allCases) { d in
-                        Button { selectNoteDestination(d) } label: {
-                            menuOption(d.label, selected: d == noteDestination)
-                        }
-                    }
-                }
                 if noteDestination == .markdownFolder {
                     HStack(spacing: 10) {
                         Text(notesFolderDisplay)
@@ -2470,7 +2578,17 @@ struct InlineSettingsView: View {
                             .foregroundStyle(Tokens.text3)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        
                         SettingActionButton(title: L("general.noteFolder.choose")) { chooseNotesFolder() }
+                            .fixedSize()
+                    }
+                }
+                GlassMenu(title: noteDestination.label) {
+                    ForEach(NoteDestination.allCases) { d in
+                        Button { selectNoteDestination(d) } label: {
+                            menuOption(d.label, selected: d == noteDestination)
+                        }
                     }
                 }
             }
@@ -2920,7 +3038,9 @@ struct InlineSettingsView: View {
     /// `general.fullscreenAutoHide` label keep the old polarity too, matching
     /// the key they're named for.
     private var fullscreenAutoHideRow: some View {
-        settingRow(label: L("general.fullscreenAutoHide.toggle"), aligned: true) {
+        settingRow(label: L("general.fullscreenAutoHide.toggle"),
+                   aligned: true,
+                   forceStacked: true) {
             Toggle("", isOn: Binding(
                 get: { !hideInFullscreen },
                 set: { Haptics.levelChange(); selectHideInFullscreen(!$0) }
@@ -3104,23 +3224,72 @@ struct InlineSettingsView: View {
     /// slider right above it — Off, Light, Medium, Firm. Off disarms the
     /// gesture entirely, so a plain click stays a plain click.
     private var forceClickPressureRow: some View {
-        let controlWidth: CGFloat = 190
-        return settingRow(label: L("general.forceClickPressure"),
-                          info: L("general.forceClickPressure.hint"),
-                          aligned: true) {
-            VStack(spacing: 1) {
-                NativeDetentSlider(value: forceClickPressurePosition,
-                                   ticks: ForceClickPressure.allCases.count,
-                                   tickCenters: $pressureTickCenters)
-                    .frame(width: controlWidth, height: 22)
-                    .accessibilityLabel(L("general.forceClickPressure"))
+        detentSliderRow(label: L("general.forceClickPressure"),
+                        info: L("general.forceClickPressure.hint"),
+                        options: ForceClickPressure.allCases,
+                        selected: model.forceClickPressure,
+                        position: forceClickPressurePosition,
+                        centers: $pressureTickCenters)
+    }
 
-                tickLabelRow(ForceClickPressure.allCases,
-                             selected: model.forceClickPressure,
-                             centers: pressureTickCenters,
-                             width: controlWidth)
+    /// A detent slider and its tick labels, stacked under a full-width title row.
+    ///
+    /// These two used to sit beside their labels in the shared label column, with
+    /// the slider pinned at 190pt. That layout could not hold: the column is sized
+    /// to the widest label in the pane, and once the settings window went compact
+    /// the longest of these titles ("Force click pressure", plus its ⓘ) ran out of
+    /// column and drew straight over the slider's left end — the ⓘ disappeared
+    /// under the thumb. Stacking removes the competition for horizontal space
+    /// entirely: the title gets the whole row, the slider gets the whole row
+    /// beneath it, and four tick labels have room to breathe at any window width.
+    /// Half the width of the widest tick label, rounded up. "Instant" and "Medium"
+    /// are the long ones at 10.5pt semibold; 30 clears them with room for a longer
+    /// translation.
+    private static let detentSliderInset: CGFloat = 30
+
+    private func detentSliderRow<Option>(
+        label: String,
+        info: String,
+        options: [Option],
+        selected: Option,
+        position: Binding<Double>,
+        centers: Binding<[CGFloat]?>
+    ) -> some View where Option: Identifiable & Equatable & Hashable,
+                        Option: RawRepresentable, Option.RawValue == String {
+        VStack(alignment: .leading, spacing: 6) {
+            settingLabel(label, info: info)
+            // The tick labels are positioned as a fraction of the slider's real
+            // width (see `tickLabelRow`), so that width has to be a number rather
+            // than "whatever is left" — hence the geometry read.
+            GeometryReader { g in
+                // Both the slider and the tick row are inset by the same amount,
+                // so the fractions AppKit reports for its tick marks still line up
+                // with where the labels are placed. The inset exists for the two
+                // END labels: they are centred on ticks that sit at x=0 and
+                // x=width, so without it half of "Click" and half of "Instant"
+                // fall outside the row and get clipped away.
+                let track = max(0, g.size.width - Self.detentSliderInset * 2)
+                VStack(spacing: 2) {
+                    NativeDetentSlider(value: position,
+                                       ticks: options.count,
+                                       tickCenters: centers)
+                        .frame(width: track, height: 22)
+                        .accessibilityLabel(label)
+
+                    tickLabelRow(options, selected: selected,
+                                 centers: centers.wrappedValue,
+                                 width: track)
+                }
+                .padding(.horizontal, Self.detentSliderInset)
             }
+            // Slider (22) + gap (2) + label row (14). Fixed because a
+            // `GeometryReader` is greedy in both axes and would otherwise claim
+            // the rest of the pane.
+            .frame(height: 38)
         }
+        // These rows are twice the height of a switch row; without a little air
+        // under them the group reads as one dense block of sliders.
+        .padding(.bottom, 4)
     }
 
     /// Labels under a detent slider, each centered on its tick's real x-position
@@ -3194,23 +3363,12 @@ struct InlineSettingsView: View {
     /// four ordered policies map directly to a native, tick-mark-only NSSlider:
     /// Click, Low, Balanced, and Instant.
     private var hoverSensitivityRow: some View {
-        let controlWidth: CGFloat = 190
-        return settingRow(label: L("general.hoverSensitivity"),
-                          info: L("general.hoverSensitivity.hint"),
-                          aligned: true) {
-            VStack(spacing: 1) {
-                NativeDetentSlider(value: hoverSensitivityPosition,
-                                   ticks: HoverSensitivity.allCases.count,
-                                   tickCenters: $hoverTickCenters)
-                    .frame(width: controlWidth, height: 22)
-                    .accessibilityLabel(L("general.hoverSensitivity"))
-
-                tickLabelRow(HoverSensitivity.allCases,
-                             selected: hoverSensitivity,
-                             centers: hoverTickCenters,
-                             width: controlWidth)
-            }
-        }
+        detentSliderRow(label: L("general.hoverSensitivity"),
+                        info: L("general.hoverSensitivity.hint"),
+                        options: HoverSensitivity.allCases,
+                        selected: hoverSensitivity,
+                        position: hoverSensitivityPosition,
+                        centers: $hoverTickCenters)
     }
 
     private var hoverSensitivityPosition: Binding<Double> {
@@ -3284,6 +3442,471 @@ struct InlineSettingsView: View {
         // Drives the live switch: republishing `language` re-renders every view
         // reading `L(_:)` (and rebuilds the panel subtree via `.id(loc.language)`).
         Localization.shared.language = newValue
+    }
+
+    // MARK: - Product mode
+
+    /// Chat and Agent are an optional layer over NotchFlow's always-available
+    /// Media and Utilities workspaces. Disabling it immediately returns the
+    /// workspace to Media, so a hidden Chat or Agent surface cannot linger.
+    private var agenticModeRow: some View {
+        settingRow(label: "Agentic mode",
+                   info: "Show Chat and Agent alongside Media and Utilities.") {
+            Toggle("", isOn: $capabilities.agenticModeEnabled)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .tint(Tokens.text2)
+        }
+    }
+
+    /// Media has no account and no library of its own — it reads whatever player
+    /// the system is running. That leaves exactly two decisions worth making, and
+    /// both of them change real behaviour: which player the notch follows when
+    /// more than one holds a track, and whether a playing track is allowed to
+    /// occupy the resting notch.
+    private var mediaSettingsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Playback")
+                .captionLabel()
+            mediaPreferredSourceRow
+            mediaClosedNotchRow
+            Text("Media follows the active system player. Playback controls live in the Media tab.")
+                .font(.sf(11.5))
+                .foregroundStyle(Tokens.text3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+        }
+    }
+
+    /// Pinning a player. Worth having because Music.app keeps a `current track`
+    /// populated for days after playback stops, so a stale Music window and a live
+    /// browser tab can otherwise trade the notch back and forth.
+    private var mediaPreferredSourceRow: some View {
+        settingRow(label: "Follow player",
+                   info: "Which player the notch reads. Automatic follows whichever one is actually playing.",
+                   aligned: true) {
+            GlassMenu(title: capabilities.preferredMediaSource?.displayName ?? "Automatic") {
+                Button { capabilities.preferredMediaSource = nil } label: {
+                    menuOption("Automatic", selected: capabilities.preferredMediaSource == nil)
+                }
+                ForEach(MediaSource.allCases, id: \.self) { source in
+                    Button { capabilities.preferredMediaSource = source } label: {
+                        menuOption(source.displayName,
+                                   selected: capabilities.preferredMediaSource == source)
+                    }
+                }
+            }
+        }
+    }
+
+    private var mediaClosedNotchRow: some View {
+        settingRow(label: "Show in closed notch",
+                   info: "Let a playing track claim one of the resting notch's ears. Off keeps media inside the opened panel.",
+                   aligned: true,
+                   forceStacked: true) {
+            Toggle("", isOn: Binding(
+                get: { mediaInClosedNotch },
+                set: {
+                    Haptics.levelChange()
+                    mediaInClosedNotch = $0
+                    MediaPresentationPolicy.showsInClosedNotch = $0
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .tint(Tokens.text2)
+        }
+    }
+
+    // MARK: - Utilities
+
+    /// The Utilities category was one switch, for a workspace that carries a
+    /// clipboard, a focus timer, a File tray, a calendar with a weather line, and
+    /// a seven-chip action strip. These are the settings those surfaces actually
+    /// read — every one of them is stored state the running code consults, not a
+    /// switch that only moves itself.
+    private var utilitiesSettingsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Clipboard")
+                .captionLabel()
+            clipboardHistoryRow
+            clipboardLimitRow
+            Text("Focus timer")
+                .captionLabel()
+                .padding(.top, 2)
+            focusBlockRow
+            focusBreakRow
+            Text("File tray")
+                .captionLabel()
+                .padding(.top, 2)
+            fileTrayRow
+            Text("Calendar")
+                .captionLabel()
+                .padding(.top, 2)
+            temperatureUnitRow
+            Text("Quick actions")
+                .captionLabel()
+                .padding(.top, 2)
+            quickActionsRow
+        }
+    }
+
+    /// How many entries the history keeps. Already persisted and already honoured
+    /// by the store's ring buffer — it simply had no control.
+    private var clipboardLimitRow: some View {
+        settingRow(label: "Keep the last",
+                   info: "How many clipboard entries are retained. Older ones fall off the end; pinned ones stay.",
+                   aligned: true) {
+            GlassMenu(title: "\(clipboardLimit) items") {
+                ForEach(Self.clipboardLimitChoices, id: \.self) { limit in
+                    Button {
+                        clipboardLimit = limit
+                        clipboardHistory.limit = limit
+                    } label: {
+                        menuOption("\(limit) items", selected: limit == clipboardLimit)
+                    }
+                }
+            }
+            .disabled(!clipboardHistory.isEnabled)
+            .opacity(clipboardHistory.isEnabled ? 1 : 0.45)
+
+            if !clipboardHistory.items.isEmpty {
+                SettingActionButton(title: "Clear \(clipboardHistory.items.count)") {
+                    Haptics.levelChange()
+                    clipboardHistory.clearHistory()
+                }
+            }
+        }
+    }
+
+    private static let clipboardLimitChoices = [10, 20, 50, 100, 200]
+
+    private var focusBlockRow: some View {
+        settingRow(label: "Focus block",
+                   info: "How long one Pomodoro runs. Changing it while a block is live rebases the remaining time.",
+                   aligned: true) {
+            GlassMenu(title: PomodoroDurationPresets.label(for: focusTimer.focusMinutes)) {
+                ForEach(PomodoroDurationPresets.focus, id: \.self) { minutes in
+                    Button { focusTimer.focusMinutes = minutes } label: {
+                        menuOption(PomodoroDurationPresets.label(for: minutes),
+                                   selected: minutes == focusTimer.focusMinutes)
+                    }
+                }
+            }
+        }
+    }
+
+    private var focusBreakRow: some View {
+        settingRow(label: "Break",
+                   info: "How long the break between focus blocks runs.",
+                   aligned: true) {
+            GlassMenu(title: PomodoroDurationPresets.label(for: focusTimer.breakMinutes)) {
+                ForEach(PomodoroDurationPresets.breakTime, id: \.self) { minutes in
+                    Button { focusTimer.breakMinutes = minutes } label: {
+                        menuOption(PomodoroDurationPresets.label(for: minutes),
+                                   selected: minutes == focusTimer.breakMinutes)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The tray keeps whatever was dropped on it across relaunches, which is the
+    /// point — but that also means it is the one Utilities surface that can
+    /// quietly accumulate. This says what is in it and empties it.
+    private var fileTrayRow: some View {
+        settingRow(label: "Held items",
+                   info: "Files dropped on the notch stay in the tray until removed. Clearing also deletes anything Notch staged itself.",
+                   aligned: true) {
+            Text(capabilities.shelfItems.isEmpty
+                     ? "Empty"
+                     : "\(capabilities.shelfItems.count) item\(capabilities.shelfItems.count == 1 ? "" : "s")")
+                .font(.sf(12.5))
+                .foregroundStyle(Tokens.text2)
+
+            if !capabilities.shelfItems.isEmpty {
+                SettingActionButton(title: "Clear") {
+                    Haptics.levelChange()
+                    capabilities.clearShelf()
+                }
+            }
+        }
+    }
+
+    private var temperatureUnitRow: some View {
+        settingRow(label: "Temperature",
+                   info: "The unit for the reading under the panel's clock. System follows your region.",
+                   aligned: true) {
+            GlassMenu(title: temperatureUnit.label) {
+                ForEach(WeatherUnitPreference.allCases, id: \.self) { unit in
+                    Button {
+                        temperatureUnit = unit
+                        WeatherUnitPreference.current = unit
+                    } label: {
+                        menuOption(unit.label, selected: unit == temperatureUnit)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Which chips the Utilities strip offers. Rendered as a wrapping row of
+    /// selectable chips rather than seven switch rows: the strip itself is a row
+    /// of chips, so the control reads as the thing it edits.
+    private var quickActionsRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            settingLabel("Shown in the strip",
+                         info: "Hide a chip you never use so the strip stops scrolling past it. The surface behind it stays reachable.")
+            FlowLayout(hSpacing: 6, vSpacing: 6) {
+                ForEach(QuickUtilityAction.allCases) { action in
+                    quickActionChip(action)
+                }
+            }
+        }
+    }
+
+    private func quickActionChip(_ action: QuickUtilityAction) -> some View {
+        let shown = !quickActionsHidden.contains(action.id)
+        return Button {
+            // Refused when it would empty the strip — the switch must not claim a
+            // change the store declined to make.
+            guard QuickUtilityStrip.setVisible(!shown, for: action) else {
+                Haptics.levelChange()
+                return
+            }
+            Haptics.levelChange()
+            quickActionsHidden = QuickUtilityStrip.hidden
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: action.symbolName)
+                    .font(.sf(10, weight: .semibold))
+                Text(action.title)
+                    .font(.sf(11.5, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(shown ? Tokens.text1 : Tokens.text4)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .background(Capsule().fill(.white.opacity(shown ? 0.10 : 0.03)))
+            .overlay(Capsule().strokeBorder(.white.opacity(shown ? 0.16 : 0.07), lineWidth: 0.5))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(action.title)
+        .accessibilityAddTraits(shown ? .isSelected : [])
+    }
+
+    // MARK: - Agent
+
+    /// The Agent category used to be a keyboard reference and nothing else — a
+    /// first-class page that could not change a single thing about how agent runs
+    /// behave. These are the knobs the agent surface actually reads: what a run is
+    /// armed with, and the three timings the roster judges sessions by. All four
+    /// existed already; none of them had a control.
+    private var agentSettingsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Runner")
+                .captionLabel()
+            agentEngineRow
+            agentModelRow
+            agentEffortRow
+            Text("Sessions")
+                .captionLabel()
+                .padding(.top, 2)
+            agentPermissionDelayRow
+            agentStalledAfterRow
+            agentSessionWindowRow
+            agentSubagentBadgeRow
+        }
+    }
+
+    /// Which CLI an armed task runs on. The compose row's model chip sets this as
+    /// a side effect of picking a model; this is the direct statement of it, and
+    /// the only place an engine can be armed without composing a task first.
+    private var agentEngineRow: some View {
+        settingRow(label: "Engine",
+                   info: "Which agent CLI a new task runs on. Only installed, signed-in CLIs can be armed.",
+                   aligned: true) {
+            GlassMenu(title: model.agentArmedEngine.displayName) {
+                ForEach(AgentEngine.offered, id: \.self) { engine in
+                    Button {
+                        selectAgentEngine(engine)
+                    } label: {
+                        menuOption(engine.isKnownUnavailable
+                                       ? "\(engine.displayName) — not installed"
+                                       : engine.displayName,
+                                   selected: engine == model.agentArmedEngine)
+                    }
+                    .disabled(engine.isKnownUnavailable)
+                }
+            }
+        }
+    }
+
+    /// The armed run's model. Listed from the engine's own catalog — never a
+    /// hardcoded ladder — so a retired id can't be armed here (see
+    /// `AgentEngine.modelChoices`).
+    private var agentModelRow: some View {
+        let choices = model.agentArmedEngine.modelChoices
+        let current = choices.first { $0.id == model.agentModelID }
+        return settingRow(label: "Model",
+                          info: "The model an armed task runs on. Read from the CLI's own catalog.",
+                          aligned: true) {
+            GlassMenu(title: current?.label ?? "\(model.agentArmedEngine.displayName) default") {
+                ForEach(choices, id: \.self) { choice in
+                    Button { model.selectAgentModel(choice) } label: {
+                        menuOption(choice.label, selected: choice.id == model.agentModelID)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Reasoning effort, offered only where the engine+model pair actually takes
+    /// one. An engine with no adjustable effort gets a plain caption instead of a
+    /// menu naming a dial that isn't connected to anything.
+    @ViewBuilder
+    private var agentEffortRow: some View {
+        let choices = model.agentArmedEngine.effortChoices(forModelID: model.agentModelID)
+        settingRow(label: "Reasoning",
+                   info: "How hard the model thinks. Only the levels this engine and model accept are listed.",
+                   aligned: true) {
+            if choices.isEmpty {
+                Text("Not adjustable for this model")
+                    .font(.sf(12))
+                    .foregroundStyle(Tokens.text3)
+            } else {
+                GlassMenu(title: model.agentEffort.map(Self.effortLabel) ?? "CLI default") {
+                    Button { model.agentEffort = nil } label: {
+                        menuOption("CLI default", selected: model.agentEffort == nil)
+                    }
+                    ForEach(choices, id: \.self) { effort in
+                        Button { model.agentEffort = effort } label: {
+                            menuOption(Self.effortLabel(effort), selected: model.agentEffort == effort)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// How long an unresolved state-changing tool call waits before the notch
+    /// reads it as a permission prompt. Read-only work never raises a cue at any
+    /// setting — the eligible-tool list, not this timer, is what decides that.
+    private var agentPermissionDelayRow: some View {
+        settingRow(label: "Approval cue after",
+                   info: "How long a tool call that changes state may sit unresolved before the notch offers the terminal handoff.",
+                   aligned: true) {
+            GlassMenu(title: Self.durationLabel(permissionDelay)) {
+                ForEach(AgentPermissionPolicy.delayChoices, id: \.self) { seconds in
+                    Button {
+                        permissionDelay = seconds
+                        AgentPermissionPolicy.delay = seconds
+                    } label: {
+                        menuOption(Self.durationLabel(seconds), selected: seconds == permissionDelay)
+                    }
+                }
+            }
+        }
+    }
+
+    /// When a silent turn stops being believed. Raise it for work that runs long
+    /// single tools; lower it to see abandoned turns marked sooner.
+    private var agentStalledAfterRow: some View {
+        settingRow(label: "Mark stalled after",
+                   info: "A turn that has written nothing for this long is reported as interrupted rather than working.",
+                   aligned: true) {
+            GlassMenu(title: Self.durationLabel(stalledAfter)) {
+                ForEach(AgentSessionTerminal.stalledAfterChoices, id: \.self) { seconds in
+                    Button {
+                        stalledAfter = seconds
+                        AgentSessionTerminal.stalledAfter = seconds
+                    } label: {
+                        menuOption(Self.durationLabel(seconds), selected: seconds == stalledAfter)
+                    }
+                }
+            }
+        }
+    }
+
+    /// How far back the transcript scan reaches. This is the cold-start cost dial:
+    /// a shorter window is less to read on first launch, a longer one is the only
+    /// way a session left open for days stays visible.
+    private var agentSessionWindowRow: some View {
+        settingRow(label: "Session history",
+                   info: "How recently a transcript must have been written to put its session in the roster. Shorter windows make a cold start cheaper.",
+                   aligned: true) {
+            GlassMenu(title: Self.durationLabel(sessionWindow)) {
+                ForEach(AgentSessionObservation.activeFileWindowChoices, id: \.self) { seconds in
+                    Button {
+                        sessionWindow = seconds
+                        AgentSessionObservation.activeFileWindow = seconds
+                    } label: {
+                        menuOption(Self.durationLabel(seconds), selected: seconds == sessionWindow)
+                    }
+                }
+            }
+        }
+    }
+
+    private var agentSubagentBadgeRow: some View {
+        settingRow(label: "Sub-agent counts",
+                   info: "Show how many sub-agents a session has running. A wide fan-out fills the roster with badges.",
+                   aligned: true) {
+            Toggle("", isOn: Binding(
+                get: { showsSubagents },
+                set: {
+                    Haptics.levelChange()
+                    showsSubagents = $0
+                    AgentDisplayPolicy.showsSubagents = $0
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .tint(Tokens.text2)
+        }
+    }
+
+    private func selectAgentEngine(_ engine: AgentEngine) {
+        guard engine != model.agentArmedEngine else { return }
+        // Go through the same path the compose row's chip uses, so the model and
+        // effort are re-clamped to what the new engine accepts. Arming an engine
+        // while keeping the old engine's model id is how a run gets refused
+        // outright (see `AgentEffortCatalog`).
+        let choice = engine.modelChoices.first
+            ?? AgentModelChoice(engine: engine, id: nil, label: engine.displayName)
+        model.selectAgentModel(choice)
+    }
+
+    private static func effortLabel(_ effort: AgentEffort) -> String {
+        switch effort {
+        case .low:    return "Low"
+        case .medium: return "Medium"
+        case .high:   return "High"
+        case .xhigh:  return "Extra high"
+        case .max:    return "Max"
+        case .ultra:  return "Ultra"
+        }
+    }
+
+    /// Whole units only — every choice these menus offer is a round number of
+    /// seconds, minutes, hours, or days, so nothing here has to render a fraction.
+    private static func durationLabel(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        if total < 60 { return "\(total)s" }
+        if total < 60 * 60 {
+            let minutes = total / 60
+            return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+        }
+        if total < 24 * 60 * 60 {
+            let hours = total / 3600
+            return hours == 1 ? "1 hour" : "\(hours) hours"
+        }
+        let days = total / (24 * 60 * 60)
+        return days == 1 ? "1 day" : "\(days) days"
     }
 
     // MARK: - Copy sensing
@@ -4939,17 +5562,39 @@ struct InlineSettingsView: View {
     /// column width is applied to a wrapper around it. Reporting from the same
     /// view the frame sizes would feed the preference back into itself and
     /// oscillate.
+    @ViewBuilder
     private func settingRow<Content: View>(
         label: String,
         info: String? = nil,
         aligned: Bool = false,
         verticalAlignment: VerticalAlignment = .firstTextBaseline,
+        forceStacked: Bool = false,
         @ViewBuilder _ content: () -> Content
     ) -> some View {
-        HStack(alignment: verticalAlignment, spacing: 12) {
-            settingLabel(label, info: info, aligned: aligned)
-            content()
-            Spacer(minLength: 0)
+        // Popup menus and file paths have an intrinsic width. Squeezing a long
+        // label and one of those controls into a single line made their hit areas
+        // overlap in narrow panes. Prefer the compact inline form, but stack the
+        // control below its label as soon as it cannot genuinely fit.
+        if forceStacked {
+            VStack(alignment: .leading, spacing: 7) {
+                settingLabel(label, info: info)
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: verticalAlignment, spacing: 12) {
+                    settingLabel(label, info: info, aligned: aligned)
+                    content()
+                }
+                .fixedSize(horizontal: true, vertical: false)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    settingLabel(label, info: info)
+                    content()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

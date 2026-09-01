@@ -17,7 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The screen geometry each live panel's tree was built against, so a
     /// screen-parameters notification can tell a real change from a no-op.
     private var panelMetrics: [CGDirectDisplayID: NotchMetrics] = [:]
-    private let model = NotchModel(ai: AppDelegate.makeService())
+    /// Shared by the notch and the Settings scene so a preference updates the
+    /// running overlay immediately rather than configuring a second app state.
+    let model = NotchModel(ai: AppDelegate.makeService())
     private let capabilities = NotchCapabilityStore.shared
     private let utilityCapabilities = UtilityCapabilityService.shared
     private var capabilityRefreshTask: Task<Void, Never>?
@@ -656,11 +658,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 
 
-        // Debug aid: NOTCH_SETTINGS=1 opens the panel straight into the inline
-        // settings view at launch (via the same path as ⌘,) so it can be
-        // inspected/screenshotted without a hover. Passing a category's raw name
-        // instead (NOTCH_SETTINGS=Stats) opens that pane, so a screenshot doesn't
-        // have to be clicked for. No effect in normal use.
+        // Debug aid: NOTCH_SETTINGS=1 opens the standalone Settings window at
+        // launch. Passing a category's raw name instead (NOTCH_SETTINGS=Stats)
+        // selects that pane before the window appears. No effect in normal use.
         if let settings = env["NOTCH_SETTINGS"], !settings.isEmpty {
             let target = InlineSettingsView.Section(rawValue: settings)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
@@ -779,10 +779,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Settings now live *inside* the panel (see `InlineSettingsView`), so the
-        // request just opens the panel straight into the settings view. Making the
-        // panel open also makes it the key window (via the `$open` observer above),
-        // so the API-key field can take keystrokes immediately.
+        // Settings are a real macOS Settings scene. Keep the notch out of the
+        // transition: opening preferences must never replace a conversation or
+        // expand the island just to configure the app.
         NotificationCenter.default.addObserver(
             forName: .openSettingsRequested,
             object: nil,
@@ -790,11 +789,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                    // ⌘, can fire from anywhere — open on the screen the user is
-                    // actually on (mouse position), not wherever the notch lives.
-                    self.model.openSettings(on: self.displayForSummon())
-                }
+                SettingsWindowController.shared.present(model: self.model)
             }
         }
 
@@ -1005,8 +1000,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Not Now")
             let response = alert.runModal()
             guard response == .alertFirstButtonReturn else { return }
-            self.model.settingsSection = InlineSettingsView.Section.general.rawValue
-            self.model.openSettings(on: self.displayForSummon())
+            self.model.settingsSection = InlineSettingsView.Section.global.rawValue
+            NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
         }
     }
 
@@ -1028,6 +1023,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         watcher.onVanished = { token in
             store.bannerVanished(token: token, now: Date())
+        }
+        watcher.onVisible = { token in
+            store.bannerIsVisible(token: token, now: Date())
         }
         callWindows.onCall = { call in
             // Handed over as a call, not as a banner: this source read a real
@@ -1465,7 +1463,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The "Check for Updates…" menu command's action (posted as
     /// `.checkForUpdatesRequested` from `NotchFlowApp`'s `.commands`): open the
-    /// in-panel settings straight to the About pane (where the update UI lives) and
+    /// Settings window straight to the About pane (where the update UI lives) and
     /// kick off a user-initiated check, so the result — a spinner, an "up to date"
     /// note, or the Update button — shows right there.
     private func checkForUpdatesFromMenu() {

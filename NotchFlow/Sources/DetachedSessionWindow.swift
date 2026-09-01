@@ -2746,7 +2746,7 @@ struct DetachedSessionRootView: View {
     /// the settings panel opens at the notch, and leaving a floating box standing
     /// at the pointer over it is a second surface asking for the same attention.
     private func openShortcutSettings() {
-        model.settingsSection = InlineSettingsView.Section.shortcuts.rawValue
+        model.settingsSection = InlineSettingsView.Section.agent.rawValue
         NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
         onClose()
     }

@@ -1074,13 +1074,11 @@ enum StatsSnapshot {
                                  sinceVersion: "0.5.9")
             : TokenMeter.shared.reading
 
-        // The pane's real width in the panel: the settings body's own insets, the
-        // category column, and the divider taken off `openWidthSettings`.
-        let width = Tokens.openWidthSettings - 16 - 104 - 12 - 0.5 - 14
-        // NOTCH_STATS_SNAPSHOT_FIT=1 clips to the settings pane's real viewport
-        // (`NotchBody.immersiveListHeight` less the back-pill chrome, plus the
-        // pane's top runway) — the way to see what is above the fold on open,
-        // rather than the pane's full unrolled height.
+        // The standalone Settings window opens at 680pt. Its 150pt sidebar,
+        // divider, and 20pt content insets leave this usable pane width.
+        let width: CGFloat = 489
+        // NOTCH_STATS_SNAPSHOT_FIT=1 clips to the screenshot viewport — the way
+        // to see what is above the fold on open rather than the full scroll.
         let fit = env["NOTCH_STATS_SNAPSHOT_FIT"] == "1"
         let viewport: CGFloat = NotchBody.immersiveListHeight - (12 + 26 + 4 + 12)
         let content = StatsPane(digest: digest, tokens: tokens, hovered: .constant(nil))

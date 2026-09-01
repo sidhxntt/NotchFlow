@@ -18,7 +18,10 @@ struct NotchQuickUtilitiesView: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 7) {
-                ForEach(QuickUtilityAction.allCases) { action in
+                // Not `allCases` — Settings → Utilities can retire a chip nobody
+                // uses so the strip stops scrolling past it (see
+                // `QuickUtilityStrip`). The surfaces themselves are unaffected.
+                ForEach(QuickUtilityStrip.visibleActions) { action in
                     chip(for: action)
                 }
             }

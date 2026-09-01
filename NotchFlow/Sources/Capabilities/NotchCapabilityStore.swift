@@ -109,9 +109,45 @@ public struct NotchActivity: Equatable, Sendable {
     public var progress: Double?
 }
 
+/// What the media capability is allowed to draw, and which player it follows.
+public enum MediaPresentationPolicy {
+    private static let closedNotchKey = "mediaShowsInClosedNotch"
+    private static let preferredSourceKey = "mediaPreferredSource"
+
+    /// Whether a playing track claims one of the resting notch's ears. On by
+    /// default. Off leaves media entirely inside the opened panel — the notch
+    /// stays blank while music plays, which is the point for anyone who finds a
+    /// permanently occupied ear distracting.
+    public static var showsInClosedNotch: Bool {
+        get { UserDefaults.standard.object(forKey: closedNotchKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: closedNotchKey) }
+    }
+
+    /// The player the notch follows, or `nil` for "whichever is playing".
+    ///
+    /// Pinning matters when two players hold a track at once: Music.app keeps a
+    /// `current track` populated for days after playback stops, so a browser tab
+    /// and a stale Music window can trade the notch back and forth. Pinning ends
+    /// that argument. This is the persistent form of `MediaCapabilityService`'s
+    /// `select(_:)`, which until now could only be set for the current launch.
+    public static var preferredSource: MediaSource? {
+        get {
+            UserDefaults.standard.string(forKey: preferredSourceKey)
+                .flatMap(MediaSource.init)
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue.rawValue, forKey: preferredSourceKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: preferredSourceKey)
+            }
+        }
+    }
+}
+
 public enum NotchCapabilityPresentation {
     public static func supportsCollapsedPreview(_ media: MediaState) -> Bool {
-        media.isActive
+        MediaPresentationPolicy.showsInClosedNotch && media.isActive
     }
 
     public static func compactTitle(for activity: NotchActivity) -> String {
@@ -135,7 +171,24 @@ public enum NotchCapabilityPresentation {
 /// they have remained unresolved for five seconds. Read-only work must never
 /// look like a permission request.
 public enum AgentPermissionPolicy {
-    public static let delay: TimeInterval = 5
+    /// How long a state-changing tool call may sit unresolved before the notch
+    /// treats it as a permission prompt and offers the terminal handoff. Five
+    /// seconds is long enough that ordinary fast tool calls never raise a cue,
+    /// and short enough that a real prompt is surfaced while the user is still
+    /// looking. Tunable from Settings → Agent: a slow machine benefits from a
+    /// longer fuse, and someone who runs everything under approval wants a
+    /// shorter one.
+    public static let defaultDelay: TimeInterval = 5
+    public static let delayChoices: [TimeInterval] = [2, 5, 10, 30]
+    private static let delayKey = "agentPermissionDelay"
+
+    public static var delay: TimeInterval {
+        get {
+            (UserDefaults.standard.object(forKey: delayKey) as? Double)
+                .map { $0 > 0 ? $0 : defaultDelay } ?? defaultDelay
+        }
+        set { UserDefaults.standard.set(newValue, forKey: delayKey) }
+    }
 
     private static let eligibleToolNames: Set<String> = [
         "Bash", "Write", "Edit", "MultiEdit", "Task", "NotebookEdit",
@@ -191,6 +244,51 @@ public enum QuickUtilityAction: CaseIterable, Identifiable, Equatable, Sendable 
         case .clipboard: "clipboard.fill"
         case .shortcuts: "bolt.fill"
         }
+    }
+}
+
+/// Which of the quick-action chips the Utilities strip actually offers.
+///
+/// Seven chips no longer fit a notch-wide panel without scrolling, and not
+/// everyone uses all seven — someone who never runs a Pomodoro is scrolling past
+/// it to reach Clipboard every time. Hiding a chip only removes it from the
+/// strip; the surface behind it is untouched and still reachable from anywhere
+/// else that opens it (a file drop still reveals the File tray).
+public enum QuickUtilityStrip {
+    private static let defaultsKey = "utilityQuickActionsHidden"
+
+    /// Hidden by raw title, not by index: a future case inserted in the middle of
+    /// `QuickUtilityAction` would otherwise silently re-map everyone's choices.
+    public static var hidden: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: defaultsKey) ?? []) }
+        set { UserDefaults.standard.set(Array(newValue), forKey: defaultsKey) }
+    }
+
+    public static var visibleActions: [QuickUtilityAction] {
+        let hidden = hidden
+        let visible = QuickUtilityAction.allCases.filter { !hidden.contains($0.id) }
+        // An empty strip is not a state worth allowing: it leaves the Utilities
+        // pane with a bare, unexplained gap where the chips were.
+        return visible.isEmpty ? QuickUtilityAction.allCases : visible
+    }
+
+    public static func isVisible(_ action: QuickUtilityAction) -> Bool {
+        visibleActions.contains(action)
+    }
+
+    /// Show or hide one chip. Hiding the last visible one is refused rather than
+    /// silently corrected, so the settings row's switch can't lie about the result.
+    @discardableResult
+    public static func setVisible(_ visible: Bool, for action: QuickUtilityAction) -> Bool {
+        var next = hidden
+        if visible {
+            next.remove(action.id)
+        } else {
+            guard visibleActions.count > 1 else { return false }
+            next.insert(action.id)
+        }
+        hidden = next
+        return true
     }
 }
 
@@ -322,13 +420,34 @@ public enum NotchWorkspaceTab: String, CaseIterable, Identifiable, Sendable {
     case aiActivityMonitor = "AI Activity Monitor"
 
     public var id: String { rawValue }
+
+    /// The glyph the workspace switcher draws for this tab. Lives on the tab
+    /// rather than in the switcher's own conditional chain: Activity Monitor is a
+    /// first-class tab in companion mode, and a four-deep ternary that ended in
+    /// "…otherwise the Utilities grid" silently gave it the wrong icon.
+    public var symbolName: String {
+        switch self {
+        case .chat: "message"
+        case .agent: "terminal"
+        case .media: "music.note"
+        case .utilities: "square.grid.2x2"
+        case .activityMonitor: "gauge.with.dots.needle.67percent"
+        case .aiActivityMonitor: "sparkles"
+        }
+    }
+
+    /// The tabs the switcher offers when the agentic layer is turned off. Chat and
+    /// Agent are gone, and Activity Monitor stops being an edge toggle beside
+    /// Utilities and becomes the third peer.
+    public static let companionTabs: [NotchWorkspaceTab] = [.media, .utilities, .activityMonitor]
 }
 
-/// The single bridge between imported Boring Notch services and the NotchFlow UI/agent.
+/// The single bridge between NotchFlow services and the UI/agent.
 /// Services only publish immutable state here; NotchFlow decides how and where to render it.
 @MainActor
 public final class NotchCapabilityStore: ObservableObject {
     public static let shared = NotchCapabilityStore()
+    private static let agenticModeKey = "agenticModeEnabled"
     @Published public private(set) var media: MediaState = .inactive
     @Published public private(set) var mediaError: String?
     @Published public private(set) var connectedAudioDevice: ConnectedAudioDevice?
@@ -336,6 +455,28 @@ public final class NotchCapabilityStore: ObservableObject {
     @Published public private(set) var systemActivity: SystemActivity?
     @Published public private(set) var shelfItems: [NotchShelfItem]
     @Published public var workspaceTab: NotchWorkspaceTab = .chat
+    /// Agentic mode exposes the inherited Chat and Agent workspaces. Turning it
+    /// off leaves NotchFlow as a focused media-and-utilities companion.
+    @Published public var agenticModeEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(agenticModeEnabled, forKey: Self.agenticModeKey)
+            if !agenticModeEnabled,
+               workspaceTab == .chat || workspaceTab == .agent || workspaceTab == .aiActivityMonitor {
+                workspaceTab = .media
+            }
+        }
+    }
+    /// The player the notch follows, or `nil` for whichever is playing. Writes go
+    /// straight through to the media service's pin AND to storage, so the choice
+    /// survives a relaunch — `MediaCapabilityService.select(_:)` on its own only
+    /// held for the current launch.
+    @Published public var preferredMediaSource: MediaSource? {
+        didSet {
+            guard preferredMediaSource != oldValue else { return }
+            MediaPresentationPolicy.preferredSource = preferredMediaSource
+            applyPreferredMediaSource()
+        }
+    }
     /// Increments for every file drop, including when Utilities is already
     /// selected. Views use it to reveal the File tray from a utility overlay.
     @Published public private(set) var fileTrayRevealRequest = 0
@@ -351,6 +492,12 @@ public final class NotchCapabilityStore: ObservableObject {
         self.mediaService = mediaService ?? MediaCapabilityService()
         self.audioDeviceService = AudioDeviceCapabilityService()
         self.persistence = persistence
+        let storedAgenticMode = UserDefaults.standard.object(forKey: Self.agenticModeKey) as? Bool ?? true
+        self.agenticModeEnabled = storedAgenticMode
+        // Property initialisation does not run `didSet`, so the stored pin has to
+        // be handed to the service explicitly — otherwise a pinned player would
+        // only take effect after the user re-picked it.
+        self.preferredMediaSource = MediaPresentationPolicy.preferredSource
         var restoredItems = persistence.load()
         let migratedLegacyItems = restoredItems.indices.reduce(into: false) { didMigrate, index in
             if restoredItems[index].restorePreferredTemporaryFilename() {
@@ -358,8 +505,21 @@ public final class NotchCapabilityStore: ObservableObject {
             }
         }
         self.shelfItems = restoredItems
+        if !storedAgenticMode {
+            workspaceTab = .media
+        }
         if migratedLegacyItems {
             persistence.save(restoredItems)
+        }
+        applyPreferredMediaSource()
+    }
+
+    private func applyPreferredMediaSource() {
+        let source = preferredMediaSource
+        Task { [mediaService] in
+            await mediaService.select(source)
+            self.media = mediaService.state
+            self.mediaError = mediaService.mediaError
         }
     }
 
@@ -429,6 +589,17 @@ public final class NotchCapabilityStore: ObservableObject {
         guard target == .chatNotch else { return true }
         var isDirectory: ObjCBool = false
         return !(FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue)
+    }
+
+    /// Empty the File tray. Temporary files (a drag-out that Notch staged itself)
+    /// are deleted from disk as well, exactly as removing them one at a time does
+    /// — anything else would leave orphans in the staging directory.
+    public func clearShelf() {
+        for item in shelfItems where item.isTemporary {
+            if let url = item.url { TemporaryShelfStorage.remove(url) }
+        }
+        shelfItems.removeAll()
+        persistence.save(shelfItems)
     }
 
     public func removeShelfItem(id: UUID) {

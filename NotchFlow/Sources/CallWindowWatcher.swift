@@ -194,7 +194,7 @@ final class CallWindowWatcher {
         let state: AlertCall.State
         if hasAccept {
             state = .ringing
-        } else if hasHangUp, Self.looksLikeCallWindow(texts: texts) {
+        } else if hasHangUp, AlertFeedStore.looksLikeCallWindowText(texts) {
             // Hang-up alone is ambiguous — plenty of windows have a button we'd
             // read as "end". Require the window to also SAY it is a call, so a
             // stray "End" somewhere in a chat app can't fake a live call.
@@ -207,18 +207,6 @@ final class CallWindowWatcher {
                           appName: AlertFeedStore.displayText(app.localizedName ?? ""),
                           bundleID: app.bundleIdentifier,
                           state: state)
-    }
-
-    /// Does the window's own text say "call"? Deliberately loose — it is a
-    /// secondary check behind the button test, not the primary signal.
-    ///
-    /// Matched on the normalized blob rather than the raw one, for the same
-    /// reason the buttons are: the strings really do arrive with bidi marks
-    /// embedded in them, and "call" does not appear inside "‎audio‎ ‎call".
-    private static func looksLikeCallWindow(texts: [String]) -> Bool {
-        let blob = AlertFeedStore.normalizedForMatching(texts.joined(separator: " "))
-        return ["call", "通话", "通話", "着信", "통화", "appel", "llamada"]
-            .contains { blob.contains($0) }
     }
 
     /// The caller's name out of the window's text. WhatsApp puts it first, above

@@ -19,9 +19,6 @@ help:
 build:
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIGURATION) \
 		-derivedDataPath $(DERIVED_DATA) CODE_SIGNING_ALLOWED=NO build
-	@mkdir -p $(APP_BUNDLE)/Contents/Frameworks
-	@cp references/boring.notch/mediaremote-adapter/mediaremote-adapter.pl $(APP_BUNDLE)/Contents/Resources/
-	@ditto references/boring.notch/mediaremote-adapter/MediaRemoteAdapter.framework $(APP_BUNDLE)/Contents/Frameworks/MediaRemoteAdapter.framework
 	@# Sign with the same identity reinstall.sh and CI use. Without this the dev
 	@# build is ad-hoc, its designated requirement changes on EVERY build, and
 	@# macOS silently drops the Accessibility grant each time — which makes any

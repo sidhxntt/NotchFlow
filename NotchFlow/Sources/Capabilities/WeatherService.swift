@@ -6,6 +6,46 @@ import Foundation
 /// Deliberately small. The panel has room for one line under the clock, so this
 /// carries exactly what fits — a full forecast would be a different feature with
 /// a different surface.
+/// Which unit the temperature under the notch's clock is read in.
+///
+/// `system` follows `Locale.measurementSystem`, which is what this always did and
+/// is right for most people. The override exists because the locale answer is
+/// wrong for a sizeable minority — anyone working in a region whose formatting
+/// they keep but whose temperature scale they don't think in.
+public enum WeatherUnitPreference: String, CaseIterable, Sendable {
+    case system, celsius, fahrenheit
+
+    private static let defaultsKey = "utilityTemperatureUnit"
+
+    public static var current: WeatherUnitPreference {
+        get {
+            UserDefaults.standard.string(forKey: defaultsKey)
+                .flatMap(WeatherUnitPreference.init) ?? .system
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
+    }
+
+    public var usesFahrenheit: Bool {
+        switch self {
+        case .system:     return Locale.current.measurementSystem == .us
+        case .celsius:    return false
+        case .fahrenheit: return true
+        }
+    }
+
+    public func temperature(fromCelsius celsius: Double) -> Double {
+        usesFahrenheit ? celsius * 9 / 5 + 32 : celsius
+    }
+
+    public var label: String {
+        switch self {
+        case .system:     return "System"
+        case .celsius:    return "Celsius"
+        case .fahrenheit: return "Fahrenheit"
+        }
+    }
+}
+
 public struct WeatherSnapshot: Equatable, Codable, Sendable {
     /// Always stored in Celsius; the display converts. Storing the unit alongside
     /// the number is how caches end up showing 22°F on a warm day after someone
@@ -23,12 +63,11 @@ public struct WeatherSnapshot: Equatable, Codable, Sendable {
         self.fetchedAt = fetchedAt
     }
 
-    /// Rounded to whole degrees in the locale's own unit — "27°", never "26.8°C".
-    /// At a 10.5pt glyph beside a clock, the decimal is noise and the unit letter
-    /// is clutter; the number is the information.
+    /// Rounded to whole degrees in the chosen unit — "27°", never "26.8°C". At a
+    /// 10.5pt glyph beside a clock, the decimal is noise and the unit letter is
+    /// clutter; the number is the information.
     public var shortTemperature: String {
-        let fahrenheit = Locale.current.measurementSystem == .us
-        let value = fahrenheit ? temperatureC * 9 / 5 + 32 : temperatureC
+        let value = WeatherUnitPreference.current.temperature(fromCelsius: temperatureC)
         return "\(Int(value.rounded()))°"
     }
 

@@ -57,8 +57,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if let button = item.button {
             button.image = Self.statusIcon()
             button.imagePosition = .imageOnly
-            button.toolTip = "Notch"
-            button.setAccessibilityLabel("Notch")
+            button.toolTip = "NotchFlow"
+            button.setAccessibilityLabel("NotchFlow")
         }
         let menu = NSMenu()
         menu.delegate = self
@@ -72,55 +72,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         statusItem = nil
     }
 
-    /// The app icon's mark, drawn at menu-bar size — the glyph alone, without the
-    /// cream plate the Dock icon sits on. That's the menu bar's own convention
-    /// (every system item and every well-behaved third-party one is a bare
-    /// glyph), and it's the only version that survives both bars: a fixed cream
-    /// plate all but disappears on a light menu bar, while a template glyph
-    /// inverts with the appearance for free.
-    ///
-    /// Drawn rather than scaled from the PNG so it stays crisp at any scale. The
-    /// geometry is lifted off the app icon, which is built on a 3×3 grid: an
-    /// L covering the top-left 2×2 block plus the cell below its left half, and a
-    /// dot inscribed in the bottom-right cell.
-    ///
-    /// Two departures from the Dock icon, both to stop it shouting: the corners
-    /// are filleted, and the whole mark sits at 13pt rather than filling the
-    /// bar's full content height. At Dock size those hard 90° corners read as
-    /// precision; at 13pt, against a row of light SF Symbols, they read as a
-    /// black wedge — the mark ends up louder than everything beside it. Rounding
-    /// costs nothing at this size (the silhouette is unchanged) and buys back the
-    /// softness the plate used to provide.
+    /// The supplied transparent NF artwork, rendered by macOS as a compact white
+    /// template glyph. The asset carries no tile or rim, so it sits alongside
+    /// standard menu-bar icons without a visual plate.
     private static func statusIcon() -> NSImage {
-        let side: CGFloat = 13
-        let icon = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
-            let u = rect.width / 3
-            NSColor.black.setFill()
-            // The L, counter-clockwise from the bottom-left. AppKit's y grows
-            // upward, so the icon's top-left block is the high one. The vertex at
-            // (u, u) is the inside corner, and gets an inward fillet from the same
-            // tangent-arc call — no special case needed.
-            let corners: [NSPoint] = [
-                NSPoint(x: 0, y: 0), NSPoint(x: u, y: 0), NSPoint(x: u, y: u),
-                NSPoint(x: 2 * u, y: u), NSPoint(x: 2 * u, y: 3 * u), NSPoint(x: 0, y: 3 * u),
-            ]
-            let radius = u * 0.24
-            let path = NSBezierPath()
-            // Start mid-edge so the first arc has a full straight run to sit on.
-            let last = corners[corners.count - 1]
-            path.move(to: NSPoint(x: (last.x + corners[0].x) / 2,
-                                  y: (last.y + corners[0].y) / 2))
-            for (i, corner) in corners.enumerated() {
-                path.appendArc(from: corner, to: corners[(i + 1) % corners.count],
-                               radius: radius)
-            }
-            path.close()
-            path.fill()
-            NSBezierPath(ovalIn: NSRect(x: 2 * u, y: 0, width: u, height: u)).fill()
-            return true
+        guard let source = NSImage(named: "NotchFlowStatusIcon"),
+              let icon = source.copy() as? NSImage else {
+            return NSImage(systemSymbolName: "wave.3.right", accessibilityDescription: "NotchFlow")
+                ?? NSImage(size: NSSize(width: 18, height: 18))
         }
-        // Template: macOS paints it in the menu bar's own label color, so it reads
-        // on a light bar and a dark one without shipping two assets.
+        // The supplied transparent artwork includes intentional breathing room;
+        // 24pt makes its visible NF mark match neighbouring menu-bar glyphs.
+        icon.size = NSSize(width: 24, height: 24)
         icon.isTemplate = true
         return icon
     }
@@ -140,6 +103,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // The one setting worth reaching without opening Settings — Notch's
         // equivalent of a recorder's input-device picker.
         let modelItem = NSMenuItem(title: L("menuBar.model"), action: nil, keyEquivalent: "")
+        modelItem.image = NSImage(
+            systemSymbolName: "cpu",
+            accessibilityDescription: L("menuBar.model"))
         modelItem.submenu = buildModelMenu()
         menu.addItem(modelItem)
 

@@ -444,20 +444,7 @@ struct NotchBody: View {
 
     private var idleView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if model.showSettings {
-                // Settings owns the whole body when open — the "Ask anything" prompt is
-                // hidden, since you're configuring the app, not asking a question. Its
-                // own "‹ SETTINGS" header carries the way back (gear / Esc / chevron).
-                InlineSettingsView(model: model)
-                    // Settings is a full-height, text-heavy two-column surface. The
-                    // shared module transition also scales and spring-slides its
-                    // sidebar while the island widens from idle → settings, so the
-                    // two spatial animations compound into a visible rebound across
-                    // every sidebar label on first open. Mount it at its final
-                    // geometry and only dissolve the pixels; the island itself still
-                    // carries the open/width motion.
-                    .transition(.opacity)
-            } else if model.showWhatsNew {
+            if model.showWhatsNew {
                 // What's New owns the whole body, like settings — the idle prompt is
                 // hidden while the user reads the release notes. Its own back chevron
                 // (and Esc) carries the way home.
@@ -655,33 +642,72 @@ struct NotchBody: View {
     }
 
     private var workspaceTabBar: some View {
+        Group {
+            if capabilities.agenticModeEnabled {
+                workspaceShoulders {
+                    workspaceTabGroup([.chat, .agent])
+                        .overlay(alignment: .leading) {
+                            aiActivityMonitorToggle
+                                .offset(x: -30)
+                        }
+                } right: {
+                    workspaceTabGroup([.media, .utilities])
+                        .overlay(alignment: .trailing) {
+                            activityMonitorToggle
+                                .offset(x: 30)
+                        }
+                }
+            } else {
+                // Companion mode. Chat and Agent are gone, which frees the whole
+                // left shoulder — and with the agentic surfaces away there is no
+                // reason for Activity Monitor to stay a cramped edge toggle, so it
+                // is promoted to the third peer tab. Media and Utilities take the
+                // left shoulder and Activity the right, which keeps them in
+                // reading order across the camera housing and puts all three
+                // clear of it.
+                workspaceShoulders {
+                    workspaceTabGroup([.media, .utilities])
+                } right: {
+                    workspaceTabGroup([.activityMonitor])
+                }
+            }
+        }
+    }
+
+    /// The two shoulders either side of the camera housing, with the housing's own
+    /// gap between them.
+    ///
+    /// Both shoulders are pinned to the SAME width, and that is load-bearing
+    /// rather than tidiness. The assembly is centred in the panel, so the middle
+    /// gap only lands on the real notch while the two sides balance. Chat|Agent
+    /// against Media|Utilities balanced by accident — two chips each. Companion
+    /// mode has three tabs and no even split, and letting self-sizing groups
+    /// stand in for shoulders pushed the gap far enough off-centre to slide a chip
+    /// under the housing: with only Media|Utilities there, Utilities disappeared
+    /// behind it and the bar read as a single Media tab.
+    ///
+    /// Each shoulder's content hugs the housing (trailing on the left, leading on
+    /// the right), so a shoulder that is narrower than the box does not drift out
+    /// towards the panel edge.
+    private func workspaceShoulders<Left: View, Right: View>(
+        @ViewBuilder _ left: () -> Left,
+        @ViewBuilder right: () -> Right
+    ) -> some View {
         HStack(spacing: 0) {
-            workspaceTabGroup([.chat, .agent])
-                // This is the AI-side peer of the system Activity Monitor. It
-                // floats outside the existing Chat/Agent group so neither tab
-                // is shifted toward the camera housing.
-                .overlay(alignment: .leading) {
-                    aiActivityMonitorToggle
-                        .offset(x: -30)
-                }
-
-            // This gap is the actual hardware camera zone. The groups hug its
-            // edges so the four tabs fill the previously empty shoulders without
-            // ever drawing beneath the camera housing.
+            left()
+                .frame(width: Self.tabShoulderWidth, alignment: .trailing)
             Color.clear.frame(width: metrics.notchWidth)
-
-            workspaceTabGroup([.media, .utilities])
-                // The monitor belongs beside Utilities, but must not consume
-                // horizontal layout space: otherwise its appearance shifts both
-                // existing tabs toward the camera. An overlay keeps their original
-                // positions and leaves the control available on every workspace.
-                .overlay(alignment: .trailing) {
-                    activityMonitorToggle
-                        .offset(x: 30)
-                }
+            right()
+                .frame(width: Self.tabShoulderWidth, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .center)
     }
+
+    /// Wide enough for the widest shoulder either mode asks for — a two-chip group
+    /// (81pt) plus the monitor circle hanging 30pt off its outer edge. The panel is
+    /// far wider than two of these plus the notch, so there is no risk of the pair
+    /// being squeezed.
+    private static let tabShoulderWidth: CGFloat = 120
 
     private func workspaceTabGroup(_ tabs: [NotchWorkspaceTab]) -> some View {
         HStack(spacing: 3) {
@@ -693,13 +719,18 @@ struct NotchBody: View {
                     // different from the other three tabs.
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
                         capabilities.workspaceTab = tab
+                        // Activity Monitor replaces the whole Utilities workspace,
+                        // so a utility overlay left open underneath it has nothing
+                        // to sit in — the same fold the edge toggle did before this
+                        // became a peer tab.
+                        if tab == .activityMonitor { utilityOverlaySession.dismiss() }
                     }
                     // Agent is a peer workspace now, rather than a secondary mode
                     // hidden in Chat. Its task manager and compose path remain the
                     // same; this tab decides where they live.
                     model.setAgentBucket(tab == .agent)
                 } label: {
-                    Image(systemName: tab == .chat ? "message" : tab == .agent ? "terminal" : tab == .media ? "music.note" : "square.grid.2x2")
+                    Image(systemName: tab.symbolName)
                     .font(.sf(13, weight: .semibold))
                     .foregroundStyle(capabilities.workspaceTab == tab ? Tokens.text1 : Tokens.text3)
                     .frame(width: 36, height: 32)
@@ -2638,7 +2669,7 @@ struct NotchBody: View {
 
 
     /// Shared open/close feel for the modules that unfurl below the prompt
-    /// (recent list, inline settings): the whole block grows in from the top and
+    /// (recent list, transient panels): the whole block grows in from the top and
     /// fades, rather than popping in instantly.
     private var moduleTransition: AnyTransition {
         .asymmetric(

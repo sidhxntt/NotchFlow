@@ -117,7 +117,7 @@ struct ContentView: View {
             // routing never applies to follow-ups. keyCode 36 is Return.
             if ReservedAppShortcut.sendOther.matches(event),
                model.mode == .idle,
-               !model.showSettings, !model.showWhatsNew, !model.showHistory,
+               !model.showWhatsNew, !model.showHistory,
                model.agentDetailTaskID == nil {
                 if model.agentComposeActive {
                     return model.submitAgentAndOpenDetail()
@@ -131,7 +131,7 @@ struct ContentView: View {
             // stay scoped to the live composer so the same chord remains free in
             // settings, history search, and detached task detail fields.
             if ReservedAppShortcut.cycleIntent.matches(event),
-               !model.showSettings, !model.showWhatsNew,
+               !model.showWhatsNew,
                !model.showHistory, model.agentDetailTaskID == nil,
                fieldEditorIsFirstResponder() {
                 if model.mode == .idle {
@@ -146,8 +146,12 @@ struct ContentView: View {
                     return true
                 }
             }
+            // Companion mode has no Chat or Agent tab to switch to (see
+            // `workspaceTabBar`), so the chord that arms the agent folder must not
+            // be able to select one from the keyboard either.
             if ReservedAppShortcut.bucket.matches(event),
-               model.mode == .idle, !model.showSettings, !model.showWhatsNew,
+               capabilities.agenticModeEnabled,
+               model.mode == .idle, !model.showWhatsNew,
                !model.showHistory, model.agentDetailTaskID == nil,
                fieldEditorIsFirstResponder() {
                 model.toggleAgentBucket()
@@ -160,7 +164,7 @@ struct ContentView: View {
             // the field has somewhere to land; if the filter's already up, ⌘F is a
             // no-op rather than a toggle (Esc clears/closes it — see below).
             if AppShortcutStore.matches(.filter, event: event),
-               !model.showSettings, model.recentScopeHistoryCount > 6 {
+               model.recentScopeHistoryCount > 6 {
                 withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
                     if !model.showHistory { model.showHistory = true }
                     model.showHistoryFilter = true
@@ -180,7 +184,7 @@ struct ContentView: View {
             // falls back to the cross-provider chat picker rather than opening an
             // empty card.
             if AppShortcutStore.matches(.picker, event: event),
-               !model.showSettings, !model.showWhatsNew {
+               !model.showWhatsNew {
                 if model.agentAvailable {
                     model.showAgentPicker = true
                 } else {
@@ -214,7 +218,7 @@ struct ContentView: View {
             // empty field). No-op on the idle prompt — already a fresh chat.
             // keyCode 45 is N.
             if AppShortcutStore.matches(.newChat, event: event),
-               model.mode != .idle, !model.showSettings, !model.showWhatsNew {
+               model.mode != .idle, !model.showWhatsNew {
                 withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
                     model.newChat()
                 }
@@ -228,7 +232,7 @@ struct ContentView: View {
             // responder, ⌘C/⌘S/⌘R fall through to the system (⌘C copies the
             // selection/line, etc.). ⌘P/⌘D handle their own state below.
             //   ⌘C (8)  = copy the whole answer     ⌘R (15) = regenerate
-            if model.mode == .result, !model.showSettings, !model.showWhatsNew,
+            if model.mode == .result, !model.showWhatsNew,
                !model.isStreaming, !fieldEditorIsFirstResponder() {
                 if AppShortcutStore.matches(.copyAnswer, event: event),
                    let answer = model.lastAnswerText {
@@ -248,7 +252,7 @@ struct ContentView: View {
             // NotchModel.collapseOnLeave). Not over settings / what's new (those own
             // no pin), so both fall through to the system there. keyCode 35 is P, 2 is D.
             if AppShortcutStore.matches(.pin, event: event),
-               model.mode != .load, !model.showSettings, !model.showWhatsNew {
+               model.mode != .load, !model.showWhatsNew {
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
                     model.toggleAnswerPin()
                 }
@@ -281,22 +285,6 @@ struct ContentView: View {
                 if withAnimation(.spring(response: 0.34, dampingFraction: 0.82), {
                     model.dismissSlashMenu()
                 }) { return true }
-                // Settings open → first Esc folds back to the prompt, not a full
-                // close (mirrors the recent-list step-out below). A pushed
-                // sub-page (Shortcuts, under About) gets its own step first, so
-                // Esc walks the same floors as the header's back pill.
-                if model.showSettings {
-                    if let parent = InlineSettingsView.Section(rawValue: model.settingsSection)?.parent {
-                        withAnimation(.easeOut(duration: 0.16)) {
-                            model.settingsSection = parent.rawValue
-                        }
-                        return true
-                    }
-                    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                        model.closeSettings()
-                    }
-                    return true
-                }
                 // What's New open → same step-out: first Esc returns to the prompt.
                 if model.showWhatsNew {
                     withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
@@ -363,7 +351,7 @@ struct ContentView: View {
             // and the settings / what's new pages own no thread to back out of.
             if event.keyCode == 123,
                SummonHotKey.carbonModifiers(from: event.modifierFlags) == 0,
-               !model.showSettings, !model.showWhatsNew,
+               !model.showWhatsNew,
                model.mode != .idle || model.agentDetailTaskID != nil,
                !model.hasText {
                 withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
@@ -1750,7 +1738,7 @@ struct NotchIsland: View {
         // Settings it only covered the settings body, leaving the panel's padding
         // showing as pale strips down both sides and along the bottom.
         .overlay {
-            if model.forceClickLookupConflict != nil, isOpen, model.showSettings {
+            if model.forceClickLookupConflict != nil, isOpen {
                 ForceClickLookupDialog(
                     onOpenSettings: {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.Trackpad-Settings.extension") {
@@ -1900,7 +1888,7 @@ struct NotchIsland: View {
         }
         .onChange(of: agentPermissionPending) { _, pending in
             model.setDirectApprovalPending(pending)
-            guard pending else { return }
+            guard pending, capabilities.agenticModeEnabled else { return }
             capabilities.workspaceTab = .agent
             model.openPanel(on: metrics.displayID)
         }

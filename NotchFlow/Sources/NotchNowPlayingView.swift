@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// NotchFlow-native rendering of Boring Notch's now-playing capability.
-/// This intentionally shares the root panel's black/glass language instead of Boring's ContentView.
+/// NotchFlow-native rendering of the now-playing capability.
+/// It shares the root panel's black/glass language.
 struct NotchNowPlayingView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var capabilities: NotchCapabilityStore

@@ -349,8 +349,20 @@ public enum AgentSessionTerminal: Equatable, Sendable {
     /// 180s sits above the 99th percentile, so genuinely slow work is not
     /// libelled, and below the scanner's own five-minute activity window, so the
     /// rule still has room to act before the session ages out of the roster
-    /// entirely.
-    public static let stalledAfter: TimeInterval = 180
+    /// entirely. It is the default, not a law: a user whose work runs long single
+    /// tools (a full test suite under one Bash call) can raise it from
+    /// Settings → Agent, and one who wants stalls surfaced faster can lower it.
+    public static let defaultStalledAfter: TimeInterval = 180
+    public static let stalledAfterChoices: [TimeInterval] = [60, 180, 300, 600]
+    private static let stalledAfterKey = "agentStalledAfter"
+
+    public static var stalledAfter: TimeInterval {
+        get {
+            (UserDefaults.standard.object(forKey: stalledAfterKey) as? Double)
+                .map { $0 > 0 ? $0 : defaultStalledAfter } ?? defaultStalledAfter
+        }
+        set { UserDefaults.standard.set(newValue, forKey: stalledAfterKey) }
+    }
 
     /// A turn that stopped without finishing is not a working turn.
     ///
@@ -668,7 +680,10 @@ public struct AgentSessionState: Equatable, Identifiable, Sendable {
         }
     }
 
-    public var subagentBadge: String? { subagentCount > 0 ? "\(subagentCount)" : nil }
+    public var subagentBadge: String? {
+        guard AgentDisplayPolicy.showsSubagents, subagentCount > 0 else { return nil }
+        return "\(subagentCount)"
+    }
 
     public mutating func apply(status next: AgentSessionStatus) {
         // Plan exit is its own completed state. Preserve its yellow checkmark
@@ -757,11 +772,44 @@ public struct AgentSessionPreview: Equatable, Sendable {
     }
 }
 
+/// What the agent roster is allowed to draw. Display-only: the counts and states
+/// behind these are still computed, so turning one off hides a cue rather than
+/// changing what the app believes about a session.
+public enum AgentDisplayPolicy {
+    private static let subagentsKey = "agentShowsSubagents"
+
+    /// Whether a session row carries its live sub-agent count. On by default; a
+    /// fan-out of 96 children (measured on this machine) turns the roster into a
+    /// wall of badges, so it is worth being able to silence.
+    public static var showsSubagents: Bool {
+        get { UserDefaults.standard.object(forKey: subagentsKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: subagentsKey) }
+    }
+}
+
 /// Retention policy for externally observed agent transcripts. The transcript
 /// modification time is activity evidence, not an expiry for the agent itself:
 /// a single tool call can legitimately take far longer than five minutes.
 public enum AgentSessionObservation {
-    public static let activeFileWindow: TimeInterval = 24 * 60 * 60
+    /// How far back a transcript's last write may be and still put its session in
+    /// the roster. A day by default. Adjustable from Settings → Agent because the
+    /// right answer depends on the machine: on one holding gigabytes of rollouts
+    /// a shorter window is the difference between a fast cold start and a slow
+    /// one, while someone who keeps a session open across days needs the longer
+    /// reach to see it at all.
+    public static let defaultActiveFileWindow: TimeInterval = 24 * 60 * 60
+    public static let activeFileWindowChoices: [TimeInterval] = [
+        6 * 60 * 60, 12 * 60 * 60, 24 * 60 * 60, 3 * 24 * 60 * 60, 7 * 24 * 60 * 60
+    ]
+    private static let activeFileWindowKey = "agentActiveFileWindow"
+
+    public static var activeFileWindow: TimeInterval {
+        get {
+            (UserDefaults.standard.object(forKey: activeFileWindowKey) as? Double)
+                .map { $0 > 0 ? $0 : defaultActiveFileWindow } ?? defaultActiveFileWindow
+        }
+        set { UserDefaults.standard.set(newValue, forKey: activeFileWindowKey) }
+    }
 
     public static func isWithinActiveWindow(_ modifiedAt: Date, now: Date = Date()) -> Bool {
         let age = now.timeIntervalSince(modifiedAt)

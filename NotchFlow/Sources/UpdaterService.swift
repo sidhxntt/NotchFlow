@@ -306,6 +306,14 @@ final class UpdaterService: ObservableObject {
         let extracted = work.appendingPathComponent("extracted", isDirectory: true)
         try runTool("/usr/bin/ditto", "-x", "-k", zip.path, extracted.path)
         guard let staged = findApp(in: extracted, fm: fm) else { throw UpdateError.badArchive }
+        // A release can have the right bundle filename while still carrying the
+        // retired in-notch preferences UI. Refuse that archive before touching
+        // the installed app: every NotchFlow release eligible for self-update
+        // must declare the standalone Settings experience explicitly.
+        guard Bundle(url: staged)?.bundleIdentifier == Bundle.main.bundleIdentifier,
+              Bundle(url: staged)?.object(forInfoDictionaryKey: "SettingsExperience") as? String
+                  == "standalone-v1"
+        else { throw UpdateError.badArchive }
         // Defensive only — see the class comment on quarantine.
         try? runTool("/usr/bin/xattr", "-dr", "com.apple.quarantine", staged.path)
 
