@@ -47,9 +47,12 @@ AuthKey_*.p8
 AGENTS.md
 CLAUDE.md
 
-# Landing page / front-end — kept local only, deployed via Vercel, never
-# published to this repo. Includes ROADMAP/reviews docs that lived here too.
-docs/
+# Internal documentation remains local unless it is the repository-owned
+# GitHub Wiki source below.
+docs/*
+!docs/wiki/
+!docs/wiki/**
+!docs/wiki-publishing.md
 # Guard for the local-only roadmap docs above — useless to anyone cloning the
 # repo (they have no roadmap files), and its text describes the internal flow.
 scripts/check-roadmap.sh
