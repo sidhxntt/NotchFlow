@@ -19,7 +19,7 @@ public struct AboutContentConfiguration: Codable, Equatable, Sendable {
         aboutMeURL: "",
         xURL: "https://x.com/cyrusss_7",
         supportURL: "https://buymeacoffee.com/cyrus007",
-        privacyURL: "https://www.notch.website/privacy",
+        privacyURL: "https://sidhxntt.github.io/NotchFlow/privacy/",
         feedbackURL: ""
     )
 

@@ -296,7 +296,7 @@ struct StatsPane: View {
     private var privacyHint: AttributedString {
         var text = AttributedString(L("stats.privacy.info"))
         if let range = text.range(of: L("stats.privacy.info.link")) {
-            text[range].link = URL(string: "https://www.notch.website/privacy")
+            text[range].link = URL(string: "https://sidhxntt.github.io/NotchFlow/privacy/")
             text[range].foregroundColor = Tokens.text1
             text[range].underlineStyle = .single
         }

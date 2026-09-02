@@ -101,7 +101,7 @@ NotchFlow is drawn in macOS Liquid Glass — including the edge glow and physica
 
 NotchFlow has no separate product account. Prompts, chats, notes, reminders, agent sessions, clipboard, and history stay on your Mac, or go directly to the AI provider you configured. NotchFlow does not relay request content.
 
-Read the tracked [Privacy Policy](PRIVACY.md) for permissions, local storage, provider/network use, Lemon Squeezy licensing, retention, and deletion. The policy must be published at the configured in-app privacy URL before public release; this repository does not itself deploy that website.
+Read the tracked [Privacy Policy](PRIVACY.md) for permissions, local storage, provider/network use, Lemon Squeezy licensing, retention, and deletion. The same policy is published at the configured in-app [privacy URL](https://sidhxntt.github.io/NotchFlow/privacy/).
 
 ## Questions
 
