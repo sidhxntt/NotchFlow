@@ -12,9 +12,8 @@ import SceneKit
 /// shrinking and rising as it turns — and tucks into the notch. The panel opens on
 /// the chat prompt the instant it lands.
 ///
-/// The mark is only the glyph — the flag and its dot, the shapes from the middle
-/// of the app icon, lifted out and given depth. No plate, no rounded square: what
-/// flies is the mark itself.
+/// The mark is an abstract NF monogram, lifted out and given depth. No plate, no
+/// rounded square: what flies is the mark itself.
 ///
 /// Built in SceneKit because the "3D" has to be real: extruded geometry with
 /// chamfered edges, plus a fragment shader that refracts an environment through
@@ -61,7 +60,7 @@ final class IntroAnimation {
     /// How deep the glass runs. Chunky on purpose — a thin one would read as a
     /// decal, and the depth is what the refraction has to work with.
     private static let glyphDepth: CGFloat = 30
-    /// The mark's width/height in those units (the flag plus its dot).
+    /// The mark's width/height in those units (the abstract NF monogram).
     private static let markSize: CGFloat = 44.4
 
     /// How much of the screen's height the mark occupies while it's on stage.
@@ -206,15 +205,15 @@ final class IntroAnimation {
         scene.background.contents = NSColor.clear
 
         // --- the mark ---------------------------------------------------------
-        // Just the glyph: the flag as an extruded slab, the dot as a marble.
+        // Just the glyph: an abstract NF monogram, extruded as solid glass.
         let spin = SCNNode()
-        spin.addChildNode(Self.glassNode(path: Self.flagPath()))
-        spin.addChildNode(Self.dotNode())
+        spin.addChildNode(Self.nfMarkNode())
 
         let fly = SCNNode()
         fly.addChildNode(spin)
         scene.rootNode.addChildNode(fly)
         glassMaterials = spin.childNodes
+            .flatMap(\.childNodes)
             .flatMap(\.childNodes)
             .compactMap { $0.geometry?.firstMaterial }
 
@@ -510,9 +509,9 @@ final class IntroAnimation {
         return node
     }
 
-    /// The flag: extruded and chamfered. The chamfer is generous on purpose — the
-    /// bevel is where a real glass solid does its lensing, and a hairline one gives
-    /// the refraction nothing to bend around.
+    /// An extruded, chamfered glass contour. The generous bevel is where a real
+    /// glass solid does its lensing; a hairline bevel gives the refraction nothing
+    /// to bend around.
     private static func glassNode(path: NSBezierPath) -> SCNNode {
         path.flatness = 0.02
         return glassPasses {
@@ -521,20 +520,6 @@ final class IntroAnimation {
             shape.chamferMode = .both
             return shape
         }
-    }
-
-    /// The dot, as a marble. A sphere is the one shape whose whole surface is
-    /// curved, so the refraction sweeps across it continuously as the mark turns —
-    /// the extruded disc it replaced was a puck with two flat faces, and read as a
-    /// short cylinder rather than a lens.
-    private static func dotNode() -> SCNNode {
-        let node = glassPasses {
-            let sphere = SCNSphere(radius: dotRadius)
-            sphere.segmentCount = 72
-            return sphere
-        }
-        node.position = SCNVector3(dotCenter.x, dotCenter.y, 0)
-        return node
     }
 
     /// The fragment stage of the glass: it discards SceneKit's shading entirely and
@@ -666,24 +651,41 @@ final class IntroAnimation {
         return m
     }
 
-    /// The flag: the big square with the bite out of its bottom-right — traced off
-    /// the shipped icon (1024px artwork, ÷10, origin re-centered).
-    private static func flagPath() -> NSBezierPath {
+    /// The intro's own mark: a pair of open, structural glyphs rather than a
+    /// literal wordmark. Keeping N and F as separate glass solids lets light pass
+    /// through the negative space between them while they turn.
+    private static func nfMarkNode() -> SCNNode {
+        let node = SCNNode()
+        node.addChildNode(glassNode(path: nPath()))
+        node.addChildNode(glassNode(path: fPath()))
+        return node
+    }
+
+    /// A three-stroke N: two pillars joined by a rising diagonal. The slight gap
+    /// between it and the F is intentional; it keeps the monogram legible once
+    /// perspective compresses it during the flight into the notch.
+    private static func nPath() -> NSBezierPath {
         let path = NSBezierPath()
-        path.move(to: NSPoint(x: -22.2, y: 22.2))
-        path.line(to: NSPoint(x: 7.3, y: 22.2))
-        path.line(to: NSPoint(x: 7.3, y: -7.3))
-        path.line(to: NSPoint(x: -7.5, y: -7.3))
-        path.line(to: NSPoint(x: -7.5, y: -22.1))
-        path.line(to: NSPoint(x: -22.2, y: -22.1))
+        path.appendRect(NSRect(x: -22.2, y: -22.2, width: 5.1, height: 44.4))
+        path.move(to: NSPoint(x: -17.1, y: 22.2))
+        path.line(to: NSPoint(x: -11.7, y: 22.2))
+        path.line(to: NSPoint(x: -2.3, y: -22.2))
+        path.line(to: NSPoint(x: -7.7, y: -22.2))
         path.close()
+        path.appendRect(NSRect(x: -7.4, y: -22.2, width: 5.1, height: 44.4))
         return path
     }
 
-    /// The dot that sits in the bite — centre and radius traced off the same
-    /// artwork as the flag, so the marble lands exactly where the drawn dot is.
-    private static let dotCenter = CGPoint(x: 14.8, y: -14.8)
-    private static let dotRadius: CGFloat = 7.3
+    /// A compact F with deliberately unequal arms. It balances the diagonally
+    /// active N while making the read unambiguous from the front and in silhouette.
+    private static func fPath() -> NSBezierPath {
+        let path = NSBezierPath()
+        path.appendRect(NSRect(x: 3.0, y: -22.2, width: 5.4, height: 44.4))
+        path.appendRect(NSRect(x: 8.4, y: 16.8, width: 13.8, height: 5.4))
+        path.appendRect(NSRect(x: 8.4, y: -2.7, width: 11.0, height: 5.4))
+        path.close()
+        return path
+    }
 
     // MARK: - Framing
 

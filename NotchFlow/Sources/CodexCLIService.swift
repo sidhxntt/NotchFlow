@@ -308,18 +308,38 @@ struct CodexCLIService: AIService {
     /// list at `cwd`. This avoids teaching NotchFlow a second, inevitably stale copy
     /// of Codex's discovery rules (user, repo, plugin, admin, and system roots).
     static func loadSkills(cwd: String, forceReload: Bool = false) async -> [Skill] {
-        await Task.detached(priority: .utility) {
-            querySkillList(cwd: cwd, forceReload: forceReload) ?? []
-        }.value
+        let cancellation = SkillQueryCancellation()
+        let queryTask = Task.detached(priority: .utility) {
+            querySkillList(cwd: cwd,
+                           forceReload: forceReload,
+                           cancellation: cancellation) ?? []
+        }
+        return await withTaskCancellationHandler {
+            let skills = await queryTask.value
+            return Task.isCancelled ? [] : skills
+        } onCancel: {
+            cancellation.cancel()
+            queryTask.cancel()
+        }
     }
 
-    private static func querySkillList(cwd: String, forceReload: Bool) -> [Skill]? {
+    private static func querySkillList(
+        cwd: String,
+        forceReload: Bool,
+        cancellation: SkillQueryCancellation
+    ) -> [Skill]? {
         guard let binary = resolveBinary() else { return nil }
         let p = ShellEnvironment.makeProcess(binary, ["app-server"])
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe
         p.standardOutput = outPipe
         p.standardError = FileHandle.nullDevice
+        guard cancellation.register(p) else { return nil }
+        defer {
+            outPipe.fileHandleForReading.readabilityHandler = nil
+            if p.isRunning { p.terminate() }
+            cancellation.unregister(p)
+        }
 
         let sem = DispatchSemaphore(value: 0)
         let box = SkillQueryState()
@@ -330,6 +350,7 @@ struct CodexCLIService: AIService {
         }
 
         do { try p.run() } catch { return nil }
+        guard !cancellation.isCancelled else { return nil }
 
         let initReq = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"notch","title":"Notch","version":"1.0"}}}"# + "\n"
         let listObject: [String: Any] = [
@@ -342,13 +363,17 @@ struct CodexCLIService: AIService {
         }
         listData.append(0x0A)
         let writer = inPipe.fileHandleForWriting
+        defer { try? writer.close() }
         writer.write(Data(initReq.utf8))
         writer.write(listData)
 
-        let timedOut = sem.wait(timeout: .now() + 8) == .timedOut
-        outPipe.fileHandleForReading.readabilityHandler = nil
-        if p.isRunning { p.terminate() }
-        try? writer.close()
+        let deadline = DispatchTime.now().uptimeNanoseconds + 8_000_000_000
+        var receivedResponse = false
+        while !receivedResponse, DispatchTime.now().uptimeNanoseconds < deadline {
+            receivedResponse = sem.wait(timeout: .now() + .milliseconds(50)) == .success
+            guard !cancellation.isCancelled else { return nil }
+        }
+        let timedOut = !receivedResponse
         return timedOut ? nil : box.skills
     }
 
@@ -569,6 +594,40 @@ private final class StreamState {
             .last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
             ?? ""
         return Snapshot(yieldedAny: yieldedAny, failure: failure, stderrTail: tail)
+    }
+}
+
+/// Bridges structured-task cancellation to the synchronous app-server query.
+/// Cancellation may arrive before or after `Process.run()`, so registration and
+/// termination share one lock and the query also checks the latched flag.
+private final class SkillQueryCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var process: Process?
+
+    var isCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled
+    }
+
+    func register(_ process: Process) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled else { return false }
+        self.process = process
+        return true
+    }
+
+    func unregister(_ process: Process) {
+        lock.lock(); defer { lock.unlock() }
+        if self.process === process { self.process = nil }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let process = process
+        lock.unlock()
+        if process?.isRunning == true { process?.terminate() }
     }
 }
 

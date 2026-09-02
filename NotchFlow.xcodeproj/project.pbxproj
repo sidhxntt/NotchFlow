@@ -43,6 +43,8 @@
 		A100AA31 /* AIActivityProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA32 /* AIActivityProject.swift */; };
 		A100AA03 /* AgentModelContextWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA04 /* AgentModelContextWindow.swift */; };
 		A100AA05 /* RestingNotchPriority.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA06 /* RestingNotchPriority.swift */; };
+		A100AA33 /* AboutContentConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA34 /* AboutContentConfiguration.swift */; };
+		A100AA37 /* input.json in Resources */ = {isa = PBXBuildFile; fileRef = A100AA38 /* input.json */; };
 		A100AA07 /* AlertBannerText.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA08 /* AlertBannerText.swift */; };
 		A100AA09 /* AgentTranscriptFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100AA10 /* AgentTranscriptFiles.swift */; };
 		A1001802 /* AgentApprovalQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001803 /* AgentApprovalQueue.swift */; };
@@ -90,7 +92,6 @@
 		A1001023 /* NotchQuickUtilitiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001022 /* NotchQuickUtilitiesView.swift */; };
 		A1001025 /* FocusTimerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001024 /* FocusTimerStore.swift */; };
 		A1001205 /* AppSupportPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001204 /* AppSupportPaths.swift */; };
-		A1001209 /* CallWindowWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001208 /* CallWindowWatcher.swift */; };
 		A1001211 /* WeatherService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001210 /* WeatherService.swift */; };
 		A1001227 /* ShortcutsCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001226 /* ShortcutsCatalog.swift */; };
 		A1001225 /* ShortcutsUtilityOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001224 /* ShortcutsUtilityOverlayView.swift */; };
@@ -113,6 +114,8 @@
 		A1001919 /* CommandQueryEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001918 /* CommandQueryEvaluator.swift */; };
 		A1001921 /* ClipboardHistoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001920 /* ClipboardHistoryService.swift */; };
 		A1001923 /* ClipboardHistoryOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001922 /* ClipboardHistoryOverlayView.swift */; };
+		A1001925 /* HoverDwellPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001924 /* HoverDwellPolicy.swift */; };
+		A1001927 /* ForceClickPressurePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001926 /* ForceClickPressurePolicy.swift */; };
 		A1001213 /* MeetingLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001212 /* MeetingLink.swift */; };
 		A1001203 /* AlertBannerWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001202 /* AlertBannerWatcher.swift */; };
 		A1001201 /* AlertFeedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001200 /* AlertFeedStore.swift */; };
@@ -122,6 +125,11 @@
 		A1001029 /* NotchUtilityOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001028 /* NotchUtilityOverlay.swift */; };
 		A1001031 /* FocusTimerOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001030 /* FocusTimerOverlayView.swift */; };
 		A1001033 /* QuickNoteOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001032 /* QuickNoteOverlayView.swift */; };
+		A1001A00 /* UpdateArtifactVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001A01 /* UpdateArtifactVerifier.swift */; };
+		A1001A02 /* UpdateInstallPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001A03 /* UpdateInstallPlanner.swift */; };
+		A1001A04 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001A05 /* KeychainStore.swift */; };
+		A1001A06 /* LicensingConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001A07 /* LicensingConfiguration.swift */; };
+		A1001A08 /* LicenseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001A09 /* LicenseService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -145,6 +153,8 @@
 		A1000791 /* CodexCLIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexCLIService.swift; sourceTree = "<group>"; };
 		A1001801 /* CodexAppServerBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAppServerBridge.swift; sourceTree = "<group>"; };
 		A100AA02 /* AgentTranscriptStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AgentTranscriptStatus.swift; sourceTree = "<group>"; };
+		A100AA34 /* AboutContentConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AboutContentConfiguration.swift; sourceTree = "<group>"; };
+		A100AA38 /* input.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = input.json; sourceTree = "<group>"; };
 		A100AA32 /* AIActivityProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AIActivityProject.swift; sourceTree = "<group>"; };
 		A100AA04 /* AgentModelContextWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AgentModelContextWindow.swift; sourceTree = "<group>"; };
 		A100AA06 /* RestingNotchPriority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/RestingNotchPriority.swift; sourceTree = "<group>"; };
@@ -203,7 +213,6 @@
 		A1001022 /* NotchQuickUtilitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchQuickUtilitiesView.swift; sourceTree = "<group>"; };
 		A1001024 /* FocusTimerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/FocusTimerStore.swift; sourceTree = "<group>"; };
 		A1001204 /* AppSupportPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AppSupportPaths.swift; sourceTree = "<group>"; };
-		A1001208 /* CallWindowWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallWindowWatcher.swift; sourceTree = "<group>"; };
 		A1001210 /* WeatherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/WeatherService.swift; sourceTree = "<group>"; };
 		A1001226 /* ShortcutsCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsCatalog.swift; sourceTree = "<group>"; };
 		A1001224 /* ShortcutsUtilityOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsUtilityOverlayView.swift; sourceTree = "<group>"; };
@@ -226,6 +235,8 @@
 		A1001918 /* CommandQueryEvaluator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/CommandQueryEvaluator.swift; sourceTree = "<group>"; };
 		A1001920 /* ClipboardHistoryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/ClipboardHistoryService.swift; sourceTree = "<group>"; };
 		A1001922 /* ClipboardHistoryOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardHistoryOverlayView.swift; sourceTree = "<group>"; };
+		A1001924 /* HoverDwellPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/HoverDwellPolicy.swift; sourceTree = "<group>"; };
+		A1001926 /* ForceClickPressurePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/ForceClickPressurePolicy.swift; sourceTree = "<group>"; };
 		A1001212 /* MeetingLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/MeetingLink.swift; sourceTree = "<group>"; };
 		A1001202 /* AlertBannerWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertBannerWatcher.swift; sourceTree = "<group>"; };
 		A1001200 /* AlertFeedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/AlertFeedStore.swift; sourceTree = "<group>"; };
@@ -235,6 +246,11 @@
 		A1001028 /* NotchUtilityOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchUtilityOverlay.swift; sourceTree = "<group>"; };
 		A1001030 /* FocusTimerOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusTimerOverlayView.swift; sourceTree = "<group>"; };
 		A1001032 /* QuickNoteOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickNoteOverlayView.swift; sourceTree = "<group>"; };
+		A1001A01 /* UpdateArtifactVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateArtifactVerifier.swift; sourceTree = "<group>"; };
+		A1001A03 /* UpdateInstallPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateInstallPlanner.swift; sourceTree = "<group>"; };
+		A1001A05 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/KeychainStore.swift; sourceTree = "<group>"; };
+		A1001A07 /* LicensingConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/LicensingConfiguration.swift; sourceTree = "<group>"; };
+		A1001A09 /* LicenseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/LicenseService.swift; sourceTree = "<group>"; };
 		A100000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1000070 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A10004A0 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Fonts; sourceTree = "<group>"; };
@@ -299,6 +315,7 @@
 				A1001803 /* AgentApprovalQueue.swift */,
 				A100AA10 /* AgentTranscriptFiles.swift */,
 				A100AA06 /* RestingNotchPriority.swift */,
+				A100AA34 /* AboutContentConfiguration.swift */,
 				A100AA08 /* AlertBannerText.swift */,
 				A100AA04 /* AgentModelContextWindow.swift */,
 				A100AA02 /* AgentTranscriptStatus.swift */,
@@ -308,7 +325,6 @@
 				A1001809 /* CodexAppServerNotification.swift */,
 				A1001811 /* CodexTerminalHookPayload.swift */,
 				A1001204 /* AppSupportPaths.swift */,
-				A1001208 /* CallWindowWatcher.swift */,
 				A1001210 /* WeatherService.swift */,
 				A1001226 /* ShortcutsCatalog.swift */,
 				A1001224 /* ShortcutsUtilityOverlayView.swift */,
@@ -329,6 +345,11 @@
 				A1001918 /* CommandQueryEvaluator.swift */,
 				A1001920 /* ClipboardHistoryService.swift */,
 				A1001922 /* ClipboardHistoryOverlayView.swift */,
+				A1001924 /* HoverDwellPolicy.swift */,
+				A1001926 /* ForceClickPressurePolicy.swift */,
+				A1001A05 /* KeychainStore.swift */,
+				A1001A07 /* LicensingConfiguration.swift */,
+				A1001A09 /* LicenseService.swift */,
 				A1001302 /* ActivityMonitorView.swift */,
 				A1001304 /* AIActivityMonitorView.swift */,
 				A1001212 /* MeetingLink.swift */,
@@ -345,6 +366,8 @@
 				A1000069 /* RemindersService.swift */,
 				A10000BB /* DiagnosticsLog.swift */,
 				A1000073 /* UpdaterService.swift */,
+				A1001A01 /* UpdateArtifactVerifier.swift */,
+				A1001A03 /* UpdateInstallPlanner.swift */,
 				A1000075 /* MouseVelocityTracker.swift */,
 				A1000077 /* OpenRouterAuth.swift */,
 				A1000791 /* CodexCLIService.swift */,
@@ -393,6 +416,7 @@
 			children = (
 				A100000B /* Info.plist */,
 				A1000070 /* Assets.xcassets */,
+				A100AA38 /* input.json */,
 				A10004A0 /* Fonts */,
 				A10004B0 /* intro-sunrise.m4a */,
 				A1000C14 /* strokes.bin */,
@@ -474,6 +498,7 @@
 				A10004B1 /* intro-sunrise.m4a in Resources */,
 				A1000C15 /* strokes.bin in Resources */,
 				A10004B3 /* buy-me-a-coffee.gif in Resources */,
+				A100AA37 /* input.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -498,6 +523,11 @@
 				A1000068 /* RemindersService.swift in Sources */,
 				A10000AA /* DiagnosticsLog.swift in Sources */,
 				A1000072 /* UpdaterService.swift in Sources */,
+				A1001A00 /* UpdateArtifactVerifier.swift in Sources */,
+				A1001A02 /* UpdateInstallPlanner.swift in Sources */,
+				A1001A04 /* KeychainStore.swift in Sources */,
+				A1001A06 /* LicensingConfiguration.swift in Sources */,
+				A1001A08 /* LicenseService.swift in Sources */,
 				A1000074 /* MouseVelocityTracker.swift in Sources */,
 				A1000076 /* OpenRouterAuth.swift in Sources */,
 				A1000790 /* CodexCLIService.swift in Sources */,
@@ -505,6 +535,7 @@
 				A1001802 /* AgentApprovalQueue.swift in Sources */,
 				A100AA09 /* AgentTranscriptFiles.swift in Sources */,
 				A100AA05 /* RestingNotchPriority.swift in Sources */,
+				A100AA33 /* AboutContentConfiguration.swift in Sources */,
 				A100AA07 /* AlertBannerText.swift in Sources */,
 				A100AA03 /* AgentModelContextWindow.swift in Sources */,
 				A100AA01 /* AgentTranscriptStatus.swift in Sources */,
@@ -561,7 +592,6 @@
 				A1001023 /* NotchQuickUtilitiesView.swift in Sources */,
 				A1001025 /* FocusTimerStore.swift in Sources */,
 				A1001205 /* AppSupportPaths.swift in Sources */,
-				A1001209 /* CallWindowWatcher.swift in Sources */,
 				A1001211 /* WeatherService.swift in Sources */,
 				A1001227 /* ShortcutsCatalog.swift in Sources */,
 				A1001225 /* ShortcutsUtilityOverlayView.swift in Sources */,
@@ -582,6 +612,8 @@
 				A1001919 /* CommandQueryEvaluator.swift in Sources */,
 				A1001921 /* ClipboardHistoryService.swift in Sources */,
 				A1001923 /* ClipboardHistoryOverlayView.swift in Sources */,
+				A1001925 /* HoverDwellPolicy.swift in Sources */,
+				A1001927 /* ForceClickPressurePolicy.swift in Sources */,
 				A1001303 /* ActivityMonitorView.swift in Sources */,
 				A1001305 /* AIActivityMonitorView.swift in Sources */,
 				A1001213 /* MeetingLink.swift in Sources */,

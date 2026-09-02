@@ -24,10 +24,54 @@ xcodebuild \
   -derivedDataPath "$BUILD_DIR" \
   build
 
+# Xcode's "Sign to Run Locally" fallback is an ad-hoc signature whose
+# designated requirement is the binary's CDHash. That hash changes whenever
+# the app is rebuilt, so macOS TCC (Accessibility, Reminders, Notifications,
+# and Location) treats every build as a different application and discards the
+# permissions the user already granted. Re-sign local builds with a stable
+# requirement based on the app's bundle identifier while retaining the
+# entitlements Xcode generated for the app.
+stabilize_tcc_identity() {
+  local bundle_identifier
+  bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+    "$APP_BUNDLE/Contents/Info.plist")"
+
+  # Sign nested executables before the outer wrapper. `codesign --deep` signs
+  # them after the wrapper and invalidates its resource seal on current Xcode
+  # debug products.
+  while IFS= read -r nested_code; do
+    [[ "$nested_code" == "$APP_BINARY" ]] && continue
+    # Re-signing a nested executable can briefly create a sibling `.cstemp`
+    # file. `find` may yield it after it has already been removed, which must
+    # not abort the build before the freshly built Debug app is installed.
+    [[ -f "$nested_code" ]] || continue
+    /usr/bin/codesign --force --sign - "$nested_code"
+  done < <(find "$APP_BUNDLE/Contents" -type f -perm -111)
+
+  /usr/bin/codesign --force --sign - \
+    --preserve-metadata=identifier,entitlements,flags,runtime \
+    --requirements "=designated => identifier \"$bundle_identifier\"" \
+    "$APP_BUNDLE"
+}
+
+verify_tcc_identity() {
+  local bundle_identifier expected_requirement
+  bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+    "$APP_BUNDLE/Contents/Info.plist")"
+  expected_requirement="designated => identifier \"$bundle_identifier\""
+
+  /usr/bin/codesign -d -r- "$APP_BUNDLE" 2>&1 | grep -F "$expected_requirement" >/dev/null
+  echo "TCC identity is stable: $expected_requirement"
+}
+
+stabilize_tcc_identity
+
 install_app() {
   # Launchpad indexes the installed bundle, not Xcode's DerivedData product.
-  # Keep that bundle in lockstep with every local restart.
-  /usr/bin/ditto "$APP_BUNDLE" "$INSTALLED_APP_BUNDLE"
+  # Mirror it instead of merging with `ditto`: stale frameworks or resources
+  # from an earlier build invalidate the bundle's signature and can leave the
+  # launched app out of sync with the verified build product.
+  /usr/bin/rsync -a --delete "$APP_BUNDLE/" "$INSTALLED_APP_BUNDLE/"
   "$LSREGISTER" -u "$INSTALLED_APP_BUNDLE" || true
   "$LSREGISTER" -f "$INSTALLED_APP_BUNDLE"
 }
@@ -61,8 +105,11 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     echo "$APP_NAME launched successfully"
     ;;
+  --verify-tcc-identity)
+    verify_tcc_identity
+    ;;
   *)
-    echo "usage: $0 [run|--bundle|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--bundle|--debug|--logs|--telemetry|--verify|--verify-tcc-identity]" >&2
     exit 2
     ;;
 esac

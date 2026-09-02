@@ -53,6 +53,7 @@ final class CodexTerminalHookBridge: ObservableObject {
     }
 
     func startIfNeeded() {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         guard listenFD < 0 else { return }
         do {
             listenFD = try Self.bindListener(at: Self.socketPath)
@@ -78,6 +79,20 @@ final class CodexTerminalHookBridge: ObservableObject {
         listener.start()
         isAvailable = true
         lastError = nil
+    }
+
+    func shutdownForLicenseBlock() {
+        if listenFD >= 0 {
+            shutdown(listenFD, SHUT_RDWR)
+            Darwin.close(listenFD)
+            listenFD = -1
+        }
+        unlink(Self.socketPath)
+        connections.values.forEach { $0.close() }
+        connections.removeAll()
+        queue = AgentApprovalQueue()
+        publishQueue()
+        isAvailable = false
     }
 
     /// User-owned global hook configs can contain several tools. Inspect them at

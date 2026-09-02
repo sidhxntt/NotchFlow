@@ -14,9 +14,35 @@ jobs:
     # macos-26 ships Xcode 26.x, required for the macOS 26 Liquid Glass
     # APIs (.glassEffect). Older runners (macos-14/15) cannot compile this.
     runs-on: macos-26
+    env:
+      # Public identifier used to reject a valid Developer ID certificate that
+      # belongs to a different Apple team. Configure it as a repository variable.
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      - name: Validate tag and prepare release metadata
+        run: |
+          RELEASE_VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+             [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags must be exactly vX.Y.Z; received $GITHUB_REF_NAME."
+            exit 1
+          fi
+          EXPECTED_BUNDLE_ID="com.notchflow.app"
+          EXPECTED_TEAM_ID="${APPLE_TEAM_ID:?Missing required repository variable APPLE_TEAM_ID}"
+          if [[ ! "$EXPECTED_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "::error::APPLE_TEAM_ID must be a ten-character Apple Developer Team ID."
+            exit 1
+          fi
+
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
+          echo "EXPECTED_BUNDLE_ID=$EXPECTED_BUNDLE_ID" >> "$GITHUB_ENV"
+          echo "EXPECTED_TEAM_ID=$EXPECTED_TEAM_ID" >> "$GITHUB_ENV"
+          echo "DMG_NAME=NotchFlow-v${RELEASE_VERSION}-arm64.dmg" >> "$GITHUB_ENV"
+          echo "ZIP_NAME=NotchFlow-v${RELEASE_VERSION}-arm64.zip" >> "$GITHUB_ENV"
 
       - name: Guard against version regression
         env:
@@ -26,7 +52,7 @@ jobs:
           # already-published release. This catches a mistaken push to a stale
           # tag (e.g. a `--follow-tags` push re-sending an old v1.0.8) before it
           # can overwrite "Latest" with a regression.
-          new="${GITHUB_REF_NAME#v}"
+          new="$RELEASE_VERSION"
           # Compare against the HIGHEST version across all published releases —
           # NOT GitHub's "Latest" marker, which can itself be wrong (a stale tag
           # re-published out of order can grab "Latest"). sort -V gives us the
@@ -48,19 +74,23 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_26.5.app
           xcodebuild -version
 
-      # Signing with a real certificate is what keeps the app's designated
-      # requirement stable across releases. With the previous ad-hoc signature
-      # the DR was a bare `cdhash H"..."` — the hash of one exact binary — so
-      # every release invalidated the TCC record behind the Accessibility grant
-      # and users had to re-authorise the app each time. See
-      # scripts/make-signing-cert.sh.
+      - name: Verify release records, public licensing configuration, and packaging helpers
+        run: |
+          node scripts/gen-releases.mjs --check
+          bash Tests/verify_release_metadata.sh
+          swift test
+          bash Tests/verify_create_dmg.sh
+          bash Tests/verify_create_zip.sh
+
+      # A Developer ID signature keeps the app's designated requirement stable
+      # across releases, and is the prerequisite for notarized direct download.
       - name: Import signing certificate
         env:
           CERT_P12_BASE64: ${{ secrets.SIGNING_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
         run: |
           if [ -z "$CERT_P12_BASE64" ] || [ -z "$CERT_PASSWORD" ]; then
-            echo "::error::Missing SIGNING_CERT_P12 / SIGNING_CERT_PASSWORD secrets. Run scripts/make-signing-cert.sh locally and upload them. Refusing to publish an ad-hoc-signed build: it would reset every user's Accessibility permission."
+            echo "::error::Missing SIGNING_CERT_P12 / SIGNING_CERT_PASSWORD secrets. Refusing to publish an ad-hoc-signed build."
             exit 1
           fi
           KEYCHAIN="$RUNNER_TEMP/notchflow-signing.keychain-db"
@@ -71,21 +101,11 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 
-          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/id.p12"
+          printf '%s' "$CERT_P12_BASE64" | base64 -D -o "$RUNNER_TEMP/id.p12"
           security import "$RUNNER_TEMP/id.p12" -k "$KEYCHAIN" \
             -P "$CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list \
             -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
-
-          # A self-signed certificate that is merely present is NOT usable:
-          # `find-identity` reports CSSMERR_TP_NOT_TRUSTED and codesign fails with
-          # "no identity found". It has to be trusted for the codeSign policy.
-          openssl pkcs12 -in "$RUNNER_TEMP/id.p12" -clcerts -nokeys \
-            -passin "pass:$CERT_PASSWORD" -out "$RUNNER_TEMP/cert.pem" -legacy 2>/dev/null \
-            || openssl pkcs12 -in "$RUNNER_TEMP/id.p12" -clcerts -nokeys \
-                 -passin "pass:$CERT_PASSWORD" -out "$RUNNER_TEMP/cert.pem"
-          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
-            -k /Library/Keychains/System.keychain "$RUNNER_TEMP/cert.pem"
 
           # codesign resolves identities through the search list.
           security list-keychains -d user -s "$KEYCHAIN" \
@@ -93,6 +113,21 @@ jobs:
 
           rm -f "$RUNNER_TEMP/id.p12"
           security find-identity -v -p codesigning "$KEYCHAIN"
+          SIGN_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | sed -n 's/.*"\(Developer ID Application:.*\)".*/\1/p' | head -n1)"
+          if [ -z "$SIGN_IDENTITY" ]; then
+            echo "::error::The imported certificate does not contain a usable Developer ID Application identity."
+            exit 1
+          fi
+          echo "SIGN_IDENTITY=$SIGN_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Verify signing helper
+        env:
+          NOTCHFLOW_SIGN_KEYCHAIN: ${{ env.SIGN_KEYCHAIN }}
+          NOTCHFLOW_SIGN_IDENTITY: ${{ env.SIGN_IDENTITY }}
+          NOTCHFLOW_SIGN_REQUIRED: "1"
+          NOTCHFLOW_REQUIRE_DEVELOPER_ID: "1"
+        run: bash Tests/verify_codesign_app.sh
 
       - name: Build (Release)
         run: |
@@ -105,27 +140,178 @@ jobs:
             -scheme NotchFlow \
             -configuration Release \
             -derivedDataPath build \
-            MARKETING_VERSION="${GITHUB_REF_NAME#v}" \
+            MARKETING_VERSION="$RELEASE_VERSION" \
+            CURRENT_PROJECT_VERSION="$RELEASE_VERSION" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
             build
 
       - name: Sign
         env:
           NOTCHFLOW_SIGN_KEYCHAIN: ${{ env.SIGN_KEYCHAIN }}
+          NOTCHFLOW_SIGN_IDENTITY: ${{ env.SIGN_IDENTITY }}
           # No ad-hoc fallback in CI. A silently ad-hoc-signed release is the
           # exact regression this whole change exists to prevent.
           NOTCHFLOW_SIGN_REQUIRED: "1"
+          NOTCHFLOW_REQUIRE_DEVELOPER_ID: "1"
         run: |
           APP="build/Build/Products/Release/NotchFlow.app"
           test -d "$APP" || { echo "::error::App not found at $APP"; exit 1; }
-          ./scripts/codesign-app.sh "$APP"
+          bash scripts/codesign-app.sh "$APP"
 
-      - name: Package
+      - name: Verify signed release identity before packaging
         run: |
           APP="build/Build/Products/Release/NotchFlow.app"
-          # Zip preserving the bundle (ditto, not zip, for correct macOS metadata).
-          ditto -c -k --keepParent "$APP" "NotchFlow-${GITHUB_REF_NAME}.zip"
-          ls -la NotchFlow-*.zip
+          INFO_PLIST="$APP/Contents/Info.plist"
+          EXECUTABLE="$APP/Contents/MacOS/NotchFlow"
+          test -f "$INFO_PLIST" || { echo "::error::Missing $INFO_PLIST"; exit 1; }
+          test -f "$EXECUTABLE" || { echo "::error::Missing $EXECUTABLE"; exit 1; }
+
+          bundle_id="$(plutil -extract CFBundleIdentifier raw -o - "$INFO_PLIST")"
+          marketing_version="$(plutil -extract CFBundleShortVersionString raw -o - "$INFO_PLIST")"
+          build_version="$(plutil -extract CFBundleVersion raw -o - "$INFO_PLIST")"
+          architectures="$(lipo -archs "$EXECUTABLE")"
+          team_id="$(codesign -dvvv "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -n1)"
+
+          test "$bundle_id" = "$EXPECTED_BUNDLE_ID" \
+            || { echo "::error::Expected bundle ID $EXPECTED_BUNDLE_ID, got $bundle_id"; exit 1; }
+          test "$marketing_version" = "$RELEASE_VERSION" \
+            || { echo "::error::Marketing version $marketing_version does not match tag $RELEASE_VERSION"; exit 1; }
+          test "$build_version" = "$RELEASE_VERSION" \
+            || { echo "::error::Build version $build_version does not match tag $RELEASE_VERSION"; exit 1; }
+          test "$architectures" = "arm64" \
+            || { echo "::error::Expected exactly arm64, got $architectures"; exit 1; }
+          test "$team_id" = "$EXPECTED_TEAM_ID" \
+            || { echo "::error::Expected Team ID $EXPECTED_TEAM_ID, got $team_id"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      # The source app must carry its notarization ticket before either
+      # distributable copies it. Otherwise the app mounted from the DMG or
+      # extracted from the ZIP does not have a stapled ticket.
+      - name: Notarize and staple app before packaging
+        env:
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_PRIVATE_KEY: ${{ secrets.NOTARY_PRIVATE_KEY }}
+        run: |
+          test -n "$NOTARY_ISSUER_ID" && test -n "$NOTARY_KEY_ID" && test -n "$NOTARY_PRIVATE_KEY" \
+            || { echo "::error::Missing a NOTARY_* secret."; exit 1; }
+          APP="build/Build/Products/Release/NotchFlow.app"
+          SUBMISSION_ZIP="$RUNNER_TEMP/NotchFlow-${RELEASE_VERSION}-notarization.zip"
+          KEY="$RUNNER_TEMP/AuthKey_${NOTARY_KEY_ID}.p8"
+          RESULT="$RUNNER_TEMP/notarization-result.json"
+          LOG="$RUNNER_TEMP/notarization-log.json"
+          umask 077
+          printf '%s' "$NOTARY_PRIVATE_KEY" > "$KEY"
+          chmod 600 "$KEY"
+          trap 'rc=$?; rm -f "$KEY" "$RESULT" "$LOG" "$SUBMISSION_ZIP"; exit $rc' EXIT
+
+          ditto -c -k --keepParent "$APP" "$SUBMISSION_ZIP"
+
+          set +e
+          xcrun notarytool submit "$SUBMISSION_ZIP" \
+            --key "$KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+            --wait --output-format json | tee "$RESULT"
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            submission_id="$(plutil -extract id raw "$RESULT" 2>/dev/null || true)"
+            if [ -n "$submission_id" ]; then
+              xcrun notarytool log "$submission_id" \
+                --key "$KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+                "$LOG" || true
+              [ -f "$LOG" ] && sed -n '1,240p' "$LOG"
+            fi
+            exit "$status"
+          fi
+
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+
+      - name: Package notarized app
+        run: |
+          APP="build/Build/Products/Release/NotchFlow.app"
+          bash scripts/create-dmg.sh "$APP" "$DMG_NAME"
+
+      - name: Notarize and staple DMG, then package ZIP fallback
+        env:
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_PRIVATE_KEY: ${{ secrets.NOTARY_PRIVATE_KEY }}
+        run: |
+          test -n "$NOTARY_ISSUER_ID" && test -n "$NOTARY_KEY_ID" && test -n "$NOTARY_PRIVATE_KEY" \
+            || { echo "::error::Missing a NOTARY_* secret."; exit 1; }
+          APP="build/Build/Products/Release/NotchFlow.app"
+          DMG="$DMG_NAME"
+          KEY="$RUNNER_TEMP/AuthKey_${NOTARY_KEY_ID}.p8"
+          RESULT="$RUNNER_TEMP/notarization-result.json"
+          LOG="$RUNNER_TEMP/notarization-log.json"
+          umask 077
+          printf '%s' "$NOTARY_PRIVATE_KEY" > "$KEY"
+          chmod 600 "$KEY"
+          trap 'rc=$?; rm -f "$KEY" "$RESULT" "$LOG"; exit $rc' EXIT
+
+          set +e
+          xcrun notarytool submit "$DMG" \
+            --key "$KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+            --wait --output-format json | tee "$RESULT"
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            submission_id="$(plutil -extract id raw "$RESULT" 2>/dev/null || true)"
+            if [ -n "$submission_id" ]; then
+              xcrun notarytool log "$submission_id" \
+                --key "$KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+                "$LOG" || true
+              [ -f "$LOG" ] && sed -n '1,240p' "$LOG"
+            fi
+            exit "$status"
+          fi
+
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+          # ZIP archives cannot carry a stapled ticket themselves. It copies
+          # the app ticketed by the preceding notarization step.
+          bash scripts/create-zip.sh "$APP" "$ZIP_NAME"
+
+      - name: Validate distributable artifact
+        run: |
+          APP="build/Build/Products/Release/NotchFlow.app"
+          DMG="$DMG_NAME"
+          ZIP="$ZIP_NAME"
+          MOUNT="$RUNNER_TEMP/notchflow-dmg-validation"
+          EXTRACTED="$RUNNER_TEMP/notchflow-zip-validation"
+          mounted=false
+          cleanup() {
+            if "$mounted"; then hdiutil detach "$MOUNT" -quiet || true; fi
+          }
+          trap cleanup EXIT
+
+          validate_app() {
+            candidate="$1"
+            info_plist="$candidate/Contents/Info.plist"
+            executable="$candidate/Contents/MacOS/NotchFlow"
+            test -f "$info_plist" && test -f "$executable"
+            test "$(plutil -extract CFBundleIdentifier raw -o - "$info_plist")" = "$EXPECTED_BUNDLE_ID"
+            test "$(plutil -extract CFBundleShortVersionString raw -o - "$info_plist")" = "$RELEASE_VERSION"
+            test "$(plutil -extract CFBundleVersion raw -o - "$info_plist")" = "$RELEASE_VERSION"
+            test "$(lipo -archs "$executable")" = "arm64"
+            test "$(codesign -dvvv "$candidate" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -n1)" = "$EXPECTED_TEAM_ID"
+            codesign --verify --deep --strict --verbose=2 "$candidate"
+            spctl --assess --type execute --verbose=4 "$candidate"
+            xcrun stapler validate "$candidate"
+          }
+
+          validate_app "$APP"
+          xcrun stapler validate "$DMG"
+          mkdir -p "$MOUNT"
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT" -quiet
+          mounted=true
+          test -L "$MOUNT/Applications"
+          validate_app "$MOUNT/NotchFlow.app"
+          ditto -x -k "$ZIP" "$EXTRACTED"
+          validate_app "$EXTRACTED/NotchFlow.app"
 
       - name: Clean up keychain
         if: always()
@@ -136,18 +322,26 @@ jobs:
           fi
 
       - name: Publish Release
-        uses: softprops/action-gh-release@v2
+        # v2.6.2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
-          files: NotchFlow-*.zip
+          files: |
+            ${{ env.DMG_NAME }}
+            ${{ env.ZIP_NAME }}
           generate_release_notes: true
           body: |
             ### Install
 
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
             ```
 
-            Or download the `.zip` below, unzip, and drag **NotchFlow.app** into Applications.
+            Download the primary `.dmg` below, open it, and drag **NotchFlow.app** to Applications.
 
-            > The app is not notarized. The installer clears the quarantine flag for you;
-            > if you install manually, run `xattr -dr com.apple.quarantine /Applications/NotchFlow.app`.
+            A `.zip` fallback is also attached for users who cannot mount a disk image.
+
+            This release is Developer ID-signed and notarized by Apple.
+
+            Every new installation includes a seven-day trial. After it expires,
+            every product feature is blocked until a valid perpetual NotchFlow
+            license bought through Lemon Squeezy is activated.

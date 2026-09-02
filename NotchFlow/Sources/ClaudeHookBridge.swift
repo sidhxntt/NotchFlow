@@ -73,12 +73,15 @@ final class ClaudeHookBridge: ObservableObject {
     /// process (and the agent run behind it) forever.
     static let decisionTimeout: TimeInterval = 300
 
-    /// The tools gated by the hook. Deliberately only the ones that execute or
-    /// mutate: a card for every `Read`/`Glob`/`Grep` would be unusable, and
-    /// unusable prompts are how people learn to click Approve without reading.
-    /// Verified that `matcher` takes a regex in 2.1.226, so one entry covers all
-    /// four.
-    static let gatedTools = ["Bash", "Edit", "Write", "NotebookEdit"]
+    /// The tools gated by the hook. Deliberately only the ones that execute,
+    /// mutate, or leave the machine (network): a card for every `Read`/`Glob`/
+    /// `Grep` would be unusable, and unusable prompts are how people learn to
+    /// click Approve without reading. `WebFetch`/`WebSearch` reach the network
+    /// on the user's behalf, which is exactly the class of action this bridge
+    /// exists to surface — leaving them ungated meant a NotchFlow-launched
+    /// Claude run could fetch/search without ever asking. Verified that
+    /// `matcher` takes a regex in 2.1.226, so one entry covers all six.
+    static let gatedTools = ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"]
 
     var hasPendingApprovals: Bool { !sessionQueues.isEmpty }
 
@@ -110,6 +113,7 @@ final class ClaudeHookBridge: ObservableObject {
     /// Generates the hook artifacts and starts listening. Idempotent — safe to
     /// call from app launch and again from every spawn.
     func startIfNeeded() {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         guard listenFD < 0 else { return }
         guard let socketURL = Self.socketURL, let scriptURL = Self.scriptURL,
               let settingsURL = Self.settingsURL, let hookDirectory = Self.hookDirectory else {
@@ -151,6 +155,21 @@ final class ClaudeHookBridge: ObservableObject {
         listenerThread = thread
         isAvailable = true
         lastError = nil
+    }
+
+    func shutdownForLicenseBlock() {
+        if listenFD >= 0 {
+            shutdown(listenFD, SHUT_RDWR)
+            Darwin.close(listenFD)
+            listenFD = -1
+        }
+        if let socketURL = Self.socketURL { unlink(socketURL.path) }
+        connections.values.forEach { $0.close() }
+        connections.removeAll()
+        queue = AgentApprovalQueue()
+        publishQueue()
+        listenerThread = nil
+        isAvailable = false
     }
 
     /// The flags a NotchFlow-launched `claude` invocation needs for its tool

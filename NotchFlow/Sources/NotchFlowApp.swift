@@ -9,6 +9,15 @@ import SwiftUI
 enum NotchFlowMain {
     static func main() {
         if CommandLine.arguments.contains(GrokSearchMCPServer.launchFlag) {
+            let configuration = try? LicensingConfiguration.bundled()
+            let entitlement = LicenseService.localEntitlementSnapshot(
+                configuration: configuration
+            )
+            guard entitlement.allowsProductServices else {
+                let message = "NotchFlow requires an active trial or license. Open the app to buy or activate.\n"
+                FileHandle.standardError.write(Data(message.utf8))
+                exit(EXIT_FAILURE)
+            }
             GrokSearchMCPServer.runAndExit()
         }
         NotchFlowApp.main()
@@ -36,14 +45,20 @@ struct NotchFlowApp: App {
             .commands {
                 CommandGroup(replacing: .appSettings) {
                     Button("Settings…") {
-                        NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+                        NotificationCenter.default.post(
+                            name: .openSettingsRequested, object: nil)
                     }
                     .keyboardShortcut(",", modifiers: .command)
                 }
                 CommandGroup(after: .appInfo) {
                     Button(L("about.checkForUpdates") + "…") {
-                        NotificationCenter.default.post(
-                            name: .checkForUpdatesRequested, object: nil)
+                        if LicenseService.shared.state.allowsProductServices {
+                            NotificationCenter.default.post(
+                                name: .checkForUpdatesRequested, object: nil)
+                        } else {
+                            NotificationCenter.default.post(
+                                name: .openSettingsRequested, object: nil)
+                        }
                     }
                 }
             }

@@ -657,50 +657,12 @@ enum ForceClickPressure: String, CaseIterable, Identifiable {
         }
     }
 
-    fileprivate var ratio: Float {
-        switch self {
-        case .off:    return 1
-        case .light:  return 1.70
-        case .medium: return 2.00
-        case .firm:   return 2.20
-        }
-    }
-
-    fileprivate var minimumRise: Float {
-        switch self {
-        case .off:    return 1
-        case .light:  return 65
-        case .medium: return 95
-        case .firm:   return 112
-        }
-    }
-
-    fileprivate var minimumPressure: Float {
-        switch self {
-        case .off:    return 1
-        case .light:  return 200
-        case .medium: return 260
-        case .firm:   return 300
-        }
-    }
-
-    /// How far a press at `pressure` has come toward this rung, 0…1, where 1 means
-    /// it fires. Raw pressure is reported in gram-force; Apple's own second-click
-    /// threshold is private and adapts by hardware/settings, so each rung combines
-    /// an absolute floor with the rise from the first click, tuned around the
-    /// medium values validated on a real Force Touch pad.
-    ///
-    /// The three terms are combined with `min` — the slowest one to be satisfied
-    /// is what the user still has to push through, so this hits exactly 1 at the
-    /// same moment all three conditions hold. That makes it the single definition
-    /// of the gesture: the cue can't promise a fire the monitor won't deliver.
     func progress(of pressure: Float, from baseline: Float) -> Double {
-        let absolute = Double(pressure / minimumPressure)
-        let proportional = baseline > 0
-            ? Double(pressure / (baseline * ratio))
-            : 0
-        let risen = Double((pressure - baseline) / minimumRise)
-        return max(0, min(1, min(absolute, min(proportional, risen))))
+        ForceClickPressurePolicy.progress(
+            for: ForceClickPressurePolicy.Level(rawValue: rawValue) ?? .off,
+            pressure: pressure,
+            baseline: baseline
+        )
     }
 
     private static let key = "forceClickPressure"

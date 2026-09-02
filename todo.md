@@ -135,3 +135,10 @@ tag push
 ## Definition of done
 
 This work is complete when a version tag automatically produces a Developer ID-signed, notarized, stapled DMG and a clean Mac can install and launch NotchFlow without Gatekeeper workarounds.
+
+
+
+1. media slider for browser
+2. preview ui fixes
+3. remove everything related for calling
+   

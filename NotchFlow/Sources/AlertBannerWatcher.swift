@@ -80,9 +80,8 @@ final class AlertBannerWatcher {
     /// as an *alert* (stays until it is dealt with), and it gives them different
     /// subroles — both names are right there in NotificationCenter's own binary,
     /// alongside the `…Stack` variants it uses when several group together. A
-    /// ringing call is by definition the second kind: it has to persist and it
-    /// has to carry buttons. Matching only `AXNotificationCenterBanner` therefore
-    /// skipped precisely the notifications this feature exists for.
+    /// persistent alert is the second kind, and may carry buttons. Matching only
+    /// `AXNotificationCenterBanner` would skip notifications users must dismiss.
     ///
     /// The `…Stack` subroles are deliberately NOT here. A stack is a container of
     /// notifications, not one of them; leaving it unmatched means the walk
@@ -113,7 +112,6 @@ final class AlertBannerWatcher {
     /// never announced twice.
     private struct TrackedBanner {
         let identity: String
-        /// Retained so a call ear's button press has something to press.
         let element: AXUIElement
     }
 
@@ -218,8 +216,7 @@ final class AlertBannerWatcher {
         var onScreen: [String: AXUIElement] = [:]
         for group in groups { onScreen[Self.identity(of: group)] = group }
 
-        // Retire first: a banner leaving is the only way a resolved call clears
-        // its ear.
+        // Retire first, then add or update every banner currently on screen.
         for (token, tracked) in live where onScreen[tracked.identity] == nil {
             live[token] = nil
             onVanished?(token)
@@ -272,12 +269,9 @@ final class AlertBannerWatcher {
     /// text — an empty announcement is worse than none.
     private func extract(from group: AXUIElement) -> AlertBanner? {
         // Each static text is kept WITH the name macOS gave it ("title",
-        // "subtitle", "body"), because which line is which is the difference
-        // between recognising "Incoming call" and reading the app's own name as
-        // the start of the message. `AlertBannerText` does that reading, where it
-        // can be tested.
+        // "subtitle", "body"), because it keeps the app name out of the
+        // message. `AlertBannerText` does that reading, where it can be tested.
         var texts: [AlertBannerText.Node] = []
-        var buttons: [String] = []
 
         var queue: [(AXUIElement, Int)] = [(group, 0)]
         var visited = Set<AXElementKey>()
@@ -295,12 +289,6 @@ final class AlertBannerWatcher {
                     texts.append(AlertBannerText.Node(
                         identifier: Self.string(element, "AXIdentifier"), value: value))
                 }
-            case kAXButtonRole:
-                // A banner button names itself in whichever of these it has:
-                // title on most, description on the icon-only ones.
-                let label = Self.string(element, kAXTitleAttribute)
-                    ?? Self.string(element, kAXDescriptionAttribute)
-                if let label, !label.isEmpty { buttons.append(label) }
             default:
                 break
             }
@@ -324,55 +312,7 @@ final class AlertBannerWatcher {
                            bundleID: Self.bundleID(forAppNamed: appName),
                            title: title,
                            body: body,
-                           buttonTitles: buttons,
                            token: token)
-    }
-
-    // MARK: - Pressing
-
-    /// Drive the real banner's Accept / Decline button. Returns false when the
-    /// banner is gone or exposes no button matching the action, so the store can
-    /// hand the user off to the source app rather than swallow the press.
-    func press(token: Int, action: AlertCallAction) -> Bool {
-        guard let banner = live[token]?.element else { return false }
-
-        let vocabulary = action == .accept
-            ? AlertFeedStore.acceptWords
-            : AlertFeedStore.declineWords
-
-        var queue: [(AXUIElement, Int)] = [(banner, 0)]
-        var visited = Set<AXElementKey>()
-        var seen = 0
-
-        while !queue.isEmpty, seen < Self.maxNodes {
-            let (element, depth) = queue.removeFirst()
-            seen += 1
-            guard visited.insert(AXElementKey(element)).inserted else { continue }
-
-            if Self.string(element, kAXRoleAttribute) == kAXButtonRole {
-                let label = Self.string(element, kAXTitleAttribute)
-                    ?? Self.string(element, kAXDescriptionAttribute) ?? ""
-                if vocabulary.contains(AlertFeedStore.normalizedForMatching(label)),
-                   AXUIElementPerformAction(element, kAXPressAction as CFString) == .success {
-                    return true
-                }
-            }
-
-            guard depth < Self.maxDepth else { continue }
-            for child in Self.children(of: element, attribute: kAXChildrenAttribute) {
-                queue.append((child, depth + 1))
-            }
-        }
-        return false
-    }
-
-    /// Last resort when the banner cannot be driven: put the calling app in
-    /// front so the user can answer where the real controls are.
-    func handOff(toBundleID bundleID: String?) {
-        guard let bundleID,
-              let app = NSRunningApplication
-                  .runningApplications(withBundleIdentifier: bundleID).first else { return }
-        app.activate(options: [])
     }
 
     // MARK: - AX plumbing

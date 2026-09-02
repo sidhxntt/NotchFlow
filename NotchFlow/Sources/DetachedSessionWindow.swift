@@ -256,6 +256,20 @@ final class DetachedSessionWindowController: NSObject, NSWindowDelegate {
     /// focuses the existing window instead of forking a twin.
     private static var controllers: [DetachedSessionWindowController] = []
 
+    private static func requireProductEntitlement() -> Bool {
+        guard LicenseService.shared.state.allowsProductServices else {
+            NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+            return false
+        }
+        return true
+    }
+
+    static func closeAllForLicenseBlock() {
+        let openControllers = controllers
+        for controller in openControllers { controller.window?.close() }
+        controllers.removeAll()
+    }
+
     static func controller(for session: DetachedSession) -> DetachedSessionWindowController? {
         controllers.first { $0.session == session }
     }
@@ -353,6 +367,7 @@ final class DetachedSessionWindowController: NSObject, NSWindowDelegate {
     /// stage.
     static func present(session: DetachedSession, face: DetachedCardFace,
                         model: NotchModel, from spawnRect: NSRect?) {
+        guard requireProductEntitlement() else { return }
         if let existing = controller(for: session) {
             existing.window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -380,6 +395,7 @@ final class DetachedSessionWindowController: NSObject, NSWindowDelegate {
     /// hand IS the window.
     static func beginDragDetach(session: DetachedSession, face: DetachedCardFace,
                                 model: NotchModel, spawnRect: NSRect) {
+        guard requireProductEntitlement() else { return }
         if let existing = controller(for: session) {
             // Already windowed (shouldn't normally arm, but never fork a twin).
             existing.window.makeKeyAndOrderFront(nil)
@@ -419,6 +435,7 @@ final class DetachedSessionWindowController: NSObject, NSWindowDelegate {
     static func presentCompactShortcut(shortcutID: UUID, threadID: UUID, title: String,
                                        model: NotchModel, near pointer: NSPoint,
                                        sourceApplication: NSRunningApplication?) {
+        guard requireProductEntitlement() else { return }
         retirePointerWindows(besides: shortcutID)
         if let existing = controllers.first(where: {
             $0.compactShortcutID == shortcutID
@@ -457,6 +474,7 @@ final class DetachedSessionWindowController: NSObject, NSWindowDelegate {
                                                model: NotchModel, near pointer: NSPoint,
                                                sourceApplication: NSRunningApplication?,
                                                forceTouch: Bool = false) {
+        guard requireProductEntitlement() else { return }
         retirePointerWindows(besides: shortcutID)
         if let existing = controllers.first(where: {
             $0.compactShortcutID == shortcutID
@@ -542,6 +560,7 @@ final class DetachedSessionWindowController: NSObject, NSWindowDelegate {
     static func beginPressureComposer(shortcutID: UUID, model: NotchModel,
                                       at pointer: NSPoint)
         -> DetachedSessionWindowController? {
+        guard requireProductEntitlement() else { return nil }
         guard NSScreen.containing(pointer) != nil else { return nil }
         // A composer already standing for this shortcut owns an unsent draft and a
         // spot the user put it in. A press must not shrink that back to a cap and

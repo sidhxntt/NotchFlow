@@ -742,7 +742,7 @@ private struct CollapsedFocusTimerEars: View {
 }
 
 /// Same two-shoulder measurement again, on its own key so a notification burst
-/// or a ringing call can't smear widths into the focus, work or copy ears.
+/// can't smear widths into the focus, work or copy ears.
 private struct AlertEarWidthsKey: PreferenceKey {
     static let defaultValue = SenseEarWidths()
     static func reduce(value: inout SenseEarWidths, nextValue: () -> SenseEarWidths) {
@@ -824,125 +824,6 @@ private struct CollapsedNotificationEars: View {
     /// island past the point where it still reads as a notch.
     private var countLabel: String {
         burst.count > 99 ? "99+" : "\(burst.count)"
-    }
-}
-
-/// A call, in two lives.
-///
-/// **Ringing:** the caller on the left shoulder, accept and decline on the right.
-/// The buttons drive the REAL banner (or call window) through Accessibility — the
-/// notch is a remote control for it, never a second, disagreeing copy of the call.
-///
-/// **Live:** the same standing presence music gets. A call that has been answered
-/// is not an announcement to be dismissed after three seconds, it is a state you
-/// are IN — so the shoulders hold the caller and a counting clock for as long as
-/// it lasts, with hang-up still one click away. Same reasoning as
-/// `CollapsedNowPlayingEars`: ambient, quiet, and gone the moment the thing it
-/// describes is over.
-private struct CollapsedCallEars: View {
-    let call: AlertCall
-    /// Re-supplied every second by the island so the duration advances; unused
-    /// while the call is still ringing.
-    let now: Date
-    let notchWidth: CGFloat
-    let earLeft: CGFloat
-    let earRight: CGFloat
-    let onAccept: () -> Void
-    let onDecline: () -> Void
-
-    var body: some View {
-        HStack(spacing: 0) {
-            caller
-                .background(GeometryReader { proxy in
-                    Color.clear.preference(key: AlertEarWidthsKey.self,
-                                           value: SenseEarWidths(left: proxy.size.width))
-                })
-                .frame(width: earLeft)
-
-            Color.clear.frame(width: notchWidth)
-
-            actions
-                .background(GeometryReader { proxy in
-                    Color.clear.preference(key: AlertEarWidthsKey.self,
-                                           value: SenseEarWidths(right: proxy.size.width))
-                })
-                .frame(width: earRight)
-        }
-        .frame(minHeight: 22)
-    }
-
-    /// `fixedSize` for the same reason as the focus ear: a name overflows into
-    /// the island's clip while its slot settles rather than rendering truncated.
-    private var caller: some View {
-        HStack(spacing: 4) {
-            Image(systemName: call.state == .connected ? "phone.connection.fill" : "phone.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.green.opacity(0.95))
-            Text(call.callerName)
-                .font(.sf(11.5, weight: .medium))
-                .tracking(0.2)
-                .lineLimit(1)
-        }
-        .foregroundStyle(Tokens.text1)
-        .fixedSize()
-    }
-
-    /// A live call's elapsed time, in the same monospaced-digit treatment the
-    /// busy ear's clock uses so the shoulder doesn't twitch on every tick.
-    private var duration: some View {
-        Text(Self.elapsed(from: call.connectedAt, to: now))
-            .font(.sf(11.5, weight: .medium).monospacedDigit())
-            .foregroundStyle(Tokens.text2)
-            .fixedSize()
-    }
-
-    /// `m:ss` under an hour, `h:mm:ss` past it — a call that ran ninety minutes
-    /// should not read as "90:12".
-    private static func elapsed(from start: Date?, to now: Date) -> String {
-        guard let start else { return "0:00" }
-        let total = max(0, Int(now.timeIntervalSince(start)))
-        let seconds = total % 60, minutes = (total / 60) % 60, hours = total / 3600
-        return hours > 0
-            ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
-            : String(format: "%d:%02d", minutes, seconds)
-    }
-
-    /// Ringing gets both buttons; an answered call keeps only the hang-up. A
-    /// handed-off call gets neither — we could not drive the banner, so the ears
-    /// stop offering something they cannot deliver and just name the caller.
-    @ViewBuilder private var actions: some View {
-        HStack(spacing: 6) {
-            // A live call shows how long it has been running, the way the track
-            // ear shows the pulse: proof it is still going.
-            if call.state == .connected { duration }
-            if call.canAct {
-                if call.state == .ringing {
-                    button(symbol: "phone.fill", tint: .green,
-                           label: L("alert.call.accept"), action: onAccept)
-                }
-                button(symbol: "phone.down.fill", tint: .red,
-                       label: L(call.state == .connected ? "alert.call.hangUp" : "alert.call.decline"),
-                       action: onDecline)
-            }
-        }
-        .fixedSize()
-    }
-
-    /// The padded frame IS the hit area — the tap target is the circle, not the
-    /// glyph's ink, which is the difference between a button that feels present
-    /// and one you have to hunt for at this size.
-    private func button(symbol: String, tint: Color, label: String,
-                        action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 20, height: 20)
-                .background(Circle().fill(tint.opacity(0.92)))
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
     }
 }
 
@@ -1072,9 +953,8 @@ struct NotchIsland: View {
     /// The focus timer keeps running with the panel folded, and announces each
     /// phase boundary on these shoulders — the only notice the user gets.
     @ObservedObject private var focusTimer = FocusTimerStore.shared
-    /// Incoming calls and notification bursts, read off the system's own banners.
-    /// These are the two loudest things the resting notch can say (order.md: 1
-    /// and 2), so they preempt even in-flight work.
+    /// Notification bursts, read off the system's own banners. They preempt
+    /// background work while the collapsed notch is visible.
     @ObservedObject private var alerts = AlertFeedStore.shared
     @Environment(\.notchMetrics) private var metrics
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1112,15 +992,8 @@ struct NotchIsland: View {
     /// on the right — on their own key for the same reason.
     @State private var focusEarContent = SenseEarWidths()
 
-    /// The alert ears' measured content widths (via `AlertEarWidthsKey`) — the
-    /// caller's name on the left, the two call buttons or the notification count
-    /// on the right. Own key, own state, same reason as the three above.
+    /// The notification ears' measured content widths (via `AlertEarWidthsKey`).
     @State private var alertEarContent = SenseEarWidths()
-
-    /// Drives a live call's duration. The store publishes on state changes, not
-    /// once a second, so the clock needs its own second hand — the same shape as
-    /// `focusTick` below.
-    @State private var callTick = Date()
 
     /// Drives the running border's lap. The store publishes only on phase
     /// changes, so the sweep needs its own second hand.
@@ -1157,7 +1030,7 @@ struct NotchIsland: View {
     ///
     /// One resolver, in priority order (order.md), rather than a flag per ear
     /// that has to negate every ear above it. That web was already four deep
-    /// before calls and notifications arrived and would have been six after —
+    /// before notifications arrived and would have been five after —
     /// and every one of those negations is a chance for two ears to be on screen
     /// at once, which is exactly what the crossfade below would make obvious.
     ///
@@ -1178,7 +1051,6 @@ struct NotchIsland: View {
         RestingNotchPriority.slot(for: RestingNotchInputs(
             panelOpen: model.open,
             liveActivityEnabled: model.liveActivityEnabled,
-            call: isCallAnnouncement,
             notifications: isNotificationAnnouncement,
             agentQuestion: agentQuestionSession != nil,
             agentAnnouncement: agentAnnouncementSession != nil,
@@ -1190,11 +1062,6 @@ struct NotchIsland: View {
             clipboardSense: model.clipboardSense != .idle))
     }
 
-    private var isCallAnnouncement: Bool {
-        if case .call = alerts.announcement { return true }
-        return false
-    }
-
     private var isNotificationAnnouncement: Bool {
         if case .notifications = alerts.announcement { return true }
         return false
@@ -1202,24 +1069,12 @@ struct NotchIsland: View {
 
     private var busy: Bool { restingSlot == .work }
 
-    /// A ringing or live call — the top of the whole resting stack (order.md: 1).
-    /// It takes the shoulders from in-flight work, which keeps running
-    /// underneath: a call is seconds long and needs an answer now, an agent run
-    /// is minutes long and needs nothing from you.
-    private var activeCall: AlertCall? {
-        guard restingSlot == .call, case .call(let call) = alerts.announcement else { return nil }
-        return call
-    }
-
-    /// A burst of notifications from one app (order.md: 2) — above background
-    /// work, below a call.
+    /// A burst of notifications from one app — above background work.
     private var notificationBurst: AlertNotificationBurst? {
         guard restingSlot == .notifications,
               case .notifications(let burst) = alerts.announcement else { return nil }
         return burst
     }
-
-    private var showingCall: Bool { restingSlot == .call }
 
     private var showingNotificationBurst: Bool { restingSlot == .notifications }
 
@@ -1228,14 +1083,15 @@ struct NotchIsland: View {
     /// background flex globally; the run keeps going, the card and the finish
     /// notification are untouched, the collapsed notch just doesn't flex.
     private var agentRunning: Bool {
-        agentManager.isRunning
+        capabilities.agenticModeEnabled && agentManager.isRunning
     }
 
     /// A permission request is a stronger state than ordinary background work:
     /// it needs the user's attention, so the island becomes the red-edged
     /// AgentNotch alert and opens directly on the dedicated Agent surface.
     private var agentPermissionPending: Bool {
-        codexApprovals.hasPendingApprovals
+        guard capabilities.agenticModeEnabled else { return false }
+        return codexApprovals.hasPendingApprovals
             || claudeApprovals.hasPendingApprovals
             || terminalCodexApprovals.hasPendingApprovals
     }
@@ -1248,7 +1104,7 @@ struct NotchIsland: View {
     /// because it does not use the shoulders at all — it opens the panel on the
     /// Agent tab outright (rank 0 in `order.md`).
     private var agentQuestionSession: AgentSessionState? {
-        guard !agentPermissionPending else { return nil }
+        guard capabilities.agenticModeEnabled, !agentPermissionPending else { return nil }
         return agentSessions.sessions.first { $0.status == .question }
     }
 
@@ -1260,7 +1116,7 @@ struct NotchIsland: View {
     /// externally discovered Planning or Working session can be correct in the
     /// roster yet never produce an announcement to ride in on.
     private var agentAnnouncementSession: AgentSessionState? {
-        guard !agentPermissionPending,
+        guard capabilities.agenticModeEnabled, !agentPermissionPending,
               let preview = agentSessions.preview, preview.isVisible()
         else { return nil }
         // A question holds its own, higher slot for as long as it stands, so
@@ -1274,7 +1130,7 @@ struct NotchIsland: View {
     /// above and then let go, because a settled session that keeps claiming the
     /// resting notch is the same lie as one stuck on "Working".
     private var agentSteadySession: AgentSessionState? {
-        guard !agentPermissionPending else { return nil }
+        guard capabilities.agenticModeEnabled, !agentPermissionPending else { return nil }
         return agentSessions.sessions.first {
             $0.status == .working || $0.status == .planning
         }
@@ -1380,11 +1236,8 @@ struct NotchIsland: View {
     /// (phrase → dots → verdict), sized to its measured content. The occupants
     /// never coexist (`sensing` yields to `busy`).
     private var earLeft: CGFloat {
-        // Same order as the layers below, and as order.md: a call, then a
-        // notification burst, then work, then the rest.
-        if showingCall {
-            return alertEarContent.left > 0 ? alertEarContent.left + senseEarPad * 2 : busyExtension
-        }
+        // Same order as the layers below: a notification burst, then work,
+        // then the rest.
         if showingNotificationBurst { return Self.glyphEarLeft }
         if busy {
             return workEarContent.left > 0
@@ -1408,9 +1261,6 @@ struct NotchIsland: View {
     /// or the copy-sense ⌘C ear while the offer stands (it folds shut on
     /// confirm).
     private var earRight: CGFloat {
-        if showingCall {
-            return alertEarContent.right > 0 ? alertEarContent.right + senseEarPad * 2 : busyExtension
-        }
         if showingNotificationBurst {
             return alertEarContent.right > 0
                 ? alertEarContent.right + senseEarPad * 2 : Self.glyphEarRight
@@ -1496,13 +1346,63 @@ struct NotchIsland: View {
         isOpen ? 30 : Tokens.notchRestRadius
     }
 
+    /// An overlay is not part of a view's intrinsic height, so the force-click
+    /// hand-off explicitly reserves the space its instructional card needs.
+    private var forceClickDialogMinimumHeight: CGFloat? {
+        guard isOpen, model.forceClickLookupConflict != nil else { return nil }
+        return ForceClickLookupDialog.minimumIslandHeight
+    }
+
+    private func handleIslandHover(_ inside: Bool) {
+        // Hover-only chrome (the result header's trailing chips) reads this.
+        model.pointerInside = inside
+        if inside {
+            model.hoverEntered(on: metrics.displayID,
+                               velocity: MouseVelocityTracker.shared.entryVelocity())
+        } else {
+            model.collapseOnLeave(from: metrics.displayID, sequenced: !reduceMotion)
+        }
+    }
+
+    private func handleFocusBorderTick(_ date: Date) {
+        // The focus border is the only consumer of this timer.
+        if showingFocusBorder { focusTick = date }
+    }
+
+    private func handleAgentPermissionPendingChange(_ pending: Bool) {
+        model.setDirectApprovalPending(pending)
+        // Companion mode intentionally leaves Codex and Claude to their native
+        // terminal approval prompts. Never turn Agentic mode back on merely
+        // because an external session is waiting.
+        guard pending, capabilities.agenticModeEnabled else { return }
+        capabilities.workspaceTab = .agent
+        model.openPanel(on: metrics.displayID)
+    }
+
+    @ViewBuilder
+    private var focusProgressOverlay: some View {
+        if showingFocusBorder {
+            FocusProgressBorder(shape: NotchProgressTrace(bottomRadius: bottomRadius),
+                                progress: focusTimer.progress(at: focusTick),
+                                tint: focusTimer.phase == .break ? Tokens.success : Tokens.accent)
+                // One step per tick, glided over the second it covers, so the
+                // border creeps instead of stepping.
+                .animation(.linear(duration: 1), value: focusTick)
+                .transition(.opacity)
+        }
+    }
+
     var body: some View {
         // The island sizes its HEIGHT to its content (the constant black zone +,
         // when open, the glass body). We deliberately do NOT pin height to a
         // measured value — that creates a clip↔measure deadlock. Width is the
         // only explicit dimension; height follows the VStack intrinsically, and
         // the layout `.animation` springs the grow/shrink.
-        VStack(spacing: 0) {
+        // Erase after the structural shell. The island intentionally has a long
+        // interaction modifier chain below; keeping its chrome in a separate
+        // type boundary avoids SwiftUI's compiler type-checking the entire
+        // surface as one expression.
+        AnyView(VStack(spacing: 0) {
             // Constant black "hardware" zone with the camera dot. It overshoots
             // the screen's top edge by `topBleed` so the black always reaches the
             // very top — no sliver of wallpaper between the bezel and the form.
@@ -1534,23 +1434,6 @@ struct NotchIsland: View {
                 // flat again. It all lives inside the island's own black
                 // zone — one material, one form — which is what makes the flex
                 // read as the notch working, not as a badge stuck beside it.
-                // A call: the caller on the left shoulder, accept/decline on the
-                // right. Top of the resting stack — it draws over an agent run
-                // that is still going, because the run will still be going in
-                // ten seconds and the call will not.
-                if let call = activeCall {
-                    CollapsedCallEars(
-                        call: call,
-                        now: callTick,
-                        notchWidth: metrics.notchWidth,
-                        earLeft: earLeft,
-                        earRight: earRight,
-                        onAccept: { alerts.perform(.accept, now: Date()) },
-                        onDecline: { alerts.perform(.decline, now: Date()) })
-                        .offset(y: topBleed / 2)
-                        .transition(earTransition)
-                }
-
                 // A burst of notifications from one app: its icon left, its
                 // count right, for three seconds per app.
                 if let burst = notificationBurst {
@@ -1667,8 +1550,12 @@ struct NotchIsland: View {
                     .opacity(model.detachDrag == nil ? 1 : 0.94)
                     .transition(.opacity)
             }
-        }
+        })
+        // `ForceClickLookupDialog` lives in an overlay, which cannot enlarge the
+        // island by itself. Give its visual hand-off enough vertical runway so
+        // its screenshot stays visible and the card keeps an intentional rhythm.
         .frame(width: width)
+        .frame(minHeight: forceClickDialogMinimumHeight, alignment: .top)
         // The box every hover tooltip clamps itself inside. It belongs HERE, on
         // the island's own width — the `NotchShape` clip below follows this exact
         // frame, so this is the wall a capsule actually gets chopped against. (It
@@ -1733,38 +1620,12 @@ struct NotchIsland: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
+        .erasingNotchViewType()
         // The Force Click gate, mounted on the island for the same reason as the
         // Clear card above: its scrim has to reach the glass edges. Inside
         // Settings it only covered the settings body, leaving the panel's padding
         // showing as pale strips down both sides and along the bottom.
-        .overlay {
-            if model.forceClickLookupConflict != nil, isOpen {
-                ForceClickLookupDialog(
-                    onOpenSettings: {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.Trackpad-Settings.extension") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    },
-                    onCancel: {
-                        withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                            model.forceClickLookupConflict = nil
-                        }
-                    }
-                )
-                .transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.16), value: model.forceClickLookupConflict)
-        // Coming back from System Settings is the answer: if the lookup gesture is
-        // off now, the held rung arms itself and the dialog leaves — nothing left
-        // to confirm, so asking again would just be a second click.
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            guard let held = model.forceClickLookupConflict,
-                  !SystemLookupGesture.usesForceClick else { return }
-            model.applyForceClickPressure(held)
-            Haptics.levelChange()
-            withAnimation(.easeOut(duration: 0.16)) { model.forceClickLookupConflict = nil }
-        }
+        .modifier(ForceClickLookupGate(model: model, isOpen: isOpen))
         // An opened image (see `ImageLightbox`) covers the panel it came from:
         // hosted here, above the body but inside the island's own clip, so the
         // backdrop blur stops at the glass edge like every other overlay.
@@ -1783,17 +1644,7 @@ struct NotchIsland: View {
         // arriving back at the top exactly when the phase ends. Resting only —
         // the open panel has the countdown itself, and a border creeping around
         // a panel being read would be noise.
-        .overlay {
-            if showingFocusBorder {
-                FocusProgressBorder(shape: NotchProgressTrace(bottomRadius: bottomRadius),
-                                    progress: focusTimer.progress(at: focusTick),
-                                    tint: focusTimer.phase == .break ? Tokens.success : Tokens.accent)
-                    // One step per tick, glided over the second it covers, so the
-                    // border creeps instead of stepping.
-                    .animation(.linear(duration: 1), value: focusTick)
-                    .transition(.opacity)
-            }
-        }
+        .overlay { focusProgressOverlay }
         // A settled detached window dragged over the notch: the island swells a
         // touch to say it'll take the session back on release.
         .scaleEffect(model.detachMergeHint ? 1.02 : 1, anchor: .top)
@@ -1832,6 +1683,7 @@ struct NotchIsland: View {
         .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { _ in model.notchClicked(on: metrics.displayID) },
                  including: clickToOpenArmed ? .gesture : .none)
+        .erasingNotchViewType()
 
         // Tear-off lives on the header strip only (the grips in NotchBody's
         // resultHeader / agentDetailHeader) — dragging the body or free glass
@@ -1880,27 +1732,25 @@ struct NotchIsland: View {
         .onPreferenceChange(WorkEarWidthsKey.self) { workEarContent = $0 }
         .onPreferenceChange(FocusEarWidthsKey.self) { focusEarContent = $0 }
         .onPreferenceChange(AlertEarWidthsKey.self) { alertEarContent = $0 }
-        // Opening the panel is the user acknowledging what was waiting: every
-        // per-app tally resets. A ringing call deliberately survives it — opening
-        // the notch is not answering the phone.
+        // Opening the panel is the user acknowledging what was waiting, so every
+        // per-app tally resets.
         .onChange(of: model.open) { _, nowOpen in
             if nowOpen { alerts.notchDidOpen(now: Date()) }
         }
-        .onChange(of: agentPermissionPending) { _, pending in
-            model.setDirectApprovalPending(pending)
-            guard pending, capabilities.agenticModeEnabled else { return }
-            capabilities.workspaceTab = .agent
-            model.openPanel(on: metrics.displayID)
+        .onChange(of: agentPermissionPending, perform: { pending in
+            handleAgentPermissionPendingChange(pending)
+        })
+        .onChange(of: capabilities.agenticModeEnabled) { _, enabled in
+            // A bridge may already have a live request when the user restores
+            // Agentic mode. Route that request immediately instead of waiting
+            // for a second approval event.
+            guard enabled, agentPermissionPending else { return }
+            handleAgentPermissionPendingChange(true)
         }
         .onAppear {
             model.setDirectApprovalPending(agentPermissionPending)
         }
-        .onReceive(focusBorderTick) { date in
-            // One timer, two consumers. Both guard on having something to
-            // advance, so an idle notch still re-renders for neither.
-            if showingFocusBorder { focusTick = date }
-            if activeCall?.state == .connected { callTick = date }
-        }
+        .onReceive(focusBorderTick, perform: handleFocusBorderTick)
         // Keep the model's resting-notch hover rect in step with the ears —
         // hovering the verb/clock, the finished badge, or the copy hint must
         // count as hovering the notch (see `pointerInsideRestingNotch`).
@@ -1960,16 +1810,7 @@ struct NotchIsland: View {
                     model.registerIslandFrame(frame, for: metrics.displayID)
                 }
         })
-        .onHover { inside in
-            // Hover-only chrome (the result header's trailing chips) reads this.
-            model.pointerInside = inside
-            if inside {
-                model.hoverEntered(on: metrics.displayID,
-                                   velocity: MouseVelocityTracker.shared.entryVelocity())
-            } else {
-                model.collapseOnLeave(from: metrics.displayID, sequenced: !reduceMotion)
-            }
-        }
+        .onHover(perform: handleIslandHover)
         .frame(maxWidth: .infinity, alignment: .center)   // center within canvas
     }
 
@@ -2103,6 +1944,48 @@ struct NotchIsland: View {
     }
 }
 
+/// The force-click setting hand-off is isolated from `NotchIsland`'s large
+/// modifier stack so that the dialog remains a normal, independently-sized
+/// overlay rather than contributing to the compiler's generic expression.
+private struct ForceClickLookupGate: ViewModifier {
+    @ObservedObject var model: NotchModel
+    let isOpen: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if model.forceClickLookupConflict != nil, isOpen {
+                    ForceClickLookupDialog(onOpenSettings: openTrackpadSettings,
+                                           onCancel: dismiss)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.16), value: model.forceClickLookupConflict)
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                applyHeldPressureIfNeeded()
+            }
+    }
+
+    private func openTrackpadSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Trackpad-Settings.extension") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func dismiss() {
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+            model.forceClickLookupConflict = nil
+        }
+    }
+
+    private func applyHeldPressureIfNeeded() {
+        guard let held = model.forceClickLookupConflict,
+              !SystemLookupGesture.usesForceClick else { return }
+        model.applyForceClickPressure(held)
+        Haptics.levelChange()
+        withAnimation(.easeOut(duration: 0.16)) { model.forceClickLookupConflict = nil }
+    }
+}
+
 private extension AgentSessionPreviewTone {
     /// Use the app's existing palette rather than introducing a second set of
     /// approximated shades just for agent state previews.
@@ -2153,6 +2036,15 @@ struct EntryKickEffect: GeometryEffect {
         let deform = CGAffineTransform(a: sx, b: 0, c: shear, d: sy, tx: 0, ty: 0)
         let back = CGAffineTransform(translationX: size.width / 2 + tx, y: 0)
         return ProjectionTransform(recenter.concatenating(deform).concatenating(back))
+    }
+}
+
+private extension View {
+    /// `NotchIsland` has a deliberately rich interaction chain. This boundary
+    /// keeps incremental builds from asking the SwiftUI type checker to solve it
+    /// as one enormous generic expression.
+    func erasingNotchViewType() -> AnyView {
+        AnyView(self)
     }
 }
 

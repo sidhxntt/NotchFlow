@@ -45,6 +45,11 @@ final class HistoryArchiveWindowController: NSObject, NSWindowDelegate {
     /// Open (or bring to front) the History window. Reuses the single instance so
     /// repeated invocations don't stack duplicates.
     func present(model: NotchModel, scope: HistoryArchiveScope = .all) {
+        guard LicenseService.shared.state.allowsProductServices else {
+            model.settingsSection = InlineSettingsView.Section.about.rawValue
+            NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+            return
+        }
         if let window {
             // Re-scope even when the window is already open: moving from Agent to
             // Chat (or back) must not retain the previous bucket's rows.
@@ -82,6 +87,11 @@ final class HistoryArchiveWindowController: NSObject, NSWindowDelegate {
         self.window = window
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func closeForLicenseBlock() {
+        window?.close()
+        window = nil
     }
 
     func windowWillClose(_ notification: Notification) {

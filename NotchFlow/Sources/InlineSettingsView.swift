@@ -36,6 +36,191 @@ private enum SettingsPermissionStatus: Equatable {
     }
 }
 
+/// The license card always lives in Settings → About, so activation and
+/// deactivation use the same shared state whether the product is available or
+/// restricted after a trial expires.
+struct LicenseManagementView: View {
+    @ObservedObject var service: LicenseService
+
+    @State private var licenseKey = ""
+    @State private var email = ""
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: statusSymbol)
+                    .font(.title2)
+                    .foregroundStyle(statusColor)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(statusTitle)
+                            .font(.headline)
+                        if service.state.shouldRestrictSettingsToAbout {
+                            Text(L("license.settings.locked"))
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(statusBody)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            switch service.state {
+            case .checking:
+                ProgressView(L("license.checking"))
+                    .controlSize(.small)
+            case .licensed:
+                Button(isWorking ? L("license.deactivating") : L("license.deactivate"),
+                       role: .destructive) {
+                    deactivate()
+                }
+                .disabled(isWorking)
+            case .trial, .blocked:
+                activationControls
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("License error: \(errorMessage)")
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.white.opacity(0.045))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(.white.opacity(0.08), lineWidth: 0.5)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var activationControls: some View {
+        if case .blocked(reason: .configurationUnavailable) = service.state {
+            EmptyView()
+        } else if case .blocked(reason: .secureStorageUnavailable) = service.state {
+            EmptyView()
+        } else {
+            HStack {
+                if let checkoutURL = service.beginCheckout() {
+                    Button(L("license.buy"), systemImage: "cart") {
+                        NSWorkspace.shared.open(checkoutURL)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+
+                if isWorking {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel(L("license.activating"))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L("license.key"))
+                    .font(.subheadline)
+                    .bold()
+                SecureField(L("license.key.placeholder"), text: $licenseKey)
+                    .textFieldStyle(.roundedBorder)
+                Text(L("license.email"))
+                    .font(.subheadline)
+                    .bold()
+                TextField(L("license.email.placeholder"), text: $email)
+                    .textFieldStyle(.roundedBorder)
+                    .textContentType(.emailAddress)
+                    .onSubmit { activate() }
+                Button(isWorking ? L("license.activating") : L("license.activate"),
+                       systemImage: "key") {
+                    activate()
+                }
+                .disabled(isWorking || licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private var statusSymbol: String {
+        switch service.state {
+        case .checking: "clock"
+        case .trial: "hourglass"
+        case .licensed: "checkmark.seal.fill"
+        case .blocked: "lock.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch service.state {
+        case .licensed: .green
+        case .blocked: .orange
+        case .checking, .trial: .secondary
+        }
+    }
+
+    private var statusTitle: String {
+        switch service.state {
+        case .checking: L("license.title")
+        case .trial: L("license.trial")
+        case .licensed: L("license.licensed")
+        case .blocked(reason: .trialExpired): L("license.blocked.title")
+        case .blocked: L("license.title")
+        }
+    }
+
+    private var statusBody: String {
+        switch service.state {
+        case .checking: L("license.checking")
+        case .trial(let remaining): remaining == 1
+            ? L("license.trial.remaining.one")
+            : L("license.trial.remaining", Int64(remaining))
+        case .licensed: L("license.licensed.body")
+        case .blocked(reason: .licenseInvalid): L("license.invalid.body")
+        case .blocked(reason: .configurationUnavailable): L("license.configuration.body")
+        case .blocked(reason: .secureStorageUnavailable): L("license.storage.body")
+        case .blocked: L("license.blocked.body")
+        }
+    }
+
+    private func activate() {
+        guard !isWorking else { return }
+        isWorking = true
+        errorMessage = nil
+        Task {
+            defer { isWorking = false }
+            do {
+                try await service.activate(key: licenseKey, email: email)
+                licenseKey = ""
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func deactivate() {
+        guard !isWorking else { return }
+        isWorking = true
+        errorMessage = nil
+        Task {
+            defer { isWorking = false }
+            do {
+                try await service.deactivateCurrentMac()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
 /// A deliberately neutral system-style status capsule. Permission state is not
 /// an alert or a score: granted rests in quiet grey, while a missing permission
 /// uses the same shape as its action instead of introducing traffic-light color.
@@ -109,6 +294,9 @@ struct InlineSettingsView: View {
     /// Drives the Version row: a quiet number normally, an Update action when a
     /// newer release is known.
     @ObservedObject private var updater = UpdaterService.shared
+    /// Trial and perpetual-license state is shared with the launch gate. About
+    /// exposes the same buy/activate/deactivate paths without duplicating state.
+    @ObservedObject private var license = LicenseService.shared
     /// The one-click OpenRouter OAuth flow. Observed so the Account row tracks
     /// its phases (waiting on the browser, exchanging, failed) live.
     @ObservedObject private var orAuth = OpenRouterAuth.shared
@@ -396,11 +584,6 @@ struct InlineSettingsView: View {
     @State private var hoverTickCenters: [CGFloat]?
     /// Where the pressure slider's ticks actually sit; see `hoverTickCenters`.
     @State private var pressureTickCenters: [CGFloat]?
-
-    /// Whether the island auto-hides while a full-screen app covers its screen —
-    /// mirrors the persisted value; writes go through `selectHideInFullscreen`,
-    /// which nudges `AppDelegate` to re-evaluate immediately.
-    @State private var hideInFullscreen: Bool = HideNotchInFullscreen.isEnabled
 
     /// Where note captures land (Apple Notes / Markdown folder) — mirrors the
     /// persisted value; writes go through `selectNoteDestination`. Consulted per
@@ -823,7 +1006,6 @@ struct InlineSettingsView: View {
                     .captionLabel()
                     .padding(.top, 2)
                 placementRow
-                fullscreenAutoHideRow
             case .stats:
                 statsSection
             case .about:
@@ -2480,6 +2662,7 @@ struct InlineSettingsView: View {
                         .scaledToFit()
                         .scaleEffect(style.previewScale)
                         .frame(width: 34, height: 34)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .clipped()
                         .id(appIconAppearanceRevision)
                 }
@@ -2788,6 +2971,14 @@ struct InlineSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermissions()
         }
+        // An LSUIElement app is not guaranteed to receive an activation event
+        // when the user returns from System Settings. Accessibility is an
+        // inexpensive, process-local check, so refresh it while these rows are
+        // visible and reflect an in-place TCC change without requiring reopen.
+        .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
+            guard permissionsSectionOpen else { return }
+            refreshAccessibilityPermission()
+        }
     }
 
     private func permissionRow(label: String,
@@ -2835,8 +3026,12 @@ struct InlineSettingsView: View {
         // Not in the detached task with the others: `AXIsProcessTrusted` is an
         // in-process bool, not a daemon round-trip, so there is nothing to move
         // off the main thread.
-        accessibilityPermission = AXIsProcessTrusted() ? .granted : .notDetermined
+        refreshAccessibilityPermission()
         locationPermission = Self.locationStatus(CLLocationManager().authorizationStatus)
+    }
+
+    private func refreshAccessibilityPermission() {
+        accessibilityPermission = AXIsProcessTrusted() ? .granted : .notDetermined
     }
 
     private static func locationStatus(_ status: CLAuthorizationStatus) -> SettingsPermissionStatus {
@@ -3020,38 +3215,6 @@ struct InlineSettingsView: View {
         NSWorkspace.shared.open(url)
     }
 
-    /// Whether the island tucks away while a full-screen app covers its screen.
-    /// On by default; scoped to the virtual notch on external / non-notched
-    /// displays (the built-in hardware notch is physical and never hides). The
-    /// choice applies immediately — `AppDelegate` re-evaluates on the toggle.
-    /// Phrased as "Show in full screen", not "Hide in full screen": it sits under
-    /// two other switches that both read "Show in …", and one row flipping the
-    /// polarity mid-column makes you re-read all three to work out which way is
-    /// on.
-    ///
-    /// Only the wording and the binding flip — the stored value is still
-    /// `HideNotchInFullscreen.isEnabled`, still meaning *hide*. That's what
-    /// carries an existing preference across unchanged: someone who had hiding
-    /// switched on now sees "Show in full screen" switched off, which is the
-    /// same instruction read from the other end. No migration, nothing to
-    /// mis-translate. The agent-facing `hide_in_fullscreen` setting and its
-    /// `general.fullscreenAutoHide` label keep the old polarity too, matching
-    /// the key they're named for.
-    private var fullscreenAutoHideRow: some View {
-        settingRow(label: L("general.fullscreenAutoHide.toggle"),
-                   aligned: true,
-                   forceStacked: true) {
-            Toggle("", isOn: Binding(
-                get: { !hideInFullscreen },
-                set: { Haptics.levelChange(); selectHideInFullscreen(!$0) }
-            ))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .tint(Tokens.text2)
-        }
-    }
-
     /// Whether opening the panel carries in whatever the user had highlighted in
     /// the app they came from (`NotchModel.selectionContext`). On by default; off
     /// stops the accessibility read itself, not just the badge.
@@ -3069,10 +3232,8 @@ struct InlineSettingsView: View {
         }
     }
 
-    /// Whether background work flexes the resting notch's busy ears (the verb on
-    /// the left shoulder, the elapsed clock on the right). One global switch:
-    /// off keeps the closed notch flat for agent runs and detached Ask rounds
-    /// alike. The finished badge and the completion notification stay.
+    /// Whether the collapsed notch shows any preview. When it is off, the notch
+    /// stays clear; the finished badge and completion notification stay.
     private var liveActivityRow: some View {
         settingRow(label: L("appearance.liveActivity"),
                    info: L("appearance.liveActivity.hint"),
@@ -3390,13 +3551,6 @@ struct InlineSettingsView: View {
         // Through the model, not straight to `UserDefaults`: the island renders
         // the click level's flex off an observable mirror, which has to move too.
         model.applyHoverSensitivity(newValue)
-    }
-
-    private func selectHideInFullscreen(_ newValue: Bool) {
-        guard newValue != hideInFullscreen else { return }
-        hideInFullscreen = newValue
-        HideNotchInFullscreen.isEnabled = newValue
-        NotificationCenter.default.post(name: .hideNotchInFullscreenChanged, object: nil)
     }
 
     /// Register or unregister the login item, keeping the toggle in sync with the
@@ -3798,7 +3952,8 @@ struct InlineSettingsView: View {
     private var agentPermissionDelayRow: some View {
         settingRow(label: "Approval cue after",
                    info: "How long a tool call that changes state may sit unresolved before the notch offers the terminal handoff.",
-                   aligned: true) {
+                   aligned: true,
+                   forceStacked: true) {
             GlassMenu(title: Self.durationLabel(permissionDelay)) {
                 ForEach(AgentPermissionPolicy.delayChoices, id: \.self) { seconds in
                     Button {
@@ -3817,7 +3972,8 @@ struct InlineSettingsView: View {
     private var agentStalledAfterRow: some View {
         settingRow(label: "Mark stalled after",
                    info: "A turn that has written nothing for this long is reported as interrupted rather than working.",
-                   aligned: true) {
+                   aligned: true,
+                   forceStacked: true) {
             GlassMenu(title: Self.durationLabel(stalledAfter)) {
                 ForEach(AgentSessionTerminal.stalledAfterChoices, id: \.self) { seconds in
                     Button {
@@ -3837,7 +3993,8 @@ struct InlineSettingsView: View {
     private var agentSessionWindowRow: some View {
         settingRow(label: "Session history",
                    info: "How recently a transcript must have been written to put its session in the roster. Shorter windows make a cold start cheaper.",
-                   aligned: true) {
+                   aligned: true,
+                   forceStacked: true) {
             GlassMenu(title: Self.durationLabel(sessionWindow)) {
                 ForEach(AgentSessionObservation.activeFileWindowChoices, id: \.self) { seconds in
                     Button {
@@ -3854,7 +4011,8 @@ struct InlineSettingsView: View {
     private var agentSubagentBadgeRow: some View {
         settingRow(label: "Sub-agent counts",
                    info: "Show how many sub-agents a session has running. A wide fan-out fills the roster with badges.",
-                   aligned: true) {
+                   aligned: true,
+                   forceStacked: true) {
             Toggle("", isOn: Binding(
                 get: { showsSubagents },
                 set: {
@@ -4865,18 +5023,16 @@ struct InlineSettingsView: View {
     }
 
     private var aboutSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let content = aboutContent
+        return VStack(alignment: .leading, spacing: 14) {
             // 1 — Identity: who the app is, with the version and its update
             // action right beside the name so "what you're running / is it
             // current" reads as one thought instead of three scattered lines.
             HStack(alignment: .center, spacing: 12) {
-                // App icon, if the bundle carries one — falls back gracefully.
-                // The selected catalog asset, not `NSApp.applicationIconImage`:
-                // on macOS 26 the running icon comes back already rendered for the
-                // current appearance, which can add a system treatment inside this
-                // dark panel. Reading the asset gives either artwork as drawn.
-                // Both catalog assets use the same preview scale so their visible
-                // icon heights stay aligned here and in Appearance.
+                // AppIconStyle supplies the native bundle icon for Original and
+                // the selected catalog artwork for Dot. Neither preview reads
+                // `NSApp.applicationIconImage`, whose live Dock rendering can add
+                // a system treatment inside this dark panel.
                 let iconStyle = AppIconStyle.current
                 if let icon = iconStyle.image ?? NSApp.applicationIconImage {
                     Image(nsImage: icon)
@@ -4884,13 +5040,19 @@ struct InlineSettingsView: View {
                         .scaledToFill()
                         .scaleEffect(iconStyle.previewScale)
                         .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .clipped()
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("NotchFlow")
+                    Text(content.name)
                         .font(.brand(18))
                         .foregroundStyle(Tokens.text1)
+
+                    Text(content.tagline)
+                        .font(.sf(11.5, weight: .medium))
+                        .foregroundStyle(Tokens.text3)
+                        .lineLimit(2)
 
                     HStack(spacing: 8) {
                         Text(UpdaterService.currentVersion)
@@ -4908,9 +5070,11 @@ struct InlineSettingsView: View {
                 Spacer(minLength: 0)
             }
 
+            LicenseManagementView(service: license)
+
             // 2 — Where else to go: the pages that open here, then the rail of
             // places that leave.
-            aboutLinks
+            aboutLinks(content: content)
 
             // 3 — Attribution. Not one of the things you *do* from About, so it
             // sits below the rail as a footnote — the last line of the pane, in
@@ -5031,33 +5195,46 @@ struct InlineSettingsView: View {
         }
     }
 
-    /// GitHub and X lead the About actions. The four quieter product/support
+    /// About Me and X lead the About actions. The quieter product/support
     /// destinations remain directly visible underneath — no nested menu and no
     /// trip back to the prompt's More menu.
-    private var aboutLinks: some View {
+    private func aboutLinks(content: AboutContentConfiguration) -> some View {
         VStack(spacing: 0) {
-            HStack(spacing: 9) {
-                if let repositoryPage = UpdaterService.repositoryPage {
-                    AboutSocialButton(kind: .github,
-                                      title: L("about.starGithub")) {
-                        NSWorkspace.shared.open(repositoryPage)
+            if aboutURL(content.aboutMeURL) != nil || aboutURL(content.xURL) != nil || aboutURL(content.supportURL) != nil {
+                HStack(spacing: 9) {
+                if let aboutMePage = aboutURL(content.aboutMeURL) {
+                    AboutSocialButton(kind: .aboutMe,
+                                      title: "About Me") {
+                        NSWorkspace.shared.open(aboutMePage)
                     }
                 }
-                AboutSocialButton(kind: .x,
-                                  title: L("about.followX")) {
-                    NSWorkspace.shared.open(URL(string: "https://x.com/cyrusss_7")!)
+                if let xPage = aboutURL(content.xURL) {
+                    AboutSocialButton(kind: .x,
+                                      title: L("about.followX")) {
+                        NSWorkspace.shared.open(xPage)
+                    }
                 }
-                // Takes exactly the width its title needs; the two flexible
-                // buttons beside it divide what's left.
-                AboutSocialButton(kind: .coffee,
-                                  title: L("about.buyCoffee")) {
-                    NSWorkspace.shared.open(URL(string: "https://buymeacoffee.com/cyrus007")!)
+                if let supportPage = aboutURL(content.supportURL) {
+                    // Takes exactly the width its title needs; the two flexible
+                    // buttons beside it divide what's left.
+                    AboutSocialButton(kind: .coffee,
+                                      title: L("about.buyCoffee")) {
+                        NSWorkspace.shared.open(supportPage)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                .fixedSize(horizontal: true, vertical: false)
                 Spacer(minLength: 0)
+                }
             }
 
             VStack(spacing: 0) {
+                if let website = aboutURL(content.website) {
+                    AboutUtilityButton(title: "Website", leaves: true) {
+                        NSWorkspace.shared.open(website)
+                    }
+                    aboutUtilitySeparator
+                }
+
                 AboutUtilityButton(title: L("about.whatsNew"), leaves: false) {
                     withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
                         model.openWhatsNew(on: nil)
@@ -5070,17 +5247,19 @@ struct InlineSettingsView: View {
                     replayIntro()
                 }
 
-                aboutUtilitySeparator
+                if let privacyPage = aboutURL(content.privacyURL) {
+                    aboutUtilitySeparator
 
-                AboutUtilityButton(title: L("about.privacy"), leaves: true) {
-                    NSWorkspace.shared.open(URL(string: "https://www.notch.website/privacy")!)
+                    AboutUtilityButton(title: L("about.privacy"), leaves: true) {
+                        NSWorkspace.shared.open(privacyPage)
+                    }
                 }
 
-                if let issueTrackerPage = UpdaterService.issueTrackerPage {
+                if let feedbackPage = aboutURL(content.feedbackURL) {
                     aboutUtilitySeparator
 
                     AboutUtilityButton(title: L("about.feedback"), leaves: true) {
-                        NSWorkspace.shared.open(issueTrackerPage)
+                        NSWorkspace.shared.open(feedbackPage)
                     }
                 }
             }
@@ -5096,6 +5275,15 @@ struct InlineSettingsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
             .padding(.top, 12)
         }
+    }
+
+    private var aboutContent: AboutContentConfiguration {
+        AboutContentConfiguration.bundled()
+    }
+
+    private func aboutURL(_ value: String) -> URL? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : URL(string: trimmed)
     }
 
     private var aboutUtilitySeparator: some View {
@@ -5178,10 +5366,10 @@ struct InlineSettingsView: View {
     }
 
     private enum AboutSocialKind {
-        case github, x, coffee
+        case aboutMe, x, coffee
     }
 
-    /// The site's Star button translated to native SwiftUI: on hover the brand
+    /// The About Me button translated to native SwiftUI: on hover the profile
     /// mark exits through the top while the action glyph rises from below. X
     /// uses the same grammar with X's own like-heart red, and Buy Me a Coffee
     /// with its own cup burst, so the three feel related without adding
@@ -5195,7 +5383,7 @@ struct InlineSettingsView: View {
         @State private var hovering = false
 
         private var accent: Color {
-            kind == .github
+            kind == .aboutMe
                 ? Color(red: 245 / 255, green: 166 / 255, blue: 35 / 255)
                 : Color(red: 249 / 255, green: 24 / 255, blue: 128 / 255)
         }
@@ -5261,12 +5449,9 @@ struct InlineSettingsView: View {
         @ViewBuilder
         private var brandMark: some View {
             switch kind {
-            case .github:
-                Image("GitHubMark")
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 16, height: 16)
+            case .aboutMe:
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 18, weight: .medium))
             case .x:
                 Image("XMark")
                     .renderingMode(.template)
@@ -5284,14 +5469,14 @@ struct InlineSettingsView: View {
             }
         }
 
-        /// What rises from below on hover. GitHub and X answer with the glyph of
+        /// What rises from below on hover. About Me and X answer with the glyph of
         /// the action itself; Buy Me a Coffee answers with its own artwork, a
         /// burst of cups, which is why this one isn't a symbol.
         @ViewBuilder
         private var actionMark: some View {
             switch kind {
-            case .github:
-                Image(systemName: "star.fill")
+            case .aboutMe:
+                Image(systemName: "person.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(accent)
             case .x:

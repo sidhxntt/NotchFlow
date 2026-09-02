@@ -47,6 +47,7 @@ final class CodexAppServerBridge: ObservableObject {
     /// Starts a durable app-server once. Reused turns retain the same approval
     /// callback transport, allowing multiple Codex threads to queue independently.
     func startIfNeeded() {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         guard process == nil else { return }
         guard let binary = CodexCLIService.resolveBinary() else {
             lastError = "Codex is not available"
@@ -87,6 +88,7 @@ final class CodexAppServerBridge: ObservableObject {
                    onThreadStarted: @escaping (String) -> Void = { _ in },
                    onText: @escaping (String) -> Void = { _ in },
                    onFinished: @escaping (Bool) -> Void = { _ in }) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         startIfNeeded()
         guard process != nil else { return }
         var threadParams: [String: Any] = [
@@ -114,6 +116,7 @@ final class CodexAppServerBridge: ObservableObject {
     func continueTurn(threadID: String, prompt: String, effort: AgentEffort? = nil,
                       onText: @escaping (String) -> Void,
                       onFinished: @escaping (Bool) -> Void) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         startIfNeeded()
         guard process != nil else { return }
         sendTurn(threadID: threadID, prompt: prompt, effort: effort,
@@ -292,6 +295,16 @@ final class CodexAppServerBridge: ObservableObject {
 
     private func playApprovalPing() {
         NSSound(named: NSSound.Name("Ping"))?.play()
+    }
+
+    /// The app-server can own several concurrent turns outside
+    /// `AgentTaskManager.runs`; terminating the shared process is the only
+    /// atomic way to ensure none survives a blocked entitlement transition.
+    func shutdownForLicenseBlock() {
+        let child = process
+        try? input?.close()
+        child?.terminate()
+        didTerminate()
     }
 
     private func didTerminate() {

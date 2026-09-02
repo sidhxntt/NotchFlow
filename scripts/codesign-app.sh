@@ -25,6 +25,8 @@
 #                         falling back to ad-hoc. CI sets this; the local dev
 #                         loop does not, so reinstall.sh keeps working on a
 #                         machine that has not created the certificate yet.
+#   NOTCHFLOW_REQUIRE_DEVELOPER_ID  1 ⇒ require a Developer ID Application
+#                         identity. The direct-download release job sets this.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -32,6 +34,7 @@ cd "$(dirname "$0")/.."
 ENTITLEMENTS="NotchFlow/Resources/NotchFlow.entitlements"
 IDENTITY="${NOTCHFLOW_SIGN_IDENTITY:-NotchFlow Code Signing}"
 REQUIRED="${NOTCHFLOW_SIGN_REQUIRED:-0}"
+REQUIRE_DEVELOPER_ID="${NOTCHFLOW_REQUIRE_DEVELOPER_ID:-0}"
 
 bold=$'\033[1m'; dim=$'\033[2m'; red=$'\033[31m'; green=$'\033[32m'; yellow=$'\033[33m'; reset=$'\033[0m'
 info() { printf '%s==>%s %s\n' "$bold" "$reset" "$*"; }
@@ -75,13 +78,20 @@ if identity_available; then
   sign_as="$IDENTITY"
 elif [ "$REQUIRED" = "1" ]; then
   die "Signing identity \"$IDENTITY\" not found (or not trusted for code signing).
-    Create it with: scripts/make-signing-cert.sh
     In CI, check the SIGNING_CERT_P12 / SIGNING_CERT_PASSWORD secrets."
 else
   warn "Signing identity \"$IDENTITY\" not found — falling back to ad-hoc."
   warn "Ad-hoc signatures make the Accessibility permission drop on every build."
   warn "Run scripts/make-signing-cert.sh once to fix that permanently."
   sign_as="-"
+fi
+
+if [ "$REQUIRE_DEVELOPER_ID" = "1" ]; then
+  case "$sign_as" in
+    "Developer ID Application:"*) ;;
+    *) die "Direct-download releases must use a Developer ID Application identity,
+    not \"$sign_as\"." ;;
+  esac
 fi
 
 # --- entitlements ----------------------------------------------------------
@@ -133,6 +143,15 @@ else
 fi
 [ "${NOTCHFLOW_SIGN_HARDENED:-1}" = "0" ] && hardened_args=""
 
+# Developer ID releases need a secure timestamp so their signature remains
+# valid after the signing certificate expires. Local Debug and ad-hoc builds
+# intentionally avoid contacting Apple's timestamp service.
+if $DEBUG_BUILD || [ "$sign_as" = "-" ]; then
+  timestamp_args="--timestamp=none"
+else
+  timestamp_args="--timestamp"
+fi
+
 # Sign nested Mach-O code inside-out, before the bundle that contains it — a
 # signature over the bundle covers the nested files' *hashes*, so signing the
 # outside first would immediately invalidate it. (`--deep` would do this too but
@@ -145,7 +164,7 @@ if [ -n "$nested" ]; then
     [ -n "$lib" ] || continue
     printf '    %s\n' "$(basename "$lib")"
     # shellcheck disable=SC2086
-    codesign --force --sign "$sign_as" --timestamp=none $keychain_args "$lib"
+    codesign --force --sign "$sign_as" $timestamp_args $keychain_args "$lib"
   done
 fi
 
@@ -154,7 +173,7 @@ info "Signing $(basename "$APP") as ${dim}${sign_as}${reset}…"
 codesign --force \
          --sign "$sign_as" \
          --entitlements "$ent_file" \
-         --timestamp=none \
+         $timestamp_args \
          $hardened_args \
          $keychain_args \
          "$APP"
@@ -165,7 +184,7 @@ codesign --force \
 # cleared), a *broken* signature is reported by macOS as "the app is damaged"
 # and cannot be opened at all.
 info "Verifying…"
-codesign --verify --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
+codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
 
 # The entitlements must have survived the signature — losing
 # com.apple.security.automation.apple-events breaks Notes integration and
@@ -192,9 +211,21 @@ if [ "$sign_as" != "-" ]; then
     *) die "Designated requirement is not certificate-based — signing fell back to ad-hoc.
     Shipping this would reset every user's Accessibility permission." ;;
   esac
+  # Capture the complete output before inspecting it. With `pipefail`, piping
+  # codesign into `grep -q` can turn a successful signature into a false
+  # failure: grep closes after its match and codesign receives SIGPIPE.
+  signature_details="$(codesign -dvvv "$APP" 2>&1)"
   if [ -n "$hardened_args" ]; then
-    codesign -dvvv "$APP" 2>&1 | grep -q 'flags=.*runtime' \
-      || die "Hardened runtime flag missing after signing."
+    case "$signature_details" in
+      *"flags="*"runtime"*) ;;
+      *) die "Hardened runtime flag missing after signing." ;;
+    esac
+  fi
+  if [ "$REQUIRE_DEVELOPER_ID" = "1" ]; then
+    case "$signature_details" in
+      *"Authority=Developer ID Application:"*) ;;
+      *) die "Release signature is not chained to a Developer ID Application certificate." ;;
+    esac
   fi
 fi
 
