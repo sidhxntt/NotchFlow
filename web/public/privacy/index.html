@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f5f5" />
+    <meta name="description" content="NotchFlow Privacy Policy" />
+    <link rel="icon" type="image/png" href="../icon.png" />
+    <title>Privacy Policy — NotchFlow</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="header">
+      <a class="brand" href="../"><img src="../icon.png" alt="" /> <span>NotchFlow</span></a>
+      <a class="back" href="../">Back to NotchFlow <span>→</span></a>
+    </header>
+    <main>
+      <p class="label">Legal</p>
+      <h1>Privacy Policy</h1>
+      <p class="effective">Effective date: 2026-09-02</p>
+
+      <p>NotchFlow is a direct-download macOS application. This policy explains the data the app handles, why it handles it, and the choices available to you. NotchFlow does not operate its own account system or a backend that receives your prompt content.</p>
+
+      <h2>Deployment requirement</h2>
+      <p>This tracked policy is the source for the public policy. It is published at <code>https://sidhxntt.github.io/NotchFlow/privacy/</code> (the URL configured in the app). Before any public release, verify that the live page matches this file and keep it updated when the product changes.</p>
+
+      <h2>Data stored on your Mac</h2>
+      <p>NotchFlow stores the content needed to provide its local features, including your recent prompts and answers, notes/reminder capture receipts, selected settings, agent-run records, and any screenshots or images you attach to a conversation. Conversation history and attached history images are stored in your user Application Support directory. The app may also keep a small local diagnostics log containing provider name, time, HTTP status, and error category; it is designed not to contain prompt text, response text, clipboard content, or API keys.</p>
+      <p>Agent features may read the local transcript files created by the coding CLI you choose (such as Codex or Claude Code) so NotchFlow can show their status. Those CLI transcript files remain under the CLI's own local storage and retention rules; NotchFlow does not upload them to a NotchFlow service.</p>
+      <p>Provider API keys, the trial start, your Lemon Squeezy license key and activation state, and an opaque per-install identifier are stored in the macOS <strong>Keychain</strong>. Keychain data can survive an app reinstall. NotchFlow does not collect a hardware fingerprint for licensing.</p>
+
+      <h2>Permissions</h2>
+      <p>NotchFlow asks only for permissions needed by features you choose to use. They can include:</p>
+      <ul>
+        <li>Automation access to create or open items in Apple Notes.</li>
+        <li>Calendar and Reminders access to show calendar events and create reminders.</li>
+        <li>Notifications to tell you about timers, reminders, calls, or other enabled alerts.</li>
+        <li>Accessibility access when you turn on features that read selected text or interact with another app.</li>
+        <li>Camera access when you enable the webcam preview.</li>
+        <li>Location access when you enable local weather.</li>
+      </ul>
+      <p>You can deny or revoke these permissions in macOS System Settings. A feature that needs a denied permission will not be able to use it.</p>
+
+      <h2>Network use and third parties</h2>
+      <p>NotchFlow sends data over the network only to services selected by you or needed to deliver a service you request:</p>
+      <ul>
+        <li><strong>AI providers and web-search providers.</strong> When you submit an Ask request, invoke an agent, use web search, or attach content for a provider feature, the relevant prompt, selected conversation context, and requested attachments are sent directly to the provider, locally signed-in CLI, or search service you configured. That provider's own terms and privacy policy apply to its use of the data. NotchFlow does not proxy that content through a NotchFlow server.</li>
+        <li><strong>Apple services and apps.</strong> When you choose Notes, Reminders, Calendar, notifications, camera, or location features, macOS and the relevant Apple app or service handle the requested action under Apple's policies and your device settings.</li>
+        <li><strong>Lemon Squeezy.</strong> Lemon Squeezy processes purchase checkout, payment, license-key delivery, and license activation, validation, or deactivation. The app sends the license key, an activation email when supplied, and an opaque install name to Lemon Squeezy's public licensing endpoints. Payment details are collected by Lemon Squeezy, not by NotchFlow. Lemon Squeezy's policies govern the information it processes.</li>
+      </ul>
+      <p>The app also checks for signed application updates and may open links that you explicitly choose, such as support, release notes, or a provider sign-in page.</p>
+
+      <h2>Trial and license</h2>
+      <p>The seven-day trial starts on the first successful launch and is measured as seven 24-hour periods. When it expires, NotchFlow blocks product functionality until a valid paid license is activated. A valid paid license is perpetual and includes future NotchFlow updates. An already activated license may remain available while offline; validation is retried when a network connection is available so a refunded, disabled, or deactivated license can be reflected.</p>
+
+      <h2>Retention and deletion</h2>
+      <p>Local history is retained until you delete individual items or use the app's Clear History controls; deleting history also removes associated history images. You can remove provider credentials in Settings and deactivate a licensed Mac in the License section of Settings → About. Removing the app does not necessarily remove Keychain items, local Application Support files, content already saved to Apple Notes or Reminders, or data held by a provider, CLI, Apple app, or Lemon Squeezy.</p>
+      <p>To remove remaining local NotchFlow data, first use the in-app deletion controls and remove credentials/license data through the app where available. Then move <code>NotchFlow.app</code> to the Trash and remove its related Application Support and Keychain entries if you no longer want to retain them. Deleting data held by a provider, CLI, Apple app, or Lemon Squeezy must be requested from that service.</p>
+
+      <h2>Support</h2>
+      <p>For a privacy question or deletion help, open a support request at <a href="https://github.com/sidhxntt/NotchFlow/issues">https://github.com/sidhxntt/NotchFlow/issues</a>. Do not post API keys, license keys, payment details, or private prompt content in a public issue.</p>
+
+      <h2>Changes to this policy</h2>
+      <p>We will update this policy before a material change to the app's data practices. The effective date at the top identifies the current version. Releases should also include a user-facing note when a material privacy change occurs.</p>
+    </main>
+    <footer>© 2026 NotchFlow</footer>
+  </body>
+</html>

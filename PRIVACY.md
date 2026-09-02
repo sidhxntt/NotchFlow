@@ -9,11 +9,10 @@ content.
 
 ## Deployment requirement
 
-This tracked policy is the source for the public policy. Before any public
-release, publish it at `https://www.notch.website/privacy` (the URL configured
-in the app), verify that the live page matches this file, and keep it updated
-when the product changes. The repository does not deploy that website and this
-file does not claim that the policy is already hosted there.
+This tracked policy is the source for the public policy. It is published at
+`https://sidhxntt.github.io/NotchFlow/privacy/` (the URL configured in the
+app). Before any public release, verify that the live page matches this file
+and keep it updated when the product changes.
 
 ## Data stored on your Mac
 
