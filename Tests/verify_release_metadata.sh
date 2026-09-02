@@ -73,6 +73,9 @@ require_text '"allow_force_pushes": false' "$protection_script"
 require_text '"allow_deletions": false' "$protection_script"
 require_text '"required_conversation_resolution": true' "$protection_script"
 require_text '"enforce_admins": true' "$protection_script"
+if grep -Fq 'dismissal_restrictions' "$protection_script"; then
+  fail 'main protection must not send organization-only dismissal restrictions'
+fi
 
 # The notarized ticket must be stapled to the source app before the DMG/ZIP
 # helpers copy it. Stapling only after DMG creation leaves the mounted app
