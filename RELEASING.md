@@ -7,14 +7,21 @@ DMG and drag **NotchFlow.app** into Applications without a quarantine workaround
 
 ## Release prerequisites
 
-Before pushing a tag:
+Before merging an app change into `main`:
 
-- Add a user-facing release entry to
+- Write the commit using [Conventional Commits](https://www.conventionalcommits.org/).
+  The automatic release tag chooses the largest bump represented by commits
+  since the last release: `fix:` (or any unclassified non-web commit) is a
+  patch bump, `feat:` is a minor bump, and `type!:` or a `BREAKING CHANGE:`
+  footer is a major bump.
+- Optionally add a user-facing release entry to
   [WhatsNewService.swift](NotchFlow/Sources/WhatsNewService.swift), then run
   `node scripts/gen-releases.mjs`. `CHANGELOG.md` is generated; never edit it
-  by hand.
-- Run `node scripts/gen-releases.mjs --check` and
-  `bash Tests/verify_release_metadata.sh`.
+  by hand. GitHub generates release notes from commits for every automated
+  release; the bundled What's New panel remains deliberately editorial.
+- Run `node scripts/gen-releases.mjs --check`,
+  `bash Tests/verify_release_metadata.sh`, and
+  `bash Tests/verify_next_release_version.sh`.
 - Confirm the product promise remains true: the trial is exactly seven
   24-hour periods; after it expires every product capability is blocked until
   a valid Lemon Squeezy license is activated; a valid paid license is
@@ -85,7 +92,21 @@ ten-character Apple Developer Team ID. The release workflow requires this
 value and compares it with the signed bundle so a valid certificate from the
 wrong team cannot publish a NotchFlow release.
 
-## What GitHub Actions does for each tag
+## What GitHub Actions does for each app-source push
+
+On a push to `main`,
+[.github/workflows/auto-release-tag.yml](.github/workflows/auto-release-tag.yml)
+ignores a change set that is entirely under `web/`. Every other push is an app
+release candidate. It finds the latest `vX.Y.Z` tag, calculates the next
+version from the Conventional Commit messages, creates that tag at the pushed
+commit, and dispatches the release workflow. It serializes these runs and
+does not mint another tag when re-run for a commit that is already tagged.
+
+The tag is still an immutable record of the exact shipped source. A manually
+pushed `vX.Y.Z` tag also runs the release workflow, but normal releases do not
+need a manual tag command.
+
+## What GitHub Actions does for each release tag
 
 On a pushed `v*` tag, [.github/workflows/release.yml](.github/workflows/release.yml):
 
@@ -110,24 +131,53 @@ in the failed job output.
 
 ## Publish a release
 
-After committing and pushing the desired code:
+Commit with the bump signal that describes the release, then push or merge it
+to `main`. For example:
 
 ```bash
-git tag v1.0.2
-git push origin v1.0.2
+git commit -m "feat: add Focus mode"
+git push origin my-feature-branch
 ```
 
-Use the next semantic version instead of `v1.0.2`; do not retag an existing
-release or substitute `--follow-tags` for an explicit tag push. Watch the
-**Release** workflow in GitHub Actions. When it finishes, download the
-published DMG on a clean Apple-silicon Mac and confirm Gatekeeper opens it.
-Also inspect the ZIP fallback and test a fresh trial, a fully blocked expired
-trial, a valid Lemon activation, and a signed in-app update.
+Open a pull request and merge it into `main`; the **Create Release Tag**
+workflow handles the tag and starts **Release**. A `fix:` follows `v1.0.2`
+with `v1.0.3`; a `feat:` follows it with `v1.1.0`; and a breaking change
+follows it with `v2.0.0`. A commit that changes only `web/` does not release
+the app.
+
+Watch the **Release** workflow in GitHub Actions. When it finishes, download
+the published DMG on a clean Apple-silicon Mac and confirm Gatekeeper opens
+it. Also inspect the ZIP fallback and test a fresh trial, a fully blocked
+expired trial, a valid Lemon activation, and a signed in-app update.
+
+## Protecting `main`
+
+`main` is protected so releases begin only after a pull request is merged. It
+requires the uniquely named **Validate Pull Request / app-verification** check,
+an up-to-date branch, resolved review conversations, linear history, and a
+pull request (no approval count is required for this single-maintainer
+repository). It also blocks force-pushes and deletion, including by admins.
+
+After authenticating the GitHub CLI as a repository administrator, apply or
+reapply the exact policy with:
+
+```bash
+bash scripts/protect-main-branch.sh
+```
+
+The script changes remote GitHub settings; use it only for this repository.
 
 ## Files that own the process
 
 - [.github/workflows/release.yml](.github/workflows/release.yml) — build,
   signing, notarization, and publishing.
+- [.github/workflows/auto-release-tag.yml](.github/workflows/auto-release-tag.yml)
+  — computes and creates the tag for each non-web `main` push, then dispatches
+  the release workflow.
+- [scripts/next-release-version.sh](scripts/next-release-version.sh) —
+  calculates the conventional-commit semantic version bump.
+- [scripts/protect-main-branch.sh](scripts/protect-main-branch.sh) — applies
+  the compatible, pull-request-based `main` branch-protection policy.
 - [scripts/codesign-app.sh](scripts/codesign-app.sh) — signs and verifies the
   app; CI refuses any non-Developer-ID release signature.
 - [scripts/create-dmg.sh](scripts/create-dmg.sh) — packages a signed app into

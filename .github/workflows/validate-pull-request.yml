@@ -1,0 +1,32 @@
+name: Validate Pull Request
+
+# This intentionally has no path filter: it is a required check on main, and a
+# skipped required check would block a website-only pull request indefinitely.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  app-verification:
+    name: app-verification
+    # Keep the validation compiler aligned with release.yml's macOS 26 APIs.
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      - name: Validate release metadata and versioning
+        run: |
+          node scripts/gen-releases.mjs --check
+          bash Tests/verify_release_metadata.sh
+          bash Tests/verify_next_release_version.sh
+
+      - name: Run app and packaging tests
+        run: |
+          swift test
+          bash Tests/verify_create_dmg.sh
+          bash Tests/verify_create_zip.sh

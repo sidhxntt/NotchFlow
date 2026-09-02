@@ -30,13 +30,55 @@ require_file PRIVACY.md
 require_file scripts/gen-releases.mjs
 require_file scripts/create-dmg.sh
 require_file scripts/create-zip.sh
+require_file scripts/next-release-version.sh
+require_file scripts/protect-main-branch.sh
+require_file .github/workflows/auto-release-tag.yml
+require_file .github/workflows/validate-pull-request.yml
 require_file README.zh-CN.md
 require_text '[Release Notes](CHANGELOG.md)' README.md
+
+# App-source pushes to main receive a version tag. Website-only commits remain
+# the responsibility of pages.yml and must never publish a macOS build.
+auto_workflow=.github/workflows/auto-release-tag.yml
+require_text 'branches: [main]' "$auto_workflow"
+require_text 'paths-ignore:' "$auto_workflow"
+require_text "- 'web/**'" "$auto_workflow"
+require_text 'contents: write' "$auto_workflow"
+require_text 'actions: write' "$auto_workflow"
+require_text 'bash scripts/next-release-version.sh "$GITHUB_SHA"' "$auto_workflow"
+require_text 'git tag -a "$TAG" "$GITHUB_SHA"' "$auto_workflow"
+require_text 'gh workflow run release.yml --ref "$TAG"' "$auto_workflow"
+
+# This unique check is deliberately run for every pull request, including a
+# website-only PR, so it can be required by the protected main branch without
+# leaving a path-skipped check permanently pending.
+pr_workflow=.github/workflows/validate-pull-request.yml
+require_text 'name: Validate Pull Request' "$pr_workflow"
+require_text 'pull_request:' "$pr_workflow"
+require_text 'branches: [main]' "$pr_workflow"
+require_text 'name: app-verification' "$pr_workflow"
+require_text 'bash Tests/verify_release_metadata.sh' "$pr_workflow"
+require_text 'bash Tests/verify_next_release_version.sh' "$pr_workflow"
+
+# The remotely applied protection requires a pull request, the unique PR
+# validation check, linear history, conversation resolution, and blocks force
+# pushes and deletion (including for repository administrators).
+protection_script=scripts/protect-main-branch.sh
+require_text 'repository="${1:-sidhxntt/NotchFlow}"' "$protection_script"
+require_text 'branches/main/protection' "$protection_script"
+require_text 'Validate Pull Request / app-verification' "$protection_script"
+require_text '"required_approving_review_count": 0' "$protection_script"
+require_text '"required_linear_history": true' "$protection_script"
+require_text '"allow_force_pushes": false' "$protection_script"
+require_text '"allow_deletions": false' "$protection_script"
+require_text '"required_conversation_resolution": true' "$protection_script"
+require_text '"enforce_admins": true' "$protection_script"
 
 # The notarized ticket must be stapled to the source app before the DMG/ZIP
 # helpers copy it. Stapling only after DMG creation leaves the mounted app
 # without a ticket even though the build-directory app validates successfully.
 workflow=.github/workflows/release.yml
+require_text 'workflow_dispatch:' "$workflow"
 line_number() {
   local needle="$1"
   local line

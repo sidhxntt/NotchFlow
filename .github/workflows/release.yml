@@ -5,6 +5,10 @@ on:
   push:
     tags:
       - "v*"
+  # The automatic tagger uses GITHUB_TOKEN. GitHub intentionally prevents that
+  # token's tag push from starting another workflow, so it dispatches this
+  # workflow at the freshly-created tag instead.
+  workflow_dispatch:
 
 permissions:
   contents: write   # needed to create the release
