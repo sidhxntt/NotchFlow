@@ -22,7 +22,7 @@ require_file() {
 require_text() {
   local needle="$1"
   local file="$2"
-  rg -Fq -- "$needle" "$file" || fail "missing $needle in $file"
+  grep -Fq -- "$needle" "$file" || fail "missing $needle in $file"
 }
 
 require_file CHANGELOG.md
@@ -40,7 +40,7 @@ workflow=.github/workflows/release.yml
 line_number() {
   local needle="$1"
   local line
-  line="$(rg -n -F -- "$needle" "$workflow" | head -n1 | cut -d: -f1)"
+  line="$(grep -n -F -- "$needle" "$workflow" | head -n1 | cut -d: -f1)"
   [ -n "$line" ] || fail "missing $needle in $workflow"
   printf '%s\n' "$line"
 }
@@ -85,7 +85,7 @@ NODE
 
 # Public install snippets must resolve the shipped script from the release
 # branch, never an obsolete default branch.
-if rg -n --glob '!docs/superpowers/**' --glob '!.git/**' \
+if grep -nE \
   'raw\.githubusercontent\.com/[[:alnum:]_.-]+/[[:alnum:]_.-]+/master/' \
   README.md README.zh-CN.md RELEASING.md install.sh .github/workflows/release.yml; then
   fail 'a shipped raw GitHub URL still targets /master/'
