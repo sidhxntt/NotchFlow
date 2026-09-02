@@ -153,7 +153,7 @@ expired trial, a valid Lemon activation, and a signed in-app update.
 ## Protecting `main`
 
 `main` is protected so releases begin only after a pull request is merged. It
-requires the uniquely named **Validate Pull Request / app-verification** check,
+requires the uniquely named **app-verification** check,
 an up-to-date branch, resolved review conversations, linear history, and a
 pull request (no approval count is required for this single-maintainer
 repository). It also blocks force-pushes and deletion, including by admins.

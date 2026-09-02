@@ -15,7 +15,7 @@ gh api --method PUT "repos/${repository}/branches/main/protection" \
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["Validate Pull Request / app-verification"]
+    "contexts": ["app-verification"]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {

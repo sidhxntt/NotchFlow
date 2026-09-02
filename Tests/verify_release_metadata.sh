@@ -66,7 +66,7 @@ require_text 'bash Tests/verify_next_release_version.sh' "$pr_workflow"
 protection_script=scripts/protect-main-branch.sh
 require_text 'repository="${1:-sidhxntt/NotchFlow}"' "$protection_script"
 require_text 'branches/main/protection' "$protection_script"
-require_text 'Validate Pull Request / app-verification' "$protection_script"
+require_text '"contexts": ["app-verification"]' "$protection_script"
 require_text '"required_approving_review_count": 0' "$protection_script"
 require_text '"required_linear_history": true' "$protection_script"
 require_text '"allow_force_pushes": false' "$protection_script"
