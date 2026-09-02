@@ -1092,9 +1092,8 @@ final class NotchModel: ObservableObject {
     ///     (an honest re-entry during the close dissolve must still cancel it).
     /// Unknown geometry (nil) falls back to trusting the event.
     ///
-    /// On the closed→open edge two further gates apply, both aimed at the same
-    /// complaint: reaching for a menu bar item near the notch kept unfurling the
-    /// panel over it. See `cursorReallyEntered` and `isMenuBarSweep`.
+    /// On the closed→open edge a dwell gate applies: reaching for a menu-bar
+    /// item near the notch must not unfurl the panel over it.
     func hoverEntered(on display: CGDirectDisplayID?, velocity: CGVector) {
         if open {
             if pointerInsideIsland(on: display, slop: 16) == false { return }
@@ -1115,96 +1114,42 @@ final class NotchModel: ObservableObject {
         // The click level answers a hover with a gesture instead of an unfurl:
         // one haptic tap and a few points of outward flex (see `hoverPeek`), so
         // the notch is visibly awake and reachable while the panel stays folded
-        // until the click. Nothing below this line runs — the vector gate and the
-        // entry watch both exist to decide *when* to open on hover, and here the
-        // answer is never.
+        // until the click. Nothing below this line runs: there is no dwell to
+        // schedule because this level never opens from hover.
         if sensitivity.opensOnClickOnly {
             beginHoverPeek(on: display)
             return
         }
-        // A fast, near-horizontal crossing is someone travelling ALONG the menu
-        // bar to a target on the other side of the notch — the single biggest
-        // source of accidental unfurls, since the resting hover strip spans the
-        // menu bar's full height. Don't open on contact; hand it to the entry
-        // watch, which opens the moment that pointer actually settles here and
-        // stays quiet if it just keeps going.
-        if Self.isMenuBarSweep(velocity, at: sensitivity) {
-            armEntryWatch(display: display)
-            return
+        guard let delay = sensitivity.hoverOpenDelay else { return }
+        if delay == 0 {
+            openPanel(on: display, velocity: velocity)
+        } else {
+            armHoverDwell(on: display, delay: delay)
         }
-        openPanel(on: display, velocity: velocity)
     }
 
-    /// Whether this entry reads as travel ALONG the menu bar rather than an
-    /// arrival at the notch — the shape of approach each sensitivity refuses to
-    /// take at face value. Both levels that test anything key on the same two
-    /// facts, just at different tolerances: how flat the approach was, and how
-    /// fast. A normal approach comes up from the content below, so its vertical
-    /// component keeps it out of the test at every level.
-    ///
-    /// The cone comes from `HoverSensitivity.blockedAngle` (degrees off
-    /// horizontal); only the speed floor is tuning that lives here. The levels
-    /// nest on both axes —
-    /// `.low` takes the wider cone AND the lower floor — so lowering the setting
-    /// can only ever defer more entries, never fewer.
-    private static func isMenuBarSweep(_ v: CGVector, at sensitivity: HoverSensitivity) -> Bool {
-        let minSpeed: CGFloat
-        switch sensitivity {
-        case .instant:  return false
-        case .balanced: minSpeed = 900
-        case .low:      minSpeed = 150
-        // Unreachable — `hoverEntered` peels `.click` off before the gate — but
-        // "every approach is refused" is the honest answer for the level, and it
-        // keeps the nesting property true if another caller ever appears.
-        case .click:    return true
-        }
-        let speed = (v.dx * v.dx + v.dy * v.dy).squareRoot()
-        guard speed >= minSpeed else { return false }
-        // |dx| : |dy| beyond 1/tan(angle) ⇒ the approach came in flatter than
-        // the cone's edge.
-        let flatness = CGFloat(1 / tan(sensitivity.blockedAngle * .pi / 180))
-        return abs(v.dx) > flatness * abs(v.dy)
+    private var hoverDwellTask: Task<Void, Never>?
+
+    private func cancelHoverDwell() {
+        hoverDwellTask?.cancel()
+        hoverDwellTask = nil
     }
 
-    /// Poll interval of the entry watch. Short enough that a sweep which does
-    /// stop on the notch still feels like it opened on contact.
-    private static let entryWatchTick: TimeInterval = 0.1
-    private var entryWatchTask: Task<Void, Never>?
-
-    private func cancelEntryWatch() {
-        entryWatchTask?.cancel()
-        entryWatchTask = nil
-    }
-
-    /// Watch a sweep that's currently over the resting notch: open if it settles
-    /// here, dissolve if it leaves. Deliberately a poll rather than a fixed
-    /// delay — at sweep speed the pointer is still inside the notch 150ms later,
-    /// so "wait, then check once" would open on exactly the pass-throughs this
-    /// is meant to ignore.
-    private func armEntryWatch(display: CGDirectDisplayID?) {
-        entryWatchTask?.cancel()
-        entryWatchTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(NotchModel.entryWatchTick * 1_000_000_000))
+    /// A timer rather than an arrival-vector heuristic makes each setting
+    /// perceptible on every approach. The pointer is checked again at the end,
+    /// so crossing the notch on the way to a menu-bar item cannot open it.
+    private func armHoverDwell(on display: CGDirectDisplayID?, delay: TimeInterval) {
+        cancelHoverDwell()
+        hoverDwellTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
-            self.recheckEntryWatch(display: display)
+            self.hoverDwellTask = nil
+            guard !self.open,
+                  self.pointerInsideRestingNotch(on: display, slop: 0) != false
+            else { return }
+            self.openPanel(on: display,
+                           velocity: MouseVelocityTracker.shared.entryVelocity())
         }
-    }
-
-    private func recheckEntryWatch(display: CGDirectDisplayID?) {
-        entryWatchTask = nil
-        guard !open else { return }
-        // Gone — it really was a pass-through. No enter event is needed to end
-        // the watch: leaving the rect is the answer.
-        guard pointerInsideRestingNotch(on: display, slop: 0) != false else { return }
-        // Still travelling. Keep watching: the sweep may yet stop here.
-        if MouseVelocityTracker.shared.cursorMoved(within: 0.12, threshold: 12) {
-            armEntryWatch(display: display)
-            return
-        }
-        // Settled on the notch — that's an arrival, whatever the entry looked
-        // like. It opens on the calm unfurl, which is what a stopped cursor
-        // should get anyway.
-        openPanel(on: display, velocity: MouseVelocityTracker.shared.entryVelocity())
     }
 
     // MARK: - Click to open (the `.click` sensitivity)
@@ -1299,6 +1244,7 @@ final class NotchModel: ObservableObject {
     func applyHoverSensitivity(_ newValue: HoverSensitivity) {
         HoverSensitivity.current = newValue
         hoverSensitivity = newValue
+        cancelHoverDwell()
         if !newValue.opensOnClickOnly { endHoverPeek() }
     }
 
@@ -1571,6 +1517,7 @@ final class NotchModel: ObservableObject {
     /// snapshots reach the window via `syncInFlight` → `detachedThreadStores`.
     func submitDetachedFollowUp(threadID: UUID, question: String,
                                 images: [NSImage] = []) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         var q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         if q.isEmpty {
             guard !images.isEmpty else { return }
@@ -1593,6 +1540,7 @@ final class NotchModel: ObservableObject {
     /// Q/A pair from the seed and re-run the question, optionally pinned to a
     /// model for this one round (XII-135).
     func regenerateDetachedAnswer(threadID: UUID, model: String? = nil) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         if threadHistoryID == threadID, !turns.isEmpty {
             regenerateLastAnswer(model: model)
             return
@@ -1631,6 +1579,7 @@ final class NotchModel: ObservableObject {
                                   pin: ModelPin? = nil,
                                   origin: HistoryItem.Origin? = nil,
                                   images: [NSImage] = []) -> UUID? {
+        guard LicenseService.shared.state.allowsProductServices else { return nil }
         // Never stack rounds on one thread from the window: the tear-off
         // dropped the round's task handle, so a second submit couldn't
         // supersede-cancel the first. The field is disabled while streaming;
@@ -1718,6 +1667,7 @@ final class NotchModel: ObservableObject {
     /// window can become that conversation in place.
     @discardableResult
     func submitDetachedCompose(_ line: String, destination: Panel) -> UUID? {
+        guard LicenseService.shared.state.allowsProductServices else { return nil }
         let q = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return nil }
         if agentComposeActive {
@@ -2048,17 +1998,24 @@ final class NotchModel: ObservableObject {
     ///
     /// The name is written straight back into the persisted store (and broadcast
     /// via `.promptShortcutsChanged`), so the `/` menu and the settings row both
-    /// pick it up without a relaunch. Runs detached — naming must never block a
+    /// pick it up without a relaunch. Runs asynchronously — naming never blocks a
     /// keystroke or a submit — and tolerates every failure (no key, a dead
     /// network, a stub service) by simply leaving the shortcut unnamed.
     func ensurePromptShortcutName(_ shortcut: PromptShortcut) {
         let instruction = shortcut.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !instruction.isEmpty,
-              shortcut.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+              shortcut.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+              LicenseService.shared.state
+                .allowsAsyncProductEffect(isCancelled: false)
         else { return }
         let id = shortcut.id
-        Task { [weak self] in
+        guard promptShortcutNameTasks[id] == nil else { return }
+        let namingTask = Task { [weak self] in
             guard let self else { return }
+            defer { self.promptShortcutNameTasks[id] = nil }
+            guard LicenseService.shared.state
+                .allowsAsyncProductEffect(isCancelled: Task.isCancelled)
+            else { return }
             let name: String
             do {
                 name = try await self.ai.complete(prompt: """
@@ -2067,6 +2024,9 @@ final class NotchModel: ObservableObject {
                 explanation, under 4 words. Prompt: \(instruction)
                 """)
             } catch { return }
+            guard LicenseService.shared.state
+                .allowsAsyncProductEffect(isCancelled: Task.isCancelled)
+            else { return }
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\"“”'‘’"))
             guard !trimmed.isEmpty else { return }
@@ -2078,6 +2038,7 @@ final class NotchModel: ObservableObject {
             PromptShortcutStore.save(shortcuts)
             NotificationCenter.default.post(name: .promptShortcutsChanged, object: nil)
         }
+        promptShortcutNameTasks[id] = namingTask
     }
 
     // MARK: - The `/` command menu
@@ -2184,13 +2145,22 @@ final class NotchModel: ObservableObject {
     /// Refresh on every fresh `/` so installing or editing a skill does not need an
     /// app relaunch. Repeated keystrokes share the same in-flight request.
     private func refreshAgentSkills(forceReload: Bool = false) {
-        guard agentSkillsTask == nil else { return }
+        guard agentSkillsTask == nil,
+              LicenseService.shared.state
+                .allowsAsyncProductEffect(isCancelled: false)
+        else { return }
         let cwd = (agentComposeFolder ?? lastAgentFolder
                    ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)).path
         agentSkillsTask = Task { [weak self] in
+            guard LicenseService.shared.state
+                .allowsAsyncProductEffect(isCancelled: Task.isCancelled)
+            else { return }
             let loaded = await CodexCLIService.loadSkills(cwd: cwd,
                                                           forceReload: forceReload)
-            guard !Task.isCancelled, let self else { return }
+            guard let self,
+                  LicenseService.shared.state
+                    .allowsAsyncProductEffect(isCancelled: Task.isCancelled)
+            else { return }
             // A transient app-server failure must not blank a previously good
             // menu. A successful Codex list always includes system skills, so an
             // empty response is safely treated as failure once we have a cache.
@@ -2668,7 +2638,6 @@ final class NotchModel: ObservableObject {
             case menuBarIcon(MenuBarIconVisibility)
             case launchAtLogin(Bool)
             case placement(DisplayPlacement)
-            case hideInFullscreen(Bool)
             case liveActivity(Bool)
             case hoverSensitivity(HoverSensitivity)
             case noteDestination(NoteDestination)
@@ -2801,9 +2770,6 @@ final class NotchModel: ObservableObject {
             case .placement(let value):
                 DisplayPlacement.current = value
                 NotificationCenter.default.post(name: .displayPlacementChanged, object: nil)
-            case .hideInFullscreen(let enabled):
-                HideNotchInFullscreen.isEnabled = enabled
-                NotificationCenter.default.post(name: .hideNotchInFullscreenChanged, object: nil)
             case .liveActivity(let enabled):
                 liveActivityEnabled = enabled
             case .hoverSensitivity(let value):
@@ -3107,7 +3073,7 @@ final class NotchModel: ObservableObject {
             return "global"
         case "shortcuts", "summon_shortcut", "action_shortcut", "prompt_shortcut":
             return "agent"
-        case "appearance", "display_placement", "hide_in_fullscreen", "live_activity",
+        case "appearance", "display_placement", "live_activity",
              "hover_sensitivity", "force_click":
             return "appearance"
         case "stats", "usage", "statistics":
@@ -3167,7 +3133,6 @@ final class NotchModel: ObservableObject {
             "menu_bar_icon=\(MenuBarIconVisibility.current.rawValue)",
             "launch_at_login=\(LaunchAtLogin.isEnabled)",
             "display_placement=\(Self.placementToken(DisplayPlacement.current))",
-            "hide_in_fullscreen=\(HideNotchInFullscreen.isEnabled)",
             "live_activity=\(liveActivityEnabled)",
             "hover_sensitivity=\(HoverSensitivity.current.rawValue)",
             "note_destination=\(Self.noteDestinationToken(NoteDestination.current))",
@@ -3277,11 +3242,6 @@ final class NotchModel: ObservableObject {
             }
             return made(setting, L("general.showOn"), newValue.label,
                         .placement(newValue), noOp: newValue == DisplayPlacement.current)
-
-        case "hide_in_fullscreen":
-            guard let enabled = Self.parseBoolean(value) else { throw invalidBoolean(setting) }
-            return made(setting, L("general.fullscreenAutoHide"), localizedToggle(enabled),
-                        .hideInFullscreen(enabled), noOp: enabled == HideNotchInFullscreen.isEnabled)
 
         case "live_activity":
             guard let enabled = Self.parseBoolean(value) else { throw invalidBoolean(setting) }
@@ -4487,6 +4447,13 @@ final class NotchModel: ObservableObject {
 
     private var ai: AIService
     private var task: Task<Void, Never>?
+    /// Single-shot model side requests must remain owned until they finish so
+    /// entitlement suspension can cancel them along with full answer rounds.
+    private var promptShortcutNameTasks: [UUID: Task<Void, Never>] = [:]
+    private var historyTitleTasks: [UUID: Task<Void, Never>] = [:]
+    /// Every ask round remains cancellable even after its panel/window detaches.
+    /// Normal closes intentionally drop `task`; entitlement suspension must not.
+    private var activeRoundTasks: [UUID: Task<Void, Never>] = [:]
     /// Detached prompt-shortcut rounds leave the panel's `task` slot so they can
     /// stream headlessly. Keep their handles by thread id so a repeated shortcut
     /// can supersede its previous translation in the same compact window.
@@ -4528,9 +4495,96 @@ final class NotchModel: ObservableObject {
         }
     }
 
+    /// Restores the lightweight model observers after a blocked runtime is
+    /// successfully licensed again. Initial construction already starts these,
+    /// so this is intentionally idempotent.
+    func resumeAfterEntitlementRestored() {
+        guard senseTimer == nil else { return }
+        startClipboardSense()
+        refreshAgentSkills()
+    }
+
+    /// Stop every model-owned activity at the entitlement boundary, including
+    /// rounds whose visible panel or detached window has already gone away.
+    func suspendForLicenseBlock() {
+        task?.cancel()
+        task = nil
+        activeRoundTasks.values.forEach { $0.cancel() }
+        activeRoundTasks.removeAll()
+        compactRoundTasks.values.forEach { $0.cancel() }
+        compactRoundTasks.removeAll()
+        promptShortcutNameTasks.values.forEach { $0.cancel() }
+        promptShortcutNameTasks.removeAll()
+        historyTitleTasks.values.forEach { $0.cancel() }
+        historyTitleTasks.removeAll()
+
+        selectionContextHintTask?.cancel()
+        selectionContextHintTask = nil
+        agentSkillsTask?.cancel()
+        agentSkillsTask = nil
+        leaveRecheckTask?.cancel()
+        leaveRecheckTask = nil
+        hoverDwellTask?.cancel()
+        hoverDwellTask = nil
+        hoverPeekTask?.cancel()
+        hoverPeekTask = nil
+        dueTask?.cancel()
+        dueTask = nil
+        noteCueTask?.cancel()
+        noteCueTask = nil
+        thinkingWordTimer?.invalidate()
+        thinkingWordTimer = nil
+        senseTimer?.invalidate()
+        senseTimer = nil
+        senseReset()
+        senseClassifyTask = nil
+        senseDismissTask = nil
+
+        let questionIDs = pendingUserQuestions.map(\.id)
+        for id in questionIDs {
+            resolveUserQuestion(id, with: .failure(CancellationError()))
+        }
+        thinking = false
+        thinkingAnswerID = nil
+        backgroundActivity = nil
+        backgroundWriting = false
+        open = false
+        closing = false
+        activeDisplay = nil
+    }
+
+    /// Agentic mode owns in-app Chat and Agent work, but not the companion
+    /// media, utility, or clipboard services. Toggling it off therefore stops
+    /// only outstanding AI work and removes its collapsed-notch activity.
+    func suspendForAgenticModeDisabled() {
+        task?.cancel()
+        task = nil
+        activeRoundTasks.values.forEach { $0.cancel() }
+        activeRoundTasks.removeAll()
+        compactRoundTasks.values.forEach { $0.cancel() }
+        compactRoundTasks.removeAll()
+        promptShortcutNameTasks.values.forEach { $0.cancel() }
+        promptShortcutNameTasks.removeAll()
+        historyTitleTasks.values.forEach { $0.cancel() }
+        historyTitleTasks.removeAll()
+        agentSkillsTask?.cancel()
+        agentSkillsTask = nil
+
+        let questionIDs = pendingUserQuestions.map(\.id)
+        for id in questionIDs {
+            resolveUserQuestion(id, with: .failure(CancellationError()))
+        }
+        thinking = false
+        thinkingAnswerID = nil
+        backgroundActivity = nil
+        backgroundWriting = false
+    }
+
     deinit {
         senseTimer?.invalidate()
         agentSkillsTask?.cancel()
+        promptShortcutNameTasks.values.forEach { $0.cancel() }
+        historyTitleTasks.values.forEach { $0.cancel() }
     }
 
     /// Swap the backend at runtime — used when the user saves an API key in
@@ -4613,13 +4667,10 @@ final class NotchModel: ObservableObject {
     }
     private static let copySenseKey = "copySenseEnabled"
 
-    /// Whether background work drives the RESTING notch's busy ears (Settings →
-    /// Appearance, "Live activity"). Agent runs are minutes long, so the
-    /// verb-and-clock flex is the one background readout that stays on screen
-    /// while you work in another app — some people want the notch to hold still
-    /// instead. One global switch for everything live: off keeps the closed notch
-    /// flat for agent runs AND detached Ask rounds alike. The finished-count
-    /// badge, the agent card and the completion notification are all unaffected.
+    /// Whether the resting notch can show previews (Settings → Appearance,
+    /// "Live activity"). Turning it off keeps the closed notch clear. The
+    /// finished-count badge, agent card, and completion notification are
+    /// unaffected.
     @Published var liveActivityEnabled: Bool =
         UserDefaults.standard.object(forKey: NotchModel.liveActivityKey) as? Bool ?? true
     {
@@ -4974,6 +5025,10 @@ final class NotchModel: ObservableObject {
     /// `velocity` is the cursor's approach vector (zero for non-hover opens);
     /// it must land before `open` so the island's animation reads it fresh.
     func openPanel(on display: CGDirectDisplayID?, velocity: CGVector = .zero) {
+        guard LicenseService.shared.state.allowsProductServices else {
+            openRestrictedLicenseSettings()
+            return
+        }
         if let display { activeDisplay = display }
         // Only the *closed→open* edge sets the clipboard baseline. Hover fires
         // `openPanel` again on every re-enter and on display migration while already
@@ -5045,9 +5100,9 @@ final class NotchModel: ObservableObject {
             Task.detached(priority: .background) { await RemoteModelManifest.refreshIfDue() }
         }
         // A hover re-entry supersedes any pending leave watch — and any pending
-        // entry watch has just been answered (by itself or by another route in).
+        // dwell has just been answered (by itself or by another route in).
         cancelLeaveWatch()
-        cancelEntryWatch()
+        cancelHoverDwell()
         // Re-entering during the close dissolve cancels it: clear the flag so the
         // content (held mounted while `open` is true) springs back to full opacity
         // instead of completing its fade, and the pending `beginClose` timer no-ops.
@@ -5063,6 +5118,10 @@ final class NotchModel: ObservableObject {
     /// through `openPanel` (idle prompt, clipboard baseline preserved) on the open
     /// edge and a hard `fullClose` on the close edge — no hover required.
     func toggleSummon(on display: CGDirectDisplayID?) {
+        guard LicenseService.shared.state.allowsProductServices else {
+            openRestrictedLicenseSettings()
+            return
+        }
         if open {
             fullClose()
         } else {
@@ -5083,6 +5142,11 @@ final class NotchModel: ObservableObject {
         NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
     }
 
+    private func openRestrictedLicenseSettings() {
+        settingsSection = InlineSettingsView.Section.about.rawValue
+        NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+    }
+
     /// Open the panel straight into the "What's New" release notes — the path ⌘↵,
     /// the input-row cue, and the once-per-version auto-show all take. Mirrors
     /// `openSettings`: works whether the panel was resting or already open, clears
@@ -5090,6 +5154,10 @@ final class NotchModel: ObservableObject {
     /// folds the recent list / settings away (they share the same body slot).
     /// Marks the running version as seen so the cue and auto-show don't re-fire.
     func openWhatsNew(on display: CGDirectDisplayID? = nil) {
+        guard LicenseService.shared.state.allowsProductServices else {
+            openRestrictedLicenseSettings()
+            return
+        }
         entryVelocity = .zero
         if let display { activeDisplay = display }
         if !open {
@@ -5178,10 +5246,10 @@ final class NotchModel: ObservableObject {
     /// (the deferred fold re-checks, so continued typing keeps deferring; a
     /// hover re-entry or keyboard summon cancels it via `leaveRecheckTask`).
     func collapseOnLeave(from display: CGDirectDisplayID? = nil, sequenced: Bool = true) {
-        // The pointer left: a sweep being watched for a possible arrival has its
-        // answer. Cleared before the `open` guard — the watch only ever exists
-        // while the panel is CLOSED, so leaving it to the guard would strand it.
-        cancelEntryWatch()
+        // The pointer left: a pending dwell can no longer be an intentional
+        // hover. Cleared before the `open` guard because the dwell exists while
+        // the panel is closed.
+        cancelHoverDwell()
         // Nothing to fold on a resting notch — and a stale deferred fold must
         // never fire `fullClose` on an already-closed panel (that would wipe a
         // freshly parked session).
@@ -5450,6 +5518,7 @@ final class NotchModel: ObservableObject {
     func runPromptShortcut(prompt: String, selectedText: String,
                            pin: ModelPin? = nil,
                            on display: CGDirectDisplayID?) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         let instruction = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !instruction.isEmpty,
               !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -5590,6 +5659,7 @@ final class NotchModel: ObservableObject {
     func startPromptShortcutRound(prompt: String, selectedText: String,
                                   pin: ModelPin? = nil,
                                   origin: HistoryItem.Origin? = nil) -> UUID? {
+        guard LicenseService.shared.state.allowsProductServices else { return nil }
         let instruction = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let context = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !instruction.isEmpty else { return nil }
@@ -5637,6 +5707,7 @@ final class NotchModel: ObservableObject {
     /// This matches `submitLabel` exactly, so the inline "Ask"/"Note"/"Remind" hint
     /// always names where the line actually went.
     func submitCurrent() {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         // A thread on screen routes by the THREAD, not the armed bucket:
         // `submit()` continues the conversation (its agent session when
         // resumable, else the chat model), so a persisted Agent bucket can
@@ -5972,12 +6043,15 @@ final class NotchModel: ObservableObject {
     /// independent tasks.
     @discardableResult
     func submitAgentAndOpenDetail() -> Bool {
+        guard NotchCapabilityStore.shared.agenticModeEnabled else { return false }
         guard agentComposeActive else { return false }
         return submitAgent(openDetail: true)
     }
 
     @discardableResult
     private func submitAgent(openDetail: Bool = false) -> Bool {
+        guard LicenseService.shared.state.allowsProductServices else { return false }
+        guard NotchCapabilityStore.shared.agenticModeEnabled else { return false }
         var prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // Attached images alone are a valid task — a screenshot of the bug IS
         // the description. The CLIs still need some text next to the pixels, so
@@ -6001,6 +6075,7 @@ final class NotchModel: ObservableObject {
 
     private func startAgentRun(folder: URL, prompt: String,
                                openDetail: Bool = false) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         // Pass the model pick only if it still belongs to the armed engine —
         // a stale cross-engine leftover would 404 the run.
         let engine = agentArmedEngine
@@ -6175,6 +6250,7 @@ final class NotchModel: ObservableObject {
     /// drops back to idle, where the revived run rides the bucket row's badge like
     /// any other working task.
     func resumeAgentThread() {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         guard let item = history.first(where: { $0.id == threadHistoryID }),
               let resume = item.agentResume,
               let engine = AgentEngine(rawValue: resume.engine) else { return }
@@ -6523,6 +6599,8 @@ final class NotchModel: ObservableObject {
     }
 
     func submit(hideUserBubble: Bool = false) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
+        guard NotchCapabilityStore.shared.agenticModeEnabled else { return }
         // A line the user actually typed ends the shortcut's one-shot character —
         // from here the thread is an ordinary conversation, so the follow-up input
         // goes back to being a full field instead of a collapsed button.
@@ -6671,7 +6749,7 @@ final class NotchModel: ObservableObject {
         // follow-up sent while the previous answer streams): detached tasks have
         // already cleared this slot, so they're out of reach.
         task?.cancel()
-        task = Task { [weak self] in
+        let roundTask = Task { [weak self] in
             guard let self else { return }
             // Count this round in flight for the resting notch's background
             // indicator, and park its live mirror for reattach-on-open; the
@@ -6686,6 +6764,7 @@ final class NotchModel: ObservableObject {
                 self.roundsInFlight -= 1
                 self.inFlightRounds.removeAll { $0.answerID == answerID }
                 self.compactRoundTasks[threadID] = nil
+                self.activeRoundTasks[answerID] = nil
                 // Don't let the last round's tool label / write phase outlive
                 // it on the collapsed notch's busy ear.
                 if self.inFlightRounds.isEmpty {
@@ -7151,6 +7230,8 @@ final class NotchModel: ObservableObject {
                 }
             }
         }
+        task = roundTask
+        activeRoundTasks[answerID] = roundTask
     }
 
     /// The HTTP status carried by a service error, if any — for the diagnostics
@@ -7830,7 +7911,7 @@ final class NotchModel: ObservableObject {
 
         // Derive a title from the actual conversation content so the recent list
         // doesn't just display the first user message — prompts like "总结一下"
-        // would make many rows look identical. Runs detached so the UI is never
+        // would make many rows look identical. Runs asynchronously so the UI is never
         // blocked; if it fails (offline, no key, timeout) the row falls back to
         // the first question.
         //
@@ -7844,15 +7925,24 @@ final class NotchModel: ObservableObject {
         // request on the round that just failed is the wrong moment for it — the
         // row falls back to the question, which is exactly what it should show.
         let atMilestone = thread.count > 2 && thread.count % 4 == 0
-        if !failed, existingTitle == nil || atMilestone {
-            Task { [weak self] in
-                guard let self, let title = await self.generateTitle(for: thread) else { return }
-                await MainActor.run {
-                    guard let index = self.history.firstIndex(where: { $0.id == threadID }) else { return }
-                    self.history[index].title = title
-                    self.saveHistory()
-                }
+        if !failed,
+           existingTitle == nil || atMilestone,
+           historyTitleTasks[threadID] == nil,
+           LicenseService.shared.state.allowsAsyncProductEffect(isCancelled: false) {
+            let titleTask = Task { [weak self] in
+                guard let self else { return }
+                defer { self.historyTitleTasks[threadID] = nil }
+                guard LicenseService.shared.state
+                    .allowsAsyncProductEffect(isCancelled: Task.isCancelled),
+                      let title = await self.generateTitle(for: thread),
+                      LicenseService.shared.state
+                        .allowsAsyncProductEffect(isCancelled: Task.isCancelled),
+                      let index = self.history.firstIndex(where: { $0.id == threadID })
+                else { return }
+                self.history[index].title = title
+                self.saveHistory()
             }
+            historyTitleTasks[threadID] = titleTask
         }
     }
 
@@ -7873,7 +7963,10 @@ final class NotchModel: ObservableObject {
     /// Returns `nil` when offline (stub), unconfigured, or the request fails, so
     /// the UI can always fall back to the first user message.
     private func generateTitle(for thread: [Turn]) async -> String? {
-        guard !(ai is StubAIService) else { return nil }
+        guard !(ai is StubAIService),
+              LicenseService.shared.state
+                .allowsAsyncProductEffect(isCancelled: Task.isCancelled)
+        else { return nil }
 
         // Only the tail of the conversation, size-capped (XII-88): a title should
         // reflect where the chat *went*, so the last few rounds are the right
@@ -7898,8 +7991,14 @@ final class NotchModel: ObservableObject {
                 system: titleSystemPrompt,
                 messages: [ChatMessage(role: "user", content: prompt)]
             ) {
+                guard LicenseService.shared.state
+                    .allowsAsyncProductEffect(isCancelled: Task.isCancelled)
+                else { return nil }
                 title += chunk
             }
+            guard LicenseService.shared.state
+                .allowsAsyncProductEffect(isCancelled: Task.isCancelled)
+            else { return nil }
             let cleaned = title
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "^[\"']+|[\"']+$", with: "", options: .regularExpression)
@@ -7998,11 +8097,13 @@ final class NotchModel: ObservableObject {
     /// view. No-op if the row is gone or still pending. The caller (AppDelegate)
     /// must already have summoned the panel open on a screen.
     func openThread(id: UUID) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         guard let item = history.first(where: { $0.id == id }), !item.pending else { return }
         openHistory(item)
     }
 
     func openHistory(_ item: HistoryItem) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         // Opening a saved thread replaces the idle draft; its unsent attachments
         // must not hide off-screen and ride the next follow-up by surprise.
         askComposeImages = []

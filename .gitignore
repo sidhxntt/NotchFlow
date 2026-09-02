@@ -16,6 +16,12 @@ xcuserdata/
 .swiftpm/
 Package.resolved
 
+# CI-generated direct-distribution artifacts. The DMG is the normal installer;
+# the matching ZIP is a release fallback, and both are attached to GitHub rather
+# than committed to the source repository.
+/NotchFlow-v*-arm64.dmg
+/NotchFlow-v*-arm64.zip
+
 # macOS
 .DS_Store
 .AppleDouble
@@ -32,6 +38,10 @@ Icon
 
 # Local scratch notes
 temp.md
+
+# Local Apple signing material — store these only in Keychain and GitHub Secrets.
+Certificates.p12
+AuthKey_*.p8
 
 # Internal working docs — kept local only, never published
 AGENTS.md

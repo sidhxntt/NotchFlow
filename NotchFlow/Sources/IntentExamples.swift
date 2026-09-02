@@ -709,7 +709,6 @@ enum IntentExamples {
         "don't launch this app at login",
         "start this app automatically when i log in",
         "set hover sensitivity to low",
-        "turn off hide in full screen",
         "save my notes to a markdown folder",
         "change the summon shortcut to command shift k",
         "show me all current app settings",

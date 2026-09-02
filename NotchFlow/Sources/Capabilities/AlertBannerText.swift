@@ -4,7 +4,8 @@ import Foundation
 ///
 /// This looks like it should be positional — first line is the title, the rest
 /// is the body — and that is exactly how it was written first. Against the live
-/// tree it is wrong, and wrong in a way that silently disabled the call feature.
+/// tree it is wrong: a banner carries THREE texts, and macOS labels each of
+/// them in its `AXIdentifier`.
 /// A banner carries THREE texts, and macOS labels each of them in its
 /// `AXIdentifier`:
 ///
@@ -15,19 +16,15 @@ import Foundation
 ///   AXStaticText id="body"      "Incoming call"
 /// ```
 ///
-/// Joining everything after the title produced a body of `"WhatsApp Incoming
-/// call"` — the app's own name, then the message. `AlertFeedStore` decides
-/// whether a banner announces a call by matching its call vocabulary against the
-/// START of the body (deliberately: a chat message that mentions a call
-/// mid-sentence is a message, not a call). With the subtitle glued on the front,
-/// that prefix test could never fire on any banner that has a subtitle — which
-/// is every banner a chat app posts.
+/// Joining everything after the title produces a body such as `"WhatsApp
+/// Incoming call"` — the app's own name, then the message. The posting app is
+/// already identified separately, so that subtitle is metadata rather than
+/// message content.
 ///
 /// So the split reads the identifiers macOS publishes, and only falls back to
 /// position when a future release stops publishing them. The line macOS calls
 /// `subtitle` is deliberately dropped: it is the posting app naming itself,
-/// which the store already learns from the group's description, and putting it
-/// anywhere at all costs us the prefix test.
+/// which the store already learns from the group's description.
 public enum AlertBannerText {
     /// One static text as the Accessibility tree gave it to us: what macOS calls
     /// it, and what it says.

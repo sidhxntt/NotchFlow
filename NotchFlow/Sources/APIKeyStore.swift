@@ -1,34 +1,23 @@
 import Foundation
 
-/// Where each provider's API key lives. Stored in `UserDefaults` — a plain plist
-/// in the app's preferences. Every `Provider` gets its own entry, so switching
+/// Where each provider's API key lives. Secrets are stored as generic-password
+/// items in the user Keychain. Every `Provider` gets its own entry, so switching
 /// backends doesn't clobber the other one's key.
 ///
 /// Lookup order per provider (see `AppDelegate`):
 ///   1. The provider's env var (e.g. `MIMO_API_KEY`, `DEEPSEEK_API_KEY`) — handy
 ///      for local dev / debugging.
-///   2. The `UserDefaults` entry the user typed into Settings.
+///   2. The Keychain entry the user typed into Settings.
 ///   3. A built-in default, if any (none ship by default — every provider's key
 ///      is supplied by the user).
 /// The env var wins so you can run with a throwaway key without touching the
 /// stored one.
 ///
-/// Why not the Keychain? These are client-side keys anyway — anyone who can run
-/// the app can recover them, so the Keychain's encryption buys little here. In
-/// exchange it triggers the system "wants to use your confidential information"
-/// authorization prompt (especially across rebuilds with changing ad-hoc
-/// signatures), which is more annoying than it's worth for a personal local app.
-/// `UserDefaults` keeps the key in a plist under the user's own account — low
-/// real-world risk for this use case, and no prompts.
-///
-/// ⚠️ The trade-off: the key is stored in plaintext, so any process that can read
-/// your user defaults can read it. Fine for personal use; before distributing the
-/// app to others, move the key behind a small backend so it never ships or sits
-/// on disk in the clear.
 enum APIKeyStore {
     private static let keyPrefix = "api_key."
     private static let modelKeyPrefix = "model."
     private static let selectedProviderKey = "selected_provider"
+    private static let secureStore = KeychainStore.shared
 
     /// Built-in development keys, used only when no env var and no stored entry
     /// are present for that provider. None ship by default — every provider's key
@@ -91,11 +80,11 @@ enum APIKeyStore {
         return env?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
-    /// Save (or clear, when empty) the user's key for `provider` in `UserDefaults`.
+    /// Save (or clear, when empty) the user's key for `provider` in Keychain.
     static func save(_ key: String, for provider: Provider) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { delete(provider); return }
-        UserDefaults.standard.set(trimmed, forKey: defaultsKey(for: provider))
+        _ = writeSecret(trimmed, forKey: defaultsKey(for: provider))
     }
 
     // MARK: - Auxiliary (non-provider) service keys
@@ -121,7 +110,7 @@ enum APIKeyStore {
     /// The Exa key the user saved in Settings (ignores the env override), so the
     /// field shows what's actually stored.
     static func storedExaKey() -> String {
-        UserDefaults.standard.string(forKey: exaDefaultsKey) ?? ""
+        readSecret(forKey: exaDefaultsKey) ?? ""
     }
 
     /// True when `EXA_API_KEY` is forcing a key — then the Settings field is
@@ -135,13 +124,13 @@ enum APIKeyStore {
     /// Gates the per-provider native search off in favor of Exa for everyone.
     static var exaActive: Bool { currentExaKey() != nil }
 
-    /// Save (or clear, when empty) the user's Exa key in `UserDefaults`.
+    /// Save (or clear, when empty) the user's Exa key in Keychain.
     static func saveExaKey(_ key: String) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            UserDefaults.standard.removeObject(forKey: exaDefaultsKey)
+            _ = deleteSecret(forKey: exaDefaultsKey)
         } else {
-            UserDefaults.standard.set(trimmed, forKey: exaDefaultsKey)
+            _ = writeSecret(trimmed, forKey: exaDefaultsKey)
         }
     }
 
@@ -166,7 +155,7 @@ enum APIKeyStore {
     /// The Keenable key the user saved in Settings (ignores the env override), so
     /// the field shows what's actually stored.
     static func storedKeenableKey() -> String {
-        UserDefaults.standard.string(forKey: keenableDefaultsKey) ?? ""
+        readSecret(forKey: keenableDefaultsKey) ?? ""
     }
 
     /// True when `KEENABLE_API_KEY` is forcing a key — then the Settings field is
@@ -176,13 +165,13 @@ enum APIKeyStore {
         return env?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
-    /// Save (or clear, when empty) the user's Keenable key in `UserDefaults`.
+    /// Save (or clear, when empty) the user's Keenable key in Keychain.
     static func saveKeenableKey(_ key: String) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            UserDefaults.standard.removeObject(forKey: keenableDefaultsKey)
+            _ = deleteSecret(forKey: keenableDefaultsKey)
         } else {
-            UserDefaults.standard.set(trimmed, forKey: keenableDefaultsKey)
+            _ = writeSecret(trimmed, forKey: keenableDefaultsKey)
         }
     }
 
@@ -208,7 +197,7 @@ enum APIKeyStore {
     }
 
     static func storedAnySearchKey() -> String {
-        UserDefaults.standard.string(forKey: anySearchDefaultsKey) ?? ""
+        readSecret(forKey: anySearchDefaultsKey) ?? ""
     }
 
     static func hasAnySearchEnvOverride() -> Bool {
@@ -219,9 +208,9 @@ enum APIKeyStore {
     static func saveAnySearchKey(_ key: String) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            UserDefaults.standard.removeObject(forKey: anySearchDefaultsKey)
+            _ = deleteSecret(forKey: anySearchDefaultsKey)
         } else {
-            UserDefaults.standard.set(trimmed, forKey: anySearchDefaultsKey)
+            _ = writeSecret(trimmed, forKey: anySearchDefaultsKey)
         }
     }
 
@@ -345,7 +334,19 @@ enum APIKeyStore {
         current(for: provider) ?? ""
     }
 
-    // MARK: - UserDefaults plumbing
+    // MARK: - Keychain plumbing
+
+    /// Eagerly migrates every secret written by older NotchFlow builds. Reads
+    /// also migrate lazily, but doing this once before the product starts keeps
+    /// plaintext preferences from lingering for providers not currently selected.
+    static func migrateLegacyKeys() {
+        for provider in Provider.allCases {
+            _ = readSecret(forKey: defaultsKey(for: provider))
+        }
+        _ = readSecret(forKey: exaDefaultsKey)
+        _ = readSecret(forKey: keenableDefaultsKey)
+        _ = readSecret(forKey: anySearchDefaultsKey)
+    }
 
     private static func defaultsKey(for provider: Provider) -> String {
         keyPrefix + provider.rawValue
@@ -356,14 +357,49 @@ enum APIKeyStore {
     }
 
     private static func read(_ provider: Provider) -> String? {
-        guard let key = UserDefaults.standard.string(forKey: defaultsKey(for: provider)),
+        guard let key = readSecret(forKey: defaultsKey(for: provider)),
               !key.isEmpty
         else { return nil }
         return key
     }
 
     private static func delete(_ provider: Provider) {
-        UserDefaults.standard.removeObject(forKey: defaultsKey(for: provider))
+        _ = deleteSecret(forKey: defaultsKey(for: provider))
+    }
+
+    private static func readSecret(forKey key: String) -> String? {
+        do {
+            return try SecureValueMigration.value(
+                forKey: key,
+                legacy: UserDefaults.standard,
+                secure: secureStore
+            )
+        } catch {
+            // Never delete the legacy value unless the secure write succeeds.
+            return UserDefaults.standard.string(forKey: key)
+        }
+    }
+
+    @discardableResult
+    private static func writeSecret(_ value: String, forKey key: String) -> Bool {
+        do {
+            try secureStore.set(Data(value.utf8), forKey: key)
+            UserDefaults.standard.removeObject(forKey: key)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    private static func deleteSecret(forKey key: String) -> Bool {
+        do {
+            try secureStore.removeValue(forKey: key)
+            UserDefaults.standard.removeObject(forKey: key)
+            return true
+        } catch {
+            return false
+        }
     }
 }
 

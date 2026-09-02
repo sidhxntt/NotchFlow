@@ -1,11 +1,11 @@
 #!/usr/bin/env swift
-// Generates the NotchFlow app icon (all AppIcon.appiconset sizes + docs/icon.png).
+// Generates the NotchFlow app icon (all AppIcon.appiconset sizes + .github/icon.png).
 //
 // Usage (from the repo root):
 //   swift scripts/generate_icon.swift
 //
 // The artwork is drawn full-bleed (no baked-in rounded corners or margins) so
-// macOS 26+ can apply its own squircle mask and glass treatment. docs/icon.png
+// macOS 26+ can apply its own squircle mask and glass treatment. .github/icon.png
 // gets the squircle baked in since GitHub renders it as a plain <img>.
 
 import Foundation
@@ -254,6 +254,7 @@ func writePNG(_ image: CGImage, to path: String) {
 
 let root = FileManager.default.currentDirectoryPath
 let iconset = "\(root)/NotchFlow/Resources/Assets.xcassets/AppIcon.appiconset"
+let githubDirectory = "\(root)/.github"
 
 let appIconSizes: [(String, Int)] = [
     ("icon_16x16.png", 16), ("icon_16x16@2x.png", 32),
@@ -270,4 +271,8 @@ for (name, size) in appIconSizes {
     writePNG(image, to: "\(iconset)/\(name)")
 }
 
-writePNG(render(size: 1024, bakeSquircle: true), to: "\(root)/docs/icon.png")
+try! FileManager.default.createDirectory(
+    atPath: githubDirectory,
+    withIntermediateDirectories: true
+)
+writePNG(render(size: 1024, bakeSquircle: true), to: "\(githubDirectory)/icon.png")

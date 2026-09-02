@@ -1,18 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// In-app self-updater — `install.sh`'s flow, in-process. Checks GitHub for a
-/// newer release tag, downloads the zip asset, swaps the installed bundle, and
-/// relaunches. Same trust model as the curl installer (HTTPS to github.com, no
-/// extra signing), so updating in-app is exactly as safe as installing was.
+/// In-app self-updater. It accepts only the exact arm64 ZIP for an exact vX.Y.Z
+/// release, validates the Developer ID identity and Gatekeeper assessment, then
+/// performs a same-volume replacement with rollback.
 ///
 /// Quietness is the contract: checks are silent and failures are swallowed —
 /// the only signals are the dot on the settings gear and the Version row in
 /// settings. An update cue must never interrupt hover-ask-leave.
 ///
-/// Note: URLSession downloads carry no quarantine flag (the app doesn't opt
-/// into `LSFileQuarantineEnabled`), so unlike the curl path no `xattr` step is
-/// strictly needed — one is run on the staged bundle anyway as belt-and-braces.
+/// Quarantine is never removed. macOS remains part of the trust decision for
+/// both installer and updater downloads.
 @MainActor
 final class UpdaterService: ObservableObject {
     static let shared = UpdaterService()
@@ -64,6 +62,22 @@ final class UpdaterService: ObservableObject {
         repositoryPage?.appendingPathComponent("issues")
     }
 
+    private static func manualDMGURL(for version: String) -> URL? {
+        guard let repository,
+              (try? UpdateArtifactVerifier.releaseVersion(fromTag: "v\(version)")) == version
+        else { return nil }
+        let name = UpdateArtifactVerifier.expectedDMGName(for: version)
+        return URL(string: "https://github.com/\(repository)/releases/download/v\(version)/\(name)")
+    }
+
+    private static var expectedTeamIdentifier: String? {
+        let value = (Bundle.main.object(forInfoDictionaryKey: "UpdateTeamIdentifier") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let pattern = #"^[A-Z0-9]{10}$"#
+        guard value.range(of: pattern, options: .regularExpression) != nil else { return nil }
+        return value
+    }
+
     /// The running app's marketing version. CI stamps the release tag into
     /// Info.plist via `MARKETING_VERSION`; local builds carry the pbxproj value.
     /// `NOTCH_FAKE_VERSION` overrides it — debug aid for exercising the update
@@ -85,10 +99,6 @@ final class UpdaterService: ObservableObject {
 
     private enum UpdateError: Error {
         case missingReleaseSource, badResponse, badArchive, toolFailed
-        /// The new bundle failed to copy in AND restoring the old one failed —
-        /// `/Applications/Notch.app` is gone. Carries both the original swap
-        /// failure and the rollback failure so neither is silently dropped.
-        case rollbackFailed(swap: Error, rollback: Error)
     }
 
     // MARK: - Check
@@ -222,20 +232,40 @@ final class UpdaterService: ObservableObject {
     /// to a UI that needs cleaning up), on failure the old bundle is rolled back
     /// and the Version row shows the releases-page fallback.
     func update() {
-        guard case .available = phase else { return }
+        guard case .available(let advertisedVersion) = phase else { return }
+        guard let manualDMGURL = Self.manualDMGURL(for: advertisedVersion),
+              let teamIdentifier = Self.expectedTeamIdentifier
+        else {
+            phase = .failed
+            return
+        }
+        let installPlan = UpdateInstallPlanner.plan(
+            runningBundleURL: Bundle.main.bundleURL,
+            manualDMGURL: manualDMGURL
+        )
+        guard case .automatic(let destination, let stagingParent) = installPlan else {
+            if case .manualDMG(let url, _) = installPlan {
+                NSWorkspace.shared.open(url)
+            }
+            phase = .failed
+            return
+        }
         phase = .updating
         Task {
             do {
                 let release = try await Self.fetchLatest()
-                guard let asset = release.assets.first(where: { $0.name.hasSuffix(".zip") }),
-                      // Private repos only serve assets through the API URL
-                      // (with the token); the browser URL is the public path.
-                      let url = URL(string: Self.token != nil ? asset.url : asset.browser_download_url)
-                else { throw UpdateError.badResponse }
+                try UpdateArtifactVerifier.validateRefetchedReleaseVersion(
+                    release.version,
+                    advertisedVersion: advertisedVersion,
+                    currentVersion: Self.currentVersion
+                )
+                let asset = try release.zipAsset(preferAPIURL: Self.token != nil)
 
                 let (tmp, resp) = try await ProxyConfig.urlSession.download(
-                    for: Self.request(url, accept: "application/octet-stream"))
-                guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
+                    for: Self.request(asset.downloadURL, accept: "application/octet-stream"))
+                guard (resp as? HTTPURLResponse)?.statusCode == 200,
+                      resp.url?.scheme?.lowercased() == "https"
+                else {
                     throw UpdateError.badResponse
                 }
                 // URLSession's temp file may be reclaimed once this scope moves
@@ -244,11 +274,16 @@ final class UpdaterService: ObservableObject {
                     .appendingPathComponent("notch-update-\(ProcessInfo.processInfo.globallyUniqueString).zip")
                 try FileManager.default.moveItem(at: tmp, to: zip)
 
-                let dest = Bundle.main.bundleURL
                 try await Task.detached(priority: .userInitiated) {
-                    try Self.swapBundle(zip: zip, dest: dest)
+                    try Self.swapBundle(
+                        zip: zip,
+                        destination: destination,
+                        stagingParent: stagingParent,
+                        version: release.version,
+                        teamIdentifier: teamIdentifier
+                    )
                 }.value
-                Self.relaunch(dest)
+                try Self.relaunch(destination)
             } catch {
                 phase = .failed
             }
@@ -258,16 +293,39 @@ final class UpdaterService: ObservableObject {
     // MARK: - GitHub API
 
     private struct Release: Decodable {
-        let tag_name: String
+        let version: String
         let assets: [Asset]
+
+        private enum CodingKeys: String, CodingKey {
+            case tagName = "tag_name"
+            case assets
+        }
+
         struct Asset: Decodable {
             let name: String
             let url: String                    // API asset URL (token path)
             let browser_download_url: String   // public download URL
         }
-        /// The tag with its `v` prefix dropped — the comparable version string.
-        var version: String {
-            tag_name.hasPrefix("v") ? String(tag_name.dropFirst()) : tag_name
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let tag = try container.decode(String.self, forKey: .tagName)
+            version = try UpdateArtifactVerifier.releaseVersion(fromTag: tag)
+            assets = try container.decode([Asset].self, forKey: .assets)
+        }
+
+        func zipAsset(preferAPIURL: Bool) throws -> UpdateReleaseAsset {
+            let expectedName = UpdateArtifactVerifier.expectedZIPName(for: version)
+            let matching = assets.filter { $0.name == expectedName }
+            guard matching.count == 1, let rawAsset = matching.first,
+                  let downloadURL = URL(string: preferAPIURL ? rawAsset.url : rawAsset.browser_download_url)
+            else {
+                throw UpdateArtifactVerificationError.missingOrAmbiguousAsset
+            }
+            return try UpdateArtifactVerifier.selectZIPAsset(
+                from: [UpdateReleaseAsset(name: rawAsset.name, downloadURL: downloadURL)],
+                releaseVersion: version
+            )
         }
     }
 
@@ -292,69 +350,45 @@ final class UpdaterService: ObservableObject {
 
     // MARK: - Swap & relaunch
 
-    /// Extract the zip and swap the installed bundle — the running app replaces
-    /// itself, which macOS is fine with (the executing binary is already mapped).
-    /// The old bundle is moved aside first and restored if the copy fails, so a
-    /// botched download can never leave the user appless.
-    private nonisolated static func swapBundle(zip: URL, dest: URL) throws {
+    /// Extract on the destination volume, verify the exact root app, then run
+    /// the planner's backup/replacement transaction. No destination path is
+    /// changed until the candidate has passed every trust and metadata check.
+    private nonisolated static func swapBundle(
+        zip: URL,
+        destination: URL,
+        stagingParent: URL,
+        version: String,
+        teamIdentifier: String
+    ) throws {
         let fm = FileManager.default
-        let work = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("notch-update-\(ProcessInfo.processInfo.globallyUniqueString)")
-        try fm.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: zip) }
+        let work = try UpdateInstallPlanner.makeStagingDirectory(
+            in: stagingParent,
+            fileManager: fm
+        )
+        defer { try? fm.removeItem(at: work) }
 
         let extracted = work.appendingPathComponent("extracted", isDirectory: true)
         try runTool("/usr/bin/ditto", "-x", "-k", zip.path, extracted.path)
-        guard let staged = findApp(in: extracted, fm: fm) else { throw UpdateError.badArchive }
-        // A release can have the right bundle filename while still carrying the
-        // retired in-notch preferences UI. Refuse that archive before touching
-        // the installed app: every NotchFlow release eligible for self-update
-        // must declare the standalone Settings experience explicitly.
-        guard Bundle(url: staged)?.bundleIdentifier == Bundle.main.bundleIdentifier,
-              Bundle(url: staged)?.object(forInfoDictionaryKey: "SettingsExperience") as? String
-                  == "standalone-v1"
-        else { throw UpdateError.badArchive }
-        // Defensive only — see the class comment on quarantine.
-        try? runTool("/usr/bin/xattr", "-dr", "com.apple.quarantine", staged.path)
+        let staged = extracted.appendingPathComponent("NotchFlow.app", isDirectory: true)
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: staged.path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            throw UpdateError.badArchive
+        }
 
-        let backup = work.appendingPathComponent("previous.app")
-        try fm.moveItem(at: dest, to: backup)
-        do {
-            try runTool("/usr/bin/ditto", staged.path, dest.path)
-        } catch let swap {
-            // Restore the old bundle. If rollback itself fails the app is gone,
-            // so surface that distinctly instead of swallowing it — the caller
-            // must know the install location is now empty.
-            do {
-                if fm.fileExists(atPath: dest.path) {
-                    try fm.removeItem(at: dest)
-                }
-                try fm.moveItem(at: backup, to: dest)
-            } catch let rollback {
-                throw UpdateError.rollbackFailed(swap: swap, rollback: rollback)
-            }
-            throw swap
-        }
-    }
-
-    /// The app bundle inside the extracted archive — at the root (CI zips with
-    /// `--keepParent`) or one folder down, same tolerance as `install.sh`.
-    private nonisolated static func findApp(in dir: URL, fm: FileManager) -> URL? {
-        // Current name first, then pre-rename bundle names, so an update keeps
-        let names = ["NotchFlow.app"]
-        for name in names {
-            let direct = dir.appendingPathComponent(name)
-            if fm.fileExists(atPath: direct.path) { return direct }
-        }
-        let kids = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-        for kid in kids {
-            if names.contains(kid.lastPathComponent) { return kid }
-            for name in names {
-                let nested = kid.appendingPathComponent(name)
-                if fm.fileExists(atPath: nested.path) { return nested }
-            }
-        }
-        return nil
+        let verifier = UpdateArtifactVerifier(
+            expectedBundleIdentifier: UpdateArtifactVerifier.bundleIdentifier,
+            expectedTeamIdentifier: teamIdentifier,
+            expectedVersion: version
+        )
+        try UpdateInstallPlanner.replaceInstalledBundle(
+            with: staged,
+            at: destination,
+            fileManager: fm,
+            verifier: verifier.verify(appAt:)
+        )
     }
 
     private nonisolated static func runTool(_ path: String, _ args: String...) throws {
@@ -366,14 +400,15 @@ final class UpdaterService: ObservableObject {
         guard p.terminationStatus == 0 else { throw UpdateError.toolFailed }
     }
 
-    /// Spawn a detached `open` for the (new) bundle and quit. The half-second
-    /// sleep lets this process fully exit so `open` launches the fresh binary
-    /// rather than focusing the dying one.
-    private static func relaunch(_ bundle: URL) {
+    /// Ask LaunchServices for a distinct process using structured arguments;
+    /// never interpolate an app path into a shell command.
+    private static func relaunch(_ bundle: URL) throws {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "sleep 0.5; /usr/bin/open \"\(bundle.path)\""]
-        try? p.run()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = ["-n", bundle.path]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try p.run()
         NSApp.terminate(nil)
     }
 }

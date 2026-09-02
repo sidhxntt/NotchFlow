@@ -19,15 +19,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelMetrics: [CGDirectDisplayID: NotchMetrics] = [:]
     /// Shared by the notch and the Settings scene so a preference updates the
     /// running overlay immediately rather than configuring a second app state.
-    let model = NotchModel(ai: AppDelegate.makeService())
-    private let capabilities = NotchCapabilityStore.shared
-    private let utilityCapabilities = UtilityCapabilityService.shared
+    private(set) lazy var model = NotchModel(ai: AppDelegate.makeService())
+    private lazy var capabilities = NotchCapabilityStore.shared
+    private lazy var utilityCapabilities = UtilityCapabilityService.shared
     private var capabilityRefreshTask: Task<Void, Never>?
     private var openObserver: AnyCancellable?
-    /// Debounces the full-screen re-evaluation: Space/app-activation events can
-    /// arrive in bursts, and the on-screen window list settles a beat after them,
-    /// so coalesce into one deferred `updateFullScreenHiding()`.
-    private var fullScreenUpdateWork: DispatchWorkItem?
+    private var licenseObserver: AnyCancellable?
+    private var agenticModeObserver: AnyCancellable?
+    private var productServicesStarted = false
     /// Retains the explicit Dot Dock artwork. AppKit's default tile can re-read
     /// the bundle icon after an accessory app becomes regular, so Dot owns the
     /// tile content directly; Original removes the view and restores default
@@ -139,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// live, so both move together. Called at launch and whenever Settings saves a
     /// key / switches providers.
     private func syncService() {
+        guard productServicesStarted else { return }
         model.setService(AppDelegate.makeService())
         model.isConfigured = AppDelegate.isConfigured()
     }
@@ -231,6 +231,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        APIKeyStore.migrateLegacyKeys()
+        // This is deliberately outside the entitlement boundary. The menu is
+        // the one always-visible route back to Buy / Activate when product
+        // services are unavailable, so it must exist while the state is still
+        // checking and after a trial expires.
+        installMenuBar()
+        let license = LicenseService.shared
+        licenseObserver = license.$committedState
+            .removeDuplicates()
+            .sink { [weak self] state in
+                self?.applyEntitlement(state, service: license)
+            }
+        Task {
+            await license.resolveInitialState()
+        }
+    }
+
+    /// Product construction is intentionally below the entitlement boundary.
+    /// While the license is checking or blocked, no notch, agent bridge, global
+    /// shortcut, updater, utility poller, or AI service is started.
+    private func startProductServices() {
+        guard !productServicesStarted else { return }
+        productServicesStarted = true
+        model.resumeAfterEntitlementRestored()
+
+        if agenticModeObserver == nil {
+            agenticModeObserver = capabilities.$agenticModeEnabled
+                .removeDuplicates()
+                .sink { [weak self] enabled in
+                    self?.applyAgenticMode(enabled)
+                }
+        }
+        applyAgenticMode(capabilities.agenticModeEnabled)
+
         // Agent app by default: no Dock icon, no app menu — it's a pure overlay.
         // The user can opt into a Dock icon (Settings → General), which flips this
         // to `.regular`; `applyDockIconVisibility` reads the persisted choice.
@@ -284,16 +318,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // approach vector — the entry physics in `NotchIsland` feed on it.
         MouseVelocityTracker.shared.start()
 
-        // Open the Claude Code approval socket and (re)generate its hook script
-        // and settings file. Done at launch rather than lazily at spawn because a
-        // Claude run started by a PREVIOUS app session can still be alive and
-        // about to fire a hook: the settings file it was launched with names this
-        // socket, and if nobody is listening that call quietly fails open.
-        // Cheap — a bind, two small file writes and one parked thread.
-        ClaudeHookBridge.shared.startIfNeeded()
-        CodexTerminalHookBridge.shared.startIfNeeded()
-        CodexTerminalHookBridge.shared.inspectGlobalHookConfiguration()
-
         // Read the user's shell PATH first — every CLI lookup below needs it, and
         // it costs an interactive login shell, so it must not land on the main
         // thread mid-render.
@@ -311,11 +335,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // agent run must not wait on it.
         ProxyConfig.warmUp()
         // The system's own notification banners feed the resting notch's alert
-        // ears (a call, or one app's unread count). The watcher is inert without
+        // ears with one app's unread count. The watcher is inert without
         // Accessibility and never prompts for it — same standing rule as the
         // clipboard reads in `HotKey`.
         startAlertBannerWatch()
-        CallWindowWatcher.shared.primeAccessibilityConnections()
         capabilityRefreshTask = Task { [capabilities] in
             while !Task.isCancelled {
                 await capabilities.refresh()
@@ -324,7 +347,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // observer stays quiet (and is the only thing that notices a
                 // banner LEAVING), `tick` expires burst slots and stale tallies.
                 AlertBannerWatcher.shared.sweep()
-                CallWindowWatcher.shared.sweep()
                 AlertFeedStore.shared.tick(now: Date())
                 try? await Task.sleep(for: .seconds(1))
             }
@@ -738,34 +760,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Auto-hide the island while a full-screen app covers its (virtual-notch)
-        // screen — see `HideNotchInFullscreen`. Entering/leaving native full screen
-        // is a Space switch, and a borderless full-screen window shows up as an app
-        // activation; watch both. The on-screen window list settles a beat after the
-        // event fires, so the actual evaluation is deferred a moment (see
-        // `scheduleFullScreenHidingUpdate`).
-        let workspaceCenter = NSWorkspace.shared.notificationCenter
-        workspaceCenter.addObserver(
-            self,
-            selector: #selector(fullScreenStateMaybeChanged),
-            name: NSWorkspace.activeSpaceDidChangeNotification,
-            object: nil)
-        workspaceCenter.addObserver(
-            self,
-            selector: #selector(fullScreenStateMaybeChanged),
-            name: NSWorkspace.didActivateApplicationNotification,
-            object: nil)
-        // The Settings → General "Hide in full screen" toggle re-evaluates now.
-        NotificationCenter.default.addObserver(
-            forName: .hideNotchInFullscreenChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.updateFullScreenHiding()
-            }
-        }
-
         // When the user saves an API key or switches providers in Settings,
         // rebuild the AI service so the next question goes live immediately — no
         // restart needed.
@@ -835,8 +829,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] note in
             Task { @MainActor in
-                guard let self,
-                      let id = note.userInfo?[NotificationService.threadIDKey] as? UUID
+                guard let self else { return }
+                guard self.productServicesStarted else {
+                    self.presentRestrictedSettings()
+                    return
+                }
+                guard let id = note.userInfo?[NotificationService.threadIDKey] as? UUID
                 else { return }
                 // Bring the app forward so the summoned panel is interactive even
                 // when Notch wasn't frontmost, then open on the screen under the
@@ -883,6 +881,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] note in
             Task { @MainActor in
                 guard let self else { return }
+                guard self.productServicesStarted else {
+                    self.presentRestrictedSettings()
+                    return
+                }
                 NSApp.activate(ignoringOtherApps: true)
                 let display = self.displayForSummon()
                 withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
@@ -985,6 +987,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func applyEntitlement(_ state: LicenseState, service: LicenseService) {
+        if state.allowsProductServices {
+            startProductServices()
+        } else if state.shouldPresentRestrictedSettings {
+            suspendProductServices()
+        }
+    }
+
+    /// The Agentic-mode preference owns every approval transport. With it off,
+    /// closing the sockets makes existing terminal hooks fail open to their
+    /// native prompts; with it on, the same bridges resume their normal Notch
+    /// approval route.
+    private func applyAgenticMode(_ enabled: Bool) {
+        guard productServicesStarted else { return }
+        if enabled {
+            AgentTaskManager.shared.resumeAfterEntitlementRestored()
+            ClaudeHookBridge.shared.startIfNeeded()
+            CodexTerminalHookBridge.shared.startIfNeeded()
+            CodexTerminalHookBridge.shared.inspectGlobalHookConfiguration()
+        } else {
+            model.suspendForAgenticModeDisabled()
+            AgentTaskManager.shared.suspendForAgenticModeDisabled()
+        }
+    }
+
+    /// Reaching the seven-day boundary in a running process removes every entry
+    /// point we own and closes the product surface before opening Settings →
+    /// About. A later successful activation starts a fresh set of panels and
+    /// monitors.
+    private func suspendProductServices() {
+        guard productServicesStarted else {
+            presentRestrictedSettings()
+            return
+        }
+        productServicesStarted = false
+
+        ProductRuntimeSuspension(
+            cancelModelWork: { [weak self] in
+                self?.model.suspendForLicenseBlock()
+            },
+            cancelAgentWork: {
+                AgentTaskManager.shared.suspendForLicenseBlock()
+            },
+            closeProductWindows: { [weak self] in
+                guard let self else { return }
+                DetachedSessionWindowController.closeAllForLicenseBlock()
+                HistoryArchiveWindowController.shared.closeForLicenseBlock()
+                SettingsWindowController.shared.closeForLicenseBlock()
+                self.panels.values.forEach { $0.close() }
+                self.panels.removeAll()
+                self.panelMetrics.removeAll()
+                // Close any AppKit/SwiftUI product window not owned by one of the
+                // explicit controllers above. Restricted Settings is presented
+                // only after this sweep.
+                NSApp.windows.forEach { $0.close() }
+            },
+            removeProductEntryPoints: { [weak self] in
+                self?.removeProductEntryPointsForLicenseBlock()
+            },
+            presentRestrictedSettings: { [weak self] in
+                self?.presentRestrictedSettings()
+            }
+        ).execute()
+    }
+
+    /// The only recovery surface for an expired trial or invalid license. This
+    /// deliberately reuses Settings instead of creating a second licensing
+    /// window, and the Settings view itself limits its sidebar to About.
+    private func presentRestrictedSettings() {
+        model.settingsSection = InlineSettingsView.Section.about.rawValue
+        SettingsWindowController.shared.present(model: model)
+    }
+
+    private func removeProductEntryPointsForLicenseBlock() {
+        capabilityRefreshTask?.cancel()
+        capabilityRefreshTask = nil
+        openObserver?.cancel()
+        openObserver = nil
+        summonHotKey = nil
+        summonDoubleTap = nil
+        promptHotKeys.removeAll()
+        promptDoubleTaps.removeAll()
+        selectedTextForceClick = nil
+        isCapturingSelection = false
+        // Keep the status item available: it exposes the license recovery menu
+        // while the product-specific shortcut and panel entry points are gone.
+        menuBar?.suspendForLicenseBlock()
+        if let settingsHotKeyMonitor {
+            NSEvent.removeMonitor(settingsHotKeyMonitor)
+            self.settingsHotKeyMonitor = nil
+        }
+        NSApp.setActivationPolicy(.accessory)
+    }
+
     /// A fresh install cannot safely prompt for every protected capability at
     /// launch. Instead it names the concrete consequences once and sends the
     /// user to the existing per-permission controls when they choose to set up.
@@ -995,7 +1091,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             let alert = NSAlert()
             alert.messageText = "Enable Mac features when you need them"
-            alert.informativeText = "Accessibility is required for call detection and app notification banners. Automation controls Music and Spotify. Notifications deliver timers and reminders. You can grant each one later in Settings."
+            alert.informativeText = "Accessibility is required for app notification banners. Automation controls Music and Spotify. Notifications deliver timers and reminders. You can grant each one later in Settings."
             alert.addButton(withTitle: "Review Permissions")
             alert.addButton(withTitle: "Not Now")
             let response = alert.runModal()
@@ -1005,18 +1101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Connect the banner watcher to the alert store, in both directions: the
-    /// watcher reports what appeared and vanished, the store reaches back to
-    /// press the real banner's buttons when the user answers from the notch (or,
-    /// when that press can't be delivered, to put the calling app in front).
+    /// Connect the banner watcher to the notification store.
     private func startAlertBannerWatch() {
         let store = AlertFeedStore.shared
         let watcher = AlertBannerWatcher.shared
-
-        // Second source: calls that are never banners. WhatsApp and friends draw
-        // their own window, so the banner sweep alone would miss every one of
-        // them (found the hard way, by ringing the machine).
-        let callWindows = CallWindowWatcher.shared
 
         watcher.onBanner = { banner in
             store.ingest(banner, now: Date())
@@ -1027,28 +1115,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watcher.onVisible = { token in
             store.bannerIsVisible(token: token, now: Date())
         }
-        callWindows.onCall = { call in
-            // Handed over as a call, not as a banner: this source read a real
-            // call window and already knows whether it is ringing or live, and
-            // re-deriving that from the banner rule threw the answer away.
-            store.ingest(call: call, now: Date())
-        }
-        callWindows.onStateChange = { token, state in
-            store.updateCallState(token: token, to: state, now: Date())
-        }
-        callWindows.onVanished = { token in
-            store.bannerVanished(token: token, now: Date())
-        }
-        // Tokens are disjoint by construction, so the owner answers and the other
-        // is never asked.
-        store.pressHandler = { token, action in
-            callWindows.owns(token: token)
-                ? callWindows.press(token: token, action: action)
-                : watcher.press(token: token, action: action)
-        }
-        store.handOffHandler = { bundleID in
-            watcher.handOff(toBundleID: bundleID)
-        }
         watcher.start()
     }
 
@@ -1058,6 +1124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerSummonHotKey() {
         summonHotKey = nil
         summonDoubleTap = nil
+        guard productServicesStarted else { return }
         let config = SummonHotKey.current
         guard config.enabled, !ShortcutRecording.isActive else { return }
 
@@ -1082,6 +1149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerPromptHotKeys() {
         promptHotKeys.removeAll()
         promptDoubleTaps.removeAll()
+        guard productServicesStarted else { return }
         guard !ShortcutRecording.isActive else { return }
 
         for binding in PromptShortcutStore.current where binding.canRunFromHotKey {
@@ -1114,6 +1182,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// system focused element), then start a fresh Chat and submit immediately.
     /// Missing/unsupported selections deliberately do not fall back to clipboard.
     private func runPromptShortcut(id: UUID) {
+        guard productServicesStarted else {
+            presentRestrictedSettings()
+            return
+        }
         guard let binding = PromptShortcutStore.shortcut(id: id), binding.canRunFromHotKey else { return }
 
         // While the `/` menu owns the active prompt, the chord printed beside a
@@ -1409,6 +1481,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// no behaviour of its own, it just makes those paths reachable from the bar.
     /// Opens land on the screen the mouse is on (`displayForSummon`), same as ⌘,.
     private func installMenuBar() {
+        if let menuBar {
+            menuBar.apply()
+            return
+        }
         menuBar = MenuBarController(actions: MenuBarController.Actions(
             openNotch: { [weak self] in
                 guard let self else { return }
@@ -1432,6 +1508,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openSettings: {
                 NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
             },
+            openAbout: { [weak self] in
+                self?.model.settingsSection = InlineSettingsView.Section.about.rawValue
+                NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+            },
             openModelSettings: { [weak self] in
                 self?.model.settingsSection = "Model"
                 NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
@@ -1453,6 +1533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// by the `$open` observer — a status-menu click leaves the previous app
     /// frontmost, so that path still records the right app to hand focus back to.
     private func summonFromMenuBar(_ body: @escaping (NotchModel, CGDirectDisplayID?) -> Void) {
+        guard productServicesStarted else { return }
         let display = displayForSummon()
         withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
             body(model, display)
@@ -1467,6 +1548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// kick off a user-initiated check, so the result — a spinner, an "up to date"
     /// note, or the Update button — shows right there.
     private func checkForUpdatesFromMenu() {
+        guard productServicesStarted else { return }
         model.settingsSection = "About"
         UpdaterService.shared.checkManually()
         NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
@@ -1488,6 +1570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// torn down — so flipping the setting from inside the open settings panel
     /// doesn't slam that panel shut.
     private func rebuildPanels() {
+        guard productServicesStarted else { return }
         var live: Set<CGDirectDisplayID> = []
         for screen in targetScreens() {
             guard let id = screen.displayID else { continue }
@@ -1526,82 +1609,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let active = model.activeDisplay, panels[active] == nil {
             model.activeDisplay = preferredScreen()?.displayID
         }
-        // A rebuild orders every (re)created panel to the front, so re-apply the
-        // full-screen hiding on top of the fresh layout.
-        updateFullScreenHiding()
-    }
-
-    // MARK: - Full-screen hiding
-
-    /// A Space switch or app activation may mean an app just entered or left full
-    /// screen — re-evaluate, deferred a moment so the on-screen window list has
-    /// settled into its new state before we read it.
-    @objc private func fullScreenStateMaybeChanged() {
-        scheduleFullScreenHidingUpdate()
-    }
-
-    private func scheduleFullScreenHidingUpdate(delay: TimeInterval = 0.2) {
-        fullScreenUpdateWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.updateFullScreenHiding() }
-        fullScreenUpdateWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-    }
-
-    /// Hide (order out) the panels whose screen is currently covered by a
-    /// full-screen app, and restore the rest — the behaviour behind the Settings →
-    /// General "Hide in full screen" toggle. Scoped to *virtual-notch* screens
-    /// (`safeAreaInsets.top <= 0`): the built-in display's hardware notch is
-    /// physical and always present, so its island never hides here; only the drawn
-    /// notch on external / non-notched screens, which would otherwise float over
-    /// full-screen video like a smudge, steps aside. Idempotent — it only touches a
-    /// panel whose visibility actually needs to change.
-    private func updateFullScreenHiding() {
-        let enabled = HideNotchInFullscreen.isEnabled
-        for (id, panel) in panels {
-            guard let screen = NSScreen.screens.first(where: { $0.displayID == id })
-            else { continue }
-            let isVirtualNotch = screen.safeAreaInsets.top <= 0
-            let shouldHide = enabled && isVirtualNotch && Self.hasFullScreenWindow(on: screen)
-            if shouldHide {
-                if panel.isVisible { panel.orderOut(nil) }
-            } else if !panel.isVisible {
-                panel.orderFrontRegardless()
-            }
-        }
-    }
-
-    /// True when an ordinary window is covering `screen` edge-to-edge on the space
-    /// that's visible right now — what we treat as "an app is full-screen here".
-    ///
-    /// Reads the public on-screen window list (no Screen Recording permission: we
-    /// only look at window bounds/owner/layer, never titles or pixels).
-    /// `.optionOnScreenOnly` lists only windows on currently-visible spaces, so a
-    /// full-screen app parked on its own hidden Space doesn't count — the island
-    /// only steps aside when the full-screen content is actually in front here.
-    private static func hasFullScreenWindow(on screen: NSScreen) -> Bool {
-        let target = screen.cgFrame
-        guard let list = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
-        ) as? [[String: Any]] else { return false }
-        let selfPID = ProcessInfo.processInfo.processIdentifier
-        for info in list {
-            // Ordinary app windows sit at layer 0; the menu bar, Dock and other
-            // chrome live above it. Skip our own overlay too.
-            guard (info[kCGWindowLayer as String] as? Int) == 0,
-                  (info[kCGWindowOwnerPID as String] as? pid_t) != selfPID,
-                  let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
-                  let bounds = CGRect(dictionaryRepresentation: boundsDict)
-            else { continue }
-            // Fills the display edge-to-edge (a couple points of slack for
-            // rounding) ⇒ full-screen on this screen.
-            if abs(bounds.minX - target.minX) < 3,
-               abs(bounds.minY - target.minY) < 3,
-               abs(bounds.width - target.width) < 3,
-               abs(bounds.height - target.height) < 3 {
-                return true
-            }
-        }
-        return false
     }
 
     /// Build the transparent canvas panel for one screen, injecting per-screen
@@ -1790,33 +1797,14 @@ enum DisplayPlacement: String, CaseIterable, Identifiable {
     }
 }
 
-/// Whether the island auto-hides while a full-screen app covers the screen it
-/// sits on — persisted in `UserDefaults`, toggled in Settings → General,
-/// consumed by `AppDelegate`'s full-screen watcher. On by default: a virtual
-/// notch floating over full-screen video on an external display reads as a
-/// smudge, so it steps out of the way and returns when you leave full screen.
-/// (The built-in display's hardware notch is physical and always there, so this
-/// only governs the drawn island on external / non-notched screens.)
-enum HideNotchInFullscreen {
-    private static let key = "hideNotchInExternalFullscreen"
-
-    /// Default `true` (auto-hide). An absent key ⇒ the on-by-default; only an
-    /// explicit stored value overrides it.
-    static var isEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: key) }
-    }
-}
-
 /// How eagerly the resting notch unfurls under the pointer — persisted in
 /// `UserDefaults`, edited in Settings → General, consumed by
 /// `NotchModel.hoverEntered`.
 ///
 /// It exists because the resting hover strip spans the menu bar's full height,
-/// so travelling along the bar past the notch kept unfurling the panel over
-/// whatever the user was reaching for. The three steps are three answers to
-/// "does arriving sideways count as arriving?": never on its own, only if you
-/// didn't blow straight through, or always.
+/// so travelling along the bar past the notch must not unfurl the panel over
+/// whatever the user was reaching for. The three hover levels are deliberately
+/// distinct dwell times; a pass-through leaves before its timer can fire.
 ///
 /// Declared low→high; the picker renders `allCases` in this order.
 enum HoverSensitivity: String, CaseIterable, Identifiable {
@@ -1825,15 +1813,10 @@ enum HoverSensitivity: String, CaseIterable, Identifiable {
     /// a click is what unfurls it — the level for anyone whose pointer lives on
     /// the menu bar and who wants the island to stay folded until asked.
     case click
-    /// Anything arriving within 45° of horizontal is deferred to the entry watch
-    /// at almost any speed, not just at sweep speed — so drifting along the menu
-    /// bar only opens the panel if the pointer actually stops on the notch. A
-    /// steeper approach (coming up from the content below) still opens on
-    /// contact; that direction is never a menu bar reach.
+    /// Opens after the longest deliberate hover, protecting the menu bar from
+    /// accidental crossings.
     case low
-    /// The default. Hover opens, except on a fast crossing within 25° of
-    /// horizontal, which is handed to the entry watch and opens only if the
-    /// pointer settles.
+    /// The default: a brief dwell before opening.
     case balanced
     /// Hover opens on contact, whatever the approach looked like.
     case instant
@@ -1849,30 +1832,16 @@ enum HoverSensitivity: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Degrees off horizontal, each side, within which an approach is deferred to
-    /// the entry watch instead of opening on contact. Zero defers nothing.
-    ///
-    /// Lives with the sensitivity cases so the gate that reads the entry vector
-    /// (`NotchModel.isMenuBarSweep`) gets its threshold from the selected policy.
-    var blockedAngle: Double {
-        switch self {
-        // Never read: `opensOnClickOnly` answers first and this level never
-        // opens on contact at all, so there is no approach left to judge.
-        case .click:    return 0
-        // 45° is the natural ceiling: it's exactly "the approach travelled
-        // further sideways than downward". Past it the gate would start
-        // deferring approaches that are more vertical than horizontal, which no
-        // menu bar reach ever is.
-        case .low:      return 45
-        case .balanced: return 25
-        case .instant:  return 0
-        }
-    }
-
     /// True on the level where hover alone never unfurls the panel — the one
-    /// gate that has to run BEFORE the vector tests, since on this level there
-    /// is no approach good enough to open on.
+    /// gate that has to run before a dwell is scheduled.
     var opensOnClickOnly: Bool { self == .click }
+
+    /// The time the pointer must remain on the resting notch before it opens.
+    /// Click has no hover-open path, so its delay is `nil`.
+    var hoverOpenDelay: TimeInterval? {
+        guard let level = HoverDwellPolicy.Level(rawValue: rawValue) else { return nil }
+        return HoverDwellPolicy.openingDelay(for: level)
+    }
 
     private static let key = "hoverSensitivity"
 
@@ -1905,7 +1874,10 @@ enum AppIconStyle: String, CaseIterable, Identifiable {
     var image: NSImage? {
         switch self {
         case .original:
-            return NSImage(named: "AppIcon")
+            // The source `AppIcon` PNG has opaque black corners. Ask AppKit for
+            // the bundle icon instead, so previews use the native app-icon
+            // treatment rather than drawing the PNG's square canvas.
+            return NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
         case .dot:
             return NSImage(named: Self.systemUsesDarkAppearance
                            ? "DarkModeAppIcon"

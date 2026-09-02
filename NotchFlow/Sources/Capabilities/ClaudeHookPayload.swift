@@ -36,11 +36,16 @@ public struct ClaudeHookRequest: Equatable, Sendable {
     public let commandDescription: String?
     /// `tool_input.file_path` / `notebook_path` — the edit/write tools.
     public let filePath: String?
+    /// `tool_input.url` — WebFetch.
+    public let url: String?
+    /// `tool_input.query` — WebSearch.
+    public let query: String?
 
     public init(sessionID: String, toolUseID: String, toolName: String,
                 transcriptPath: String? = nil,
                 cwd: String? = nil, command: String? = nil,
-                commandDescription: String? = nil, filePath: String? = nil) {
+                commandDescription: String? = nil, filePath: String? = nil,
+                url: String? = nil, query: String? = nil) {
         self.sessionID = sessionID
         self.toolUseID = toolUseID
         self.toolName = toolName
@@ -49,6 +54,8 @@ public struct ClaudeHookRequest: Equatable, Sendable {
         self.command = command
         self.commandDescription = commandDescription
         self.filePath = filePath
+        self.url = url
+        self.query = query
     }
 
     /// Decode one hook payload. Returns nil for anything that isn't a usable
@@ -84,7 +91,9 @@ public struct ClaudeHookRequest: Equatable, Sendable {
             cwd: nonEmpty(object["cwd"]),
             command: nonEmpty(input["command"]),
             commandDescription: nonEmpty(input["description"]),
-            filePath: nonEmpty(input["file_path"]) ?? nonEmpty(input["notebook_path"])
+            filePath: nonEmpty(input["file_path"]) ?? nonEmpty(input["notebook_path"]),
+            url: nonEmpty(input["url"]),
+            query: nonEmpty(input["query"])
         )
     }
 
@@ -122,6 +131,8 @@ public struct ClaudeHookRequest: Equatable, Sendable {
             default:             return "\(toolName) \(name)"
             }
         }
+        if let url, !url.isEmpty { return "Fetch \(url)" }
+        if let query, !query.isEmpty { return "Search \(query)" }
         return "Run \(toolName)"
     }
 
@@ -130,6 +141,8 @@ public struct ClaudeHookRequest: Equatable, Sendable {
     public var detail: String? {
         if command != nil { return commandDescription ?? cwd }
         if let filePath { return filePath }
+        if url != nil { return cwd }
+        if query != nil { return cwd }
         return commandDescription ?? cwd
     }
 

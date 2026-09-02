@@ -94,6 +94,22 @@ final class WhatsNewService: ObservableObject {
     /// version first. Each string is one bullet; no leading `•`.
     private static let bundled: [Entry] = [
         Entry(
+            version: "1.0.2",
+            date: "2026-09-02",
+            features: [
+                "Start with a full seven-day trial. When it ends, NotchFlow pauses every product feature until you activate a paid license.",
+                "Buy a NotchFlow license through Lemon Squeezy, then enter the license key emailed to you to unlock this Mac.",
+                "A valid NotchFlow license is perpetual and includes future NotchFlow updates.",
+            ],
+            improvements: [
+                "Direct downloads now use a Developer ID-signed, notarized DMG. A matching ZIP remains available when you cannot mount a disk image.",
+                "Release checks now verify the exact version, app identity, signer and Apple-silicon build before a download is published.",
+            ],
+            others: [
+                "The new Privacy Policy explains what stays on your Mac, what is sent to providers you choose, and how licensing works.",
+            ]
+        ),
+        Entry(
             version: "1.0",
             date: "2026-08-27",
             features: [
@@ -105,7 +121,7 @@ final class WhatsNewService: ObservableObject {
                 "Copy something worth keeping and the notch offers to file it — press ⌘C again to accept.",
                 "A Pomodoro timer that traces its lap around the notch's edge, announces each phase hand-off, and keeps a streak grid of the days you showed up.",
                 "Now playing, volume and transport controls for whatever is making sound, plus an announcement when your AirPods connect.",
-                "Incoming calls and notifications land on the notch's shoulders: the caller with answer and decline buttons, or an app's icon with its unread count.",
+                "Notifications land on the notch's shoulders with an app's icon and unread count.",
                 "Your calendar's next events, a webcam preview, and handwritten answers if you prefer them typeset by hand.",
                 "Speaks English, Simplified and Traditional Chinese, Japanese, Korean, French and Spanish.",
             ],

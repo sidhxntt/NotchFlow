@@ -10,7 +10,7 @@ import Testing
 /// transitive closure holds.
 private func allActive() -> RestingNotchInputs {
     RestingNotchInputs(panelOpen: false, liveActivityEnabled: true,
-                       call: true, notifications: true, agentQuestion: true,
+                       notifications: true, agentQuestion: true,
                        agentAnnouncement: true, backgroundWork: true,
                        accessoryEvent: true, focusTransition: true,
                        agentSteady: true, nowPlaying: true, clipboardSense: true)
@@ -18,7 +18,6 @@ private func allActive() -> RestingNotchInputs {
 
 private func deactivate(_ slot: RestingNotchSlot, in inputs: inout RestingNotchInputs) {
     switch slot {
-    case .call:              inputs.call = false
     case .notifications:     inputs.notifications = false
     case .agentQuestion:     inputs.agentQuestion = false
     case .agentAnnouncement: inputs.agentAnnouncement = false
@@ -35,7 +34,7 @@ private func deactivate(_ slot: RestingNotchSlot, in inputs: inout RestingNotchI
 @Test("the ladder resolves in exactly the order order.md specifies")
 func ladderMatchesTheSpecifiedOrder() {
     let expected: [RestingNotchSlot] = [
-        .call, .notifications, .agentQuestion, .agentAnnouncement, .work,
+        .notifications, .agentQuestion, .agentAnnouncement, .work,
         .accessory, .focusTransition, .agentSteady, .nowPlaying, .clipboardSense
     ]
 
@@ -49,16 +48,15 @@ func ladderMatchesTheSpecifiedOrder() {
 
 @Test("the ranks are numbered as order.md numbers them")
 func ranksAreNumberedAsDocumented() {
-    #expect(RestingNotchSlot.call.rawValue == 1)
-    #expect(RestingNotchSlot.notifications.rawValue == 2)
-    #expect(RestingNotchSlot.agentQuestion.rawValue == 3)
-    #expect(RestingNotchSlot.agentAnnouncement.rawValue == 4)
-    #expect(RestingNotchSlot.work.rawValue == 5)
-    #expect(RestingNotchSlot.accessory.rawValue == 6)
-    #expect(RestingNotchSlot.focusTransition.rawValue == 7)
-    #expect(RestingNotchSlot.agentSteady.rawValue == 8)
-    #expect(RestingNotchSlot.nowPlaying.rawValue == 9)
-    #expect(RestingNotchSlot.clipboardSense.rawValue == 10)
+    #expect(RestingNotchSlot.notifications.rawValue == 1)
+    #expect(RestingNotchSlot.agentQuestion.rawValue == 2)
+    #expect(RestingNotchSlot.agentAnnouncement.rawValue == 3)
+    #expect(RestingNotchSlot.work.rawValue == 4)
+    #expect(RestingNotchSlot.accessory.rawValue == 5)
+    #expect(RestingNotchSlot.focusTransition.rawValue == 6)
+    #expect(RestingNotchSlot.agentSteady.rawValue == 7)
+    #expect(RestingNotchSlot.nowPlaying.rawValue == 8)
+    #expect(RestingNotchSlot.clipboardSense.rawValue == 9)
 }
 
 // MARK: - R1, blocked beats busy
@@ -71,11 +69,6 @@ func questionOutranksWork() {
     let inputs = RestingNotchInputs(agentQuestion: true, backgroundWork: true)
 
     #expect(RestingNotchPriority.slot(for: inputs) == .agentQuestion)
-}
-
-@Test("a call still outranks a question")
-func callOutranksQuestion() {
-    #expect(RestingNotchPriority.slot(for: .init(call: true, agentQuestion: true)) == .call)
 }
 
 // MARK: - R2, ephemeral beats persistent
@@ -133,15 +126,12 @@ func nothingActiveResolvesToNone() {
 
 // MARK: - Live activity
 
-@Test("Live activity off mutes the flexing slots and leaves the quiet ones")
-func liveActivityMutesOnlyTheFlexingSlots() {
-    for slot in [RestingNotchSlot.call, .notifications, .work, .focusTransition] {
+@Test("Live activity off mutes every collapsed-notch preview")
+func liveActivityMutesEveryPreview() {
+    for slot in RestingNotchSlot.allCases where slot != .none {
         #expect(RestingNotchPriority.isMuted(slot, liveActivityEnabled: false))
     }
-    for slot in [RestingNotchSlot.agentQuestion, .agentAnnouncement, .agentSteady,
-                 .accessory, .nowPlaying, .clipboardSense] {
-        #expect(!RestingNotchPriority.isMuted(slot, liveActivityEnabled: false))
-    }
+    #expect(!RestingNotchPriority.isMuted(.none, liveActivityEnabled: false))
 }
 
 @Test("Live activity on mutes nothing")
@@ -151,11 +141,10 @@ func liveActivityOnMutesNothing() {
     }
 }
 
-@Test("a muted slot yields to the next unmuted one rather than blanking the notch")
-func mutedSlotFallsThroughToTheNextRank() {
+@Test("Live activity off leaves the collapsed notch blank")
+func mutedSlotsDoNotFallThroughToAnotherPreview() {
     var inputs = allActive()
     inputs.liveActivityEnabled = false
 
-    // Call, notifications are muted; the question below them is not.
-    #expect(RestingNotchPriority.slot(for: inputs) == .agentQuestion)
+    #expect(RestingNotchPriority.slot(for: inputs) == .none)
 }

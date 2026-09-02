@@ -26,6 +26,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         var newChat: () -> Void
         var openHistory: () -> Void
         var openSettings: () -> Void
+        var openAbout: () -> Void
         var openModelSettings: () -> Void
         var openWhatsNew: () -> Void
         var checkForUpdates: () -> Void
@@ -49,6 +50,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         } else {
             remove()
         }
+    }
+
+    func suspendForLicenseBlock() {
+        // The status item is also the recovery path for an expired trial: its
+        // menu presents Buy / Activate while every product surface is closed.
+        apply()
     }
 
     private func install() {
@@ -93,10 +100,30 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
+        guard LicenseService.shared.state.allowsProductServices else {
+            menu.addItem(item(L("license.buy"), #selector(openSettings)))
+            menu.addItem(.separator())
+            menu.addItem(item(L("menuBar.quit"), #selector(quit)))
+            return
+        }
+
         // What you came here to do.
         menu.addItem(item(L("menuBar.open"), #selector(openNotch)))
         menu.addItem(item(L("menuBar.newChat"), #selector(newChat)))
         menu.addItem(item(L("menuBar.history"), #selector(openHistory)))
+
+        if let remaining = LicenseService.shared.state.trialDaysRemaining {
+            let trial = NSMenuItem(
+                title: remaining == 1
+                    ? L("license.trial.remaining.one")
+                    : L("license.trial.remaining", Int64(remaining)),
+                action: nil,
+                keyEquivalent: ""
+            )
+            trial.isEnabled = false
+            menu.addItem(trial)
+            menu.addItem(item(L("license.buy"), #selector(buyNotchFlow)))
+        }
 
         menu.addItem(.separator())
 
@@ -133,6 +160,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        menu.addItem(item(L("menuBar.about"), #selector(openAbout)))
         let quit = item(L("menuBar.quit"), #selector(quit))
         quit.keyEquivalent = "q"
         quit.keyEquivalentModifierMask = [.command]
@@ -196,12 +224,24 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func newChat() { actions.newChat() }
     @objc private func openHistory() { actions.openHistory() }
     @objc private func openSettings() { actions.openSettings() }
+    @objc private func openAbout() { actions.openAbout() }
     @objc private func openModelSettings() { actions.openModelSettings() }
     @objc private func openWhatsNew() { actions.openWhatsNew() }
     @objc private func checkForUpdates() { actions.checkForUpdates() }
+    @objc private func buyNotchFlow() {
+        guard let checkoutURL = LicenseService.shared.beginCheckout() else {
+            actions.openAbout()
+            return
+        }
+        NSWorkspace.shared.open(checkoutURL)
+    }
     @objc private func quit() { NSApp.terminate(nil) }
 
     @objc private func selectModel(_ sender: NSMenuItem) {
+        guard LicenseService.shared.state.allowsProductServices else {
+            actions.openSettings()
+            return
+        }
         guard let row = sender.representedObject as? AskModelMRU.Entry else { return }
         ModelCatalogStore.select(provider: row.provider, model: row.model)
     }

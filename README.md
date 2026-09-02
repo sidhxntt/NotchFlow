@@ -11,32 +11,43 @@
 **Ask**, **save a note**, **set a reminder**, or **hand a task to an AI agent** — all from your Mac's notch.
 
 [notch.website](https://notch.website) ·
-[Release Notes](https://notch.website/releases)
+[Release Notes](CHANGELOG.md)
 
-MIT · Apple Liquid Glass
+Direct download · Apple silicon · macOS 14+
 
 </div>
 
-NotchFlow is a free, open-source macOS app that turns the notch into a place to think and act. Whatever you type is automatically recognized as a chat, a note, a reminder, or a coding-agent task.
+NotchFlow is a direct-download macOS app that turns the notch into a place to think and act. Whatever you type is automatically recognized as a chat, a note, a reminder, or a coding-agent task.
 
 ## Install
 
-Installer script:
+Download the latest release, open the **DMG (primary)**, and drag **NotchFlow.app** to Applications. A matching **ZIP fallback** is available for Macs that cannot mount a disk image.
+
+The command-line installer is optional:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sidhxntt/notchflow/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/sidhxntt/notchflow/main/install.sh | bash
 ```
 
 Or hand it to **Claude Code / Codex**:
 
 > Please install NotchFlow for macOS for me. Run this in my terminal:
-> `curl -fsSL https://raw.githubusercontent.com/sidhxntt/notchflow/master/install.sh | bash`
-> It is a free, open-source menu-bar app (https://github.com/sidhxntt/notchflow).
+> `curl -fsSL https://raw.githubusercontent.com/sidhxntt/notchflow/main/install.sh | bash`
+> It is a direct-download menu-bar app (https://github.com/sidhxntt/notchflow).
 > After it finishes, confirm NotchFlow is installed in /Applications and launch it.
 
 - NotchFlow requires **macOS 14 (Sonoma) or later**.
+- NotchFlow supports **Apple-silicon (arm64) Macs**.
 - A hardware notch is optional.
-- NotchFlow currently ships un-notarized. If you have a Developer account and would like to help, send your inquiry to [siddhant@invytt.com](mailto:siddhant@invytt.com?subject=An%20Apple%20Developer%20account%20for%20NotchFlow).
+- Tagged releases are Developer ID-signed and notarized by Apple; open the DMG and drag the app to Applications.
+
+## Trial and license
+
+Every new installation begins with a full **seven-day trial** (seven consecutive 24-hour periods from its first successful launch). When the trial ends, NotchFlow blocks every product feature until a valid license is activated.
+
+Choose **Buy License** in the blocked screen or the License section of Settings → About to purchase through Lemon Squeezy. Lemon Squeezy emails your license key after payment succeeds; enter that key in NotchFlow to activate this Mac. You can enter the same key again to restore a purchase on another permitted personal Mac.
+
+A valid paid NotchFlow license is **perpetual**: it keeps the product available forever and includes all future NotchFlow updates. It is not a subscription. NotchFlow has no separate product account; Lemon Squeezy processes the purchase and license-key delivery.
 
 ## Automatic intent detection
 
@@ -88,8 +99,9 @@ NotchFlow is drawn in macOS Liquid Glass — including the edge glow and physica
 
 ## Privacy
 
-- No account or sign-in is required.
-- Prompts, chats, notes, reminders, agent sessions, clipboard, and history stay on your Mac, or go directly to the AI provider you configured. NotchFlow does not relay any request content.
+NotchFlow has no separate product account. Prompts, chats, notes, reminders, agent sessions, clipboard, and history stay on your Mac, or go directly to the AI provider you configured. NotchFlow does not relay request content.
+
+Read the tracked [Privacy Policy](PRIVACY.md) for permissions, local storage, provider/network use, Lemon Squeezy licensing, retention, and deletion. The policy must be published at the configured in-app privacy URL before public release; this repository does not itself deploy that website.
 
 ## Questions
 
@@ -100,6 +112,14 @@ Yes. On Macs without a notch and on external displays, NotchFlow draws a virtual
 **Do I need an account or an API key?**
 
 NotchFlow itself has no account. For hosted AI, connect a provider with its API key or supported sign-in flow. Alternatively, use Codex, Claude Code, Grok, or PI through a locally installed CLI that is already signed in. Notes and reminders do not need a provider connection.
+
+**What happens after the seven-day trial?**
+
+NotchFlow blocks every product feature until you activate a valid paid license. Select Buy License to purchase through Lemon Squeezy; it emails a license key that you enter in the app. The paid license is perpetual and covers future updates.
+
+**Will I get future updates?**
+
+Yes. A valid paid license includes all future NotchFlow updates. The app checks for signed updates; the DMG is the normal manual install path and the matching ZIP is a fallback.
 
 **Can I use local models?**
 
@@ -129,6 +149,6 @@ Drag `NotchFlow.app` from `/Applications` to the Trash.
 
 Open `NotchFlow.xcodeproj` (Xcode 16+), or run `./scripts/reinstall.sh`.
 
-## License
+## Product license
 
-NotchFlow is released under the [MIT License](LICENSE).
+The downloadable NotchFlow product requires a valid Lemon Squeezy license after its seven-day trial. A paid license is perpetual and includes all future NotchFlow updates. Open-source and third-party notices are available in the repository [LICENSE](LICENSE) and in the app.

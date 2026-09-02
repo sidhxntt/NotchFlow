@@ -482,7 +482,7 @@ struct ManageAppSettingsTool: NotchTool {
     Supported setting ids and values:
     - app_language: system, english, chinese_simplified, chinese_traditional, japanese, korean, french, spanish
     - dock_icon / menu_bar_icon: shown or hidden
-    - launch_at_login / hide_in_fullscreen / live_activity / copy_sense: true or false
+    - launch_at_login / live_activity / copy_sense: true or false
     - display_placement: all or built_in
     - hover_sensitivity: low, balanced, or instant
     - note_destination: apple_notes or markdown_folder; notes_folder: absolute path

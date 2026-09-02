@@ -2113,6 +2113,11 @@ struct ClearHistoryConfirm: View {
 /// `ConfirmDialogButton` pair) because it is the same object: a card centered
 /// over the island that owns the panel until it's answered.
 struct ForceClickLookupDialog: View {
+    /// The overlay does not contribute to its island's intrinsic size. Reserve
+    /// this much vertical room at the host so the instructional image retains a
+    /// useful size instead of becoming the flexible element SwiftUI compresses.
+    static let minimumIslandHeight: CGFloat = 360
+
     /// Opens System Settings → Trackpad. The dialog stays up behind it: the
     /// preference is re-read when NotchFlow comes back, and the held rung applies
     /// itself the moment it reads Off.
@@ -2125,8 +2130,8 @@ struct ForceClickLookupDialog: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onCancel)
 
-            VStack(spacing: 12) {
-                VStack(spacing: 6) {
+            VStack(spacing: 16) {
+                VStack(spacing: 8) {
                     Text(L("forceClick.lookup.title"))
                         .font(.sf(15, weight: .semibold))
                         .foregroundStyle(Tokens.text1)
@@ -2143,6 +2148,7 @@ struct ForceClickLookupDialog: View {
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity)
+                    .frame(height: 154)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -2154,9 +2160,9 @@ struct ForceClickLookupDialog: View {
                                     kind: .neutral,
                                     action: onOpenSettings)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .frame(maxWidth: 320)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 20)
+            .frame(maxWidth: 380)
             .background {
                 // Same glass recipe as `ClearHistoryConfirm` — see the note there.
                 let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)

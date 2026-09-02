@@ -20,6 +20,7 @@ struct NativeSettingsView: View {
 
     @ObservedObject var model: NotchModel
     @ObservedObject private var capabilities = NotchCapabilityStore.shared
+    @ObservedObject private var license = LicenseService.shared
     @State private var page: Page = .chat
 
     /// The categories that mean anything for the way the app is currently
@@ -33,7 +34,11 @@ struct NativeSettingsView: View {
         }
     }
 
-    private var pages: [Page] { Self.pages(agenticModeEnabled: capabilities.agenticModeEnabled) }
+    private var pages: [Page] {
+        license.state.shouldRestrictSettingsToAbout
+            ? [.about]
+            : Self.pages(agenticModeEnabled: capabilities.agenticModeEnabled)
+    }
 
     var body: some View {
         // A plain split, NOT `NavigationSplitView`: that container installs its own
@@ -59,8 +64,9 @@ struct NativeSettingsView: View {
         // widest pane's ideal width then pushed the window past the compact
         // default before it was ever shown.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { page = Self.page(for: model.settingsSection) }
+        .onAppear { synchronizePage() }
         .onChange(of: page) { model.settingsSection = page.rawValue }
+        .onChange(of: license.committedState) { _, _ in synchronizePage() }
         .onChange(of: capabilities.agenticModeEnabled) { _, _ in
             if !pages.contains(page) { page = .media }
         }
@@ -77,6 +83,15 @@ struct NativeSettingsView: View {
         default: return Page(rawValue: section) ?? .chat
         }
     }
+
+    private func synchronizePage() {
+        if license.state.shouldRestrictSettingsToAbout {
+            model.settingsSection = Page.about.rawValue
+            page = .about
+        } else {
+            page = Self.page(for: model.settingsSection)
+        }
+    }
 }
 
 /// Owns the single, explicit macOS Settings window. `Settings` scenes are
@@ -89,6 +104,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
     func present(model: NotchModel) {
+        if LicenseService.shared.state.shouldRestrictSettingsToAbout {
+            model.settingsSection = NativeSettingsView.Page.about.rawValue
+        }
         if let window {
             window.contentView = Self.hostingView(model: model)
             hideEmptyToolbar(in: window)
@@ -127,6 +145,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window.center()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func closeForLicenseBlock() {
+        window?.close()
+        window = nil
     }
 
     /// The settings root, hosted inside a plain container view.
@@ -207,9 +230,6 @@ extension Notification.Name {
     /// Posted after the user toggles the menu bar icon (Settings → General),
     /// so `AppDelegate` can add or remove the status item right away.
     static let menuBarIconVisibilityChanged = Notification.Name("menuBarIconVisibilityChanged")
-    /// Posted after the user toggles "Hide in full screen" (Settings → General),
-    /// so `AppDelegate` re-evaluates which panels to hide right away.
-    static let hideNotchInFullscreenChanged = Notification.Name("hideNotchInFullscreenChanged")
     /// Posted after the user changes the global summon shortcut (Settings →
     /// General), so `AppDelegate` re-registers the Carbon hot key immediately.
     static let summonHotKeyChanged = Notification.Name("summonHotKeyChanged")

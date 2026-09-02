@@ -777,12 +777,25 @@ final class AgentTaskManager: ObservableObject {
 
     private init() {
         scanExternalApprovalSessions()
-        externalMonitorTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.scanExternalApprovalSessions() }
-        }
+        startExternalApprovalMonitoring()
     }
 
     deinit { externalMonitorTimer?.invalidate() }
+
+    func resumeAfterEntitlementRestored() {
+        guard externalMonitorTimer == nil else { return }
+        scanExternalApprovalSessions()
+        startExternalApprovalMonitoring()
+    }
+
+    private func startExternalApprovalMonitoring() {
+        externalMonitorTimer = Timer.scheduledTimer(
+            withTimeInterval: 0.5,
+            repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in self?.scanExternalApprovalSessions() }
+        }
+    }
 
     /// AgentNotch observes the CLIs' persisted JSONL streams instead of owning
     /// their permission buttons. Do the same for active Codex/Claude sessions:
@@ -981,6 +994,8 @@ final class AgentTaskManager: ObservableObject {
     func start(folder: URL, prompt: String, engine: AgentEngine,
                model: String? = nil, effort: AgentEffort? = nil,
                imagesJPEG: [Data] = []) -> UUID? {
+        guard LicenseService.shared.state.allowsProductServices else { return nil }
+        guard NotchCapabilityStore.shared.agenticModeEnabled else { return nil }
         guard let binary = Self.binary(for: engine) else {
             // The entry button is availability-gated, so a missing binary or
             // sign-in here means the user pressed ⏎ and nothing happened —
@@ -1060,6 +1075,8 @@ final class AgentTaskManager: ObservableObject {
     /// round one's (codex `exec resume -i`; claude's stream-json vision blocks
     /// work the same under `--resume`).
     func followUp(taskID: UUID, prompt: String, imagesJPEG: [Data] = []) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
+        guard NotchCapabilityStore.shared.agenticModeEnabled else { return }
         guard let i = taskIndex(taskID) else {
             DiagnosticsLog.shared.record(provider: "Agent", kind: "agent-followup-dropped")
             return
@@ -1089,6 +1106,10 @@ final class AgentTaskManager: ObservableObject {
     private func beginFollowUpRound(index i: Int, prompt: String,
                                     imagesJPEG: [Data], appendMarker: Bool,
                                     existingMarkerID: UUID?) {
+        guard LicenseService.shared.state.allowsProductServices else {
+            pendingFollowUps[tasks[i].id] = nil
+            return
+        }
         var t = tasks[i]
         guard let session = t.sessionID, let binary = Self.binary(for: t.engine) else {
             // Round one never reported a session id, or the engine's
@@ -1156,6 +1177,7 @@ final class AgentTaskManager: ObservableObject {
     func resume(taskID: UUID, engine: AgentEngine, folder: URL, headline: String,
                 session: String, priorRounds: [AgentExchange], prompt: String,
                 imagesJPEG: [Data] = []) {
+        guard LicenseService.shared.state.allowsProductServices else { return }
         guard taskIndex(taskID) == nil, let binary = Self.binary(for: engine) else {
             // The row's resume button is gated on the engine being installed, so
             // landing here means the tap silently did nothing. Breadcrumb only.
@@ -1540,6 +1562,58 @@ final class AgentTaskManager: ObservableObject {
         return true
     }
 
+    /// Cancel all app-owned work when product entitlement is lost. CLI process
+    /// runs settle through their normal termination handlers; app-server turns
+    /// have no `RunState`, so they are settled synchronously before the shared
+    /// app-server process is stopped. Queued follow-ups are discarded first so
+    /// no completion race can launch another round.
+    func suspendForLicenseBlock() {
+        suspendAgentRuntime()
+    }
+
+    /// Agentic mode is a complete opt-out from app-owned agents and approval
+    /// routing. Existing terminal hooks fail open once their socket closes, so
+    /// the terminal resumes its own manual approval prompt.
+    func suspendForAgenticModeDisabled() {
+        suspendAgentRuntime()
+    }
+
+    private func suspendAgentRuntime() {
+        pendingFollowUps.removeAll()
+        externalMonitorTimer?.invalidate()
+        externalMonitorTimer = nil
+        externalTrackedTools.removeAll()
+        externalApprovals = []
+
+        let processTaskIDs = Array(runs.keys)
+        for id in processTaskIDs { cancel(taskID: id) }
+
+        let appServerIndices = tasks.indices.filter {
+            tasks[$0].isRunning && runs[tasks[$0].id] == nil
+        }
+        for index in appServerIndices {
+            var task = tasks[index]
+            let prompt = appServerPrompts.removeValue(forKey: task.id) ?? task.prompt
+            task.finishedAt = Date()
+            task.activity = nil
+            task.outcome = .cancelled
+            task.failureReason = nil
+            task.activePermissionTool = nil
+            task.activePermissionEntryID = nil
+            task.activePermissionStartedAt = nil
+            let partial = task.result.trimmingCharacters(in: .whitespacesAndNewlines)
+            let answer = partial.isEmpty
+                ? L("agent.cancelled")
+                : L("agent.cancelled") + "\n" + partial
+            task.exchanges.append(AgentExchange(prompt: prompt, answer: answer))
+            tasks[index] = task
+            onSettled?(task)
+        }
+        CodexAppServerBridge.shared.shutdownForLicenseBlock()
+        ClaudeHookBridge.shared.shutdownForLicenseBlock()
+        CodexTerminalHookBridge.shared.shutdownForLicenseBlock()
+    }
+
     /// Stop the round in flight and hand the agent a new instruction straight
     /// away — the "no, do this instead" of a terminal's Esc. The CLI has no way
     /// to take a mid-round instruction (headless, no TTY, stdin already closed),
@@ -1553,6 +1627,7 @@ final class AgentTaskManager: ObservableObject {
     /// Returns whether the round was actually interrupted.
     @discardableResult
     func interrupt(taskID: UUID, prompt: String, imagesJPEG: [Data] = []) -> Bool {
+        guard LicenseService.shared.state.allowsProductServices else { return false }
         guard let i = taskIndex(taskID), tasks[i].isRunning,
               let run = runs[taskID], tasks[i].sessionID != nil else {
             followUp(taskID: taskID, prompt: prompt, imagesJPEG: imagesJPEG)

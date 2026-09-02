@@ -1,13 +1,10 @@
 #!/usr/bin/env node
-// Generate docs/releases.html's changelog from the app's own source of truth,
-// WhatsNewService.swift's `bundled` array — so the website and the in-app
-// "What's New" panel never drift apart.
+// Generate the tracked CHANGELOG.md from the app's own source of truth,
+// WhatsNewService.swift's `bundled` array — so the repository record and the
+// in-app "What's New" panel never drift apart.
 //
-//   node scripts/gen-releases.mjs          # rewrite the page in place
-//   node scripts/gen-releases.mjs --check  # exit 1 if the page is stale (CI/guard)
-//
-// It only ever touches the region between the RELEASES:START / RELEASES:END
-// markers in docs/releases.html; everything else on the page is left alone.
+//   node scripts/gen-releases.mjs          # rewrite CHANGELOG.md in place
+//   node scripts/gen-releases.mjs --check  # exit 1 if CHANGELOG.md is stale
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -15,10 +12,7 @@ import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SWIFT = join(ROOT, 'NotchFlow/Sources/WhatsNewService.swift');
-const PAGE = join(ROOT, 'docs/releases.html');
-
-const START = '<!-- RELEASES:START';
-const END = '<!-- RELEASES:END -->';
+const CHANGELOG = join(ROOT, 'CHANGELOG.md');
 
 // --- parse Swift -----------------------------------------------------------
 
@@ -105,20 +99,7 @@ function parseEntries(src) {
   })).filter((e) => e.version);
 }
 
-// --- render HTML -----------------------------------------------------------
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-// "2026-06-23" → "Jun 23, 2026". Pass anything else through untouched.
-function fmtDate(d) {
-  const m = d && d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return d || '';
-  return `${MONTHS[+m[2] - 1]} ${+m[3]}, ${m[1]}`;
-}
-
-function esc(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+// --- render Markdown -------------------------------------------------------
 
 // Compare version strings descending (newest first), numeric-segment aware.
 function cmpVer(a, b) {
@@ -130,66 +111,59 @@ function cmpVer(a, b) {
   return 0;
 }
 
-function renderGroup(label, key, items) {
+function renderGroup(label, items) {
   if (!items.length) return '';
-  const lis = items.map((t) => `          <li>${esc(t)}</li>`).join('\n');
-  return (
-    `      <div class="rel-group">\n` +
-    `        <h4 data-i18n="${key}">${label}</h4>\n` +
-    `        <ul class="rel-list">\n${lis}\n        </ul>\n` +
-    `      </div>\n`
-  );
+  return `### ${label}\n\n${items.map((item) => `- ${item}`).join('\n')}\n\n`;
 }
 
 function renderEntries(entries) {
   return entries.map((e) => {
-    let html = `    <div class="rel">\n`;
-    html += `      <div class="rel-head">\n`;
-    html += `        <span class="rel-ver">${esc(e.version)}</span>\n`;
-    html += `        <span class="rel-date">${esc(fmtDate(e.date))}</span>\n`;
-    html += `      </div>\n`;
-    html += renderGroup('New', 'rel.new', e.features);
-    html += renderGroup('Improved', 'rel.improved', e.improvements);
-    html += renderGroup('Fixed', 'rel.fixed', e.fixes);
-    html += renderGroup('Other', 'rel.other', e.others);
-    html += `    </div>`;
-    return html;
-  }).join('\n');
+    let markdown = `## [${e.version}]${e.date ? ` - ${e.date}` : ''}\n\n`;
+    markdown += renderGroup('Added', e.features);
+    markdown += renderGroup('Changed', e.improvements);
+    markdown += renderGroup('Fixed', e.fixes);
+    markdown += renderGroup('Other', e.others);
+    return markdown.trimEnd();
+  }).join('\n\n');
 }
 
-// --- splice into the page --------------------------------------------------
+// --- generate CHANGELOG.md -------------------------------------------------
 
 function build() {
   const entries = parseEntries(readFileSync(SWIFT, 'utf8')).sort((a, b) => cmpVer(a.version, b.version));
-  if (!entries.length) throw new Error('parsed zero releases — refusing to wipe the page');
-
-  const page = readFileSync(PAGE, 'utf8');
-  const s = page.indexOf(START);
-  const e = page.indexOf(END);
-  if (s === -1 || e === -1 || e < s) throw new Error('RELEASES:START / RELEASES:END markers not found in releases.html');
-
-  const startLineEnd = page.indexOf('\n', s) + 1; // keep the START comment line
-  const block =
-    page.slice(0, startLineEnd) +
-    renderEntries(entries) + '\n' +
-    '    ' + page.slice(e);
-
-  return { block, entries };
+  if (!entries.length) throw new Error('parsed zero releases — refusing to write CHANGELOG.md');
+  const changelog = [
+    '# Changelog',
+    '',
+    'All notable user-facing changes to NotchFlow are documented here.',
+    '',
+    '> Generated from `NotchFlow/Sources/WhatsNewService.swift`. Run `node scripts/gen-releases.mjs`; do not edit this file by hand.',
+    '',
+    renderEntries(entries),
+    '',
+  ].join('\n');
+  return { changelog, entries };
 }
 
 const check = process.argv.includes('--check');
-const { block, entries } = build();
-const current = readFileSync(PAGE, 'utf8');
+const { changelog, entries } = build();
+const current = (() => {
+  try { return readFileSync(CHANGELOG, 'utf8'); }
+  catch (error) {
+    if (error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+})();
 
-if (block === current) {
-  console.log(`releases.html is up to date (${entries.length} releases, newest ${entries[0].version}).`);
+if (changelog === current) {
+  console.log(`CHANGELOG.md is up to date (${entries.length} releases, newest ${entries[0].version}).`);
   process.exit(0);
 }
 
 if (check) {
-  console.error('releases.html is STALE — run: node scripts/gen-releases.mjs');
+  console.error('CHANGELOG.md is STALE — run: node scripts/gen-releases.mjs');
   process.exit(1);
 }
 
-writeFileSync(PAGE, block);
-console.log(`Wrote releases.html: ${entries.length} releases, newest ${entries[0].version}.`);
+writeFileSync(CHANGELOG, changelog);
+console.log(`Wrote CHANGELOG.md: ${entries.length} releases, newest ${entries[0].version}.`);

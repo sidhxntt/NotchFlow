@@ -284,6 +284,28 @@ final class NotchCapabilityStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectingAgentWorkspaceDoesNotRestoreDisabledAgenticMode() {
+        let defaults = UserDefaults.standard
+        let key = "agenticModeEnabled"
+        let previousValue = defaults.object(forKey: key)
+        defer {
+            if let previousValue {
+                defaults.set(previousValue, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+
+        let store = NotchCapabilityStore(persistence: .ephemeral)
+        store.agenticModeEnabled = false
+
+        store.workspaceTab = .agent
+
+        XCTAssertFalse(store.agenticModeEnabled)
+        XCTAssertEqual(store.workspaceTab, .agent)
+    }
+
+    @MainActor
     func testRevealingTheFileTrayPublishesANewRevealRequest() {
         let store = NotchCapabilityStore(persistence: .ephemeral)
         let initialRequest = store.fileTrayRevealRequest

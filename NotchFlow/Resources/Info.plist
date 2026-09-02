@@ -26,6 +26,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>UpdateRepository</key>
 	<string>sidhxntt/NotchFlow</string>
+	<key>UpdateTeamIdentifier</key>
+	<string>NQ55M2U74M</string>
 	<key>SettingsExperience</key>
 	<string>standalone-v1</string>
 	<key>LSMinimumSystemVersion</key>

@@ -5,21 +5,20 @@ import Foundation
 /// The raw values are the ranks in `order.md`, ascending, so the ladder's shape
 /// is visible in the type rather than only in the resolver that walks it.
 public enum RestingNotchSlot: Int, Equatable, Sendable, CaseIterable, Comparable {
-    case call = 1
-    case notifications = 2
+    case notifications = 1
     /// A session that has stopped and cannot continue until the user answers.
-    case agentQuestion = 3
+    case agentQuestion = 2
     /// The five-second announcement of an agent state change.
-    case agentAnnouncement = 4
+    case agentAnnouncement = 3
     /// An Ask or Agent run started in this app.
-    case work = 5
-    case accessory = 6
-    case focusTransition = 7
+    case work = 4
+    case accessory = 5
+    case focusTransition = 6
     /// An external CLI session still working or planning.
-    case agentSteady = 8
-    case nowPlaying = 9
+    case agentSteady = 7
+    case nowPlaying = 8
     /// An offer, not an event.
-    case clipboardSense = 10
+    case clipboardSense = 9
     case none = 99
 
     public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
@@ -36,11 +35,10 @@ public enum RestingNotchSlot: Int, Equatable, Sendable, CaseIterable, Comparable
 public struct RestingNotchInputs: Equatable, Sendable {
     /// The panel is open somewhere, so the resting notch shows nothing at all.
     public var panelOpen: Bool
-    /// Settings → Appearance → "Live activity". See `isMuted(by:)` for exactly
-    /// which slots it silences.
+    /// Settings → Appearance → "Live activity". When off, it keeps the
+    /// collapsed notch clear by silencing every preview slot.
     public var liveActivityEnabled: Bool
 
-    public var call: Bool
     public var notifications: Bool
     public var agentQuestion: Bool
     public var agentAnnouncement: Bool
@@ -52,14 +50,13 @@ public struct RestingNotchInputs: Equatable, Sendable {
     public var clipboardSense: Bool
 
     public init(panelOpen: Bool = false, liveActivityEnabled: Bool = true,
-                call: Bool = false, notifications: Bool = false,
+                notifications: Bool = false,
                 agentQuestion: Bool = false, agentAnnouncement: Bool = false,
                 backgroundWork: Bool = false, accessoryEvent: Bool = false,
                 focusTransition: Bool = false, agentSteady: Bool = false,
                 nowPlaying: Bool = false, clipboardSense: Bool = false) {
         self.panelOpen = panelOpen
         self.liveActivityEnabled = liveActivityEnabled
-        self.call = call
         self.notifications = notifications
         self.agentQuestion = agentQuestion
         self.agentAnnouncement = agentAnnouncement
@@ -74,21 +71,11 @@ public struct RestingNotchInputs: Equatable, Sendable {
 
 public enum RestingNotchPriority {
 
-    /// The slots the "Live activity" switch silences.
-    ///
-    /// Deliberately not every slot. The switch mutes the notch's *flexing* —
-    /// the announcements that move the island — and leaves the quiet presence
-    /// signals alone. Agent status is in the second group because a long CLI run
-    /// is a state the user opted into watching, not an interruption.
+    /// The slots the "Live activity" switch silences. The setting is the single
+    /// master control for previews in the collapsed notch, so off leaves it blank.
     public static func isMuted(_ slot: RestingNotchSlot, liveActivityEnabled: Bool) -> Bool {
         guard !liveActivityEnabled else { return false }
-        switch slot {
-        case .call, .notifications, .work, .focusTransition:
-            return true
-        case .agentQuestion, .agentAnnouncement, .agentSteady,
-             .accessory, .nowPlaying, .clipboardSense, .none:
-            return false
-        }
+        return slot != .none
     }
 
     /// The one occupant, resolved in the order `order.md` specifies.
@@ -100,7 +87,6 @@ public enum RestingNotchPriority {
         guard !inputs.panelOpen else { return .none }
 
         let candidates: [(RestingNotchSlot, Bool)] = [
-            (.call,              inputs.call),
             (.notifications,     inputs.notifications),
             (.agentQuestion,     inputs.agentQuestion),
             (.agentAnnouncement, inputs.agentAnnouncement),
