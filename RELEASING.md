@@ -13,7 +13,8 @@ Before merging an app change into `main`:
   The automatic release tag chooses the largest bump represented by commits
   since the last release: `fix:` (or any unclassified non-web commit) is a
   patch bump, `feat:` is a minor bump, and `type!:` or a `BREAKING CHANGE:`
-  footer is a major bump.
+  footer is a major bump. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+  complete GitHub commit rule.
 - Optionally add a user-facing release entry to
   [WhatsNewService.swift](NotchFlow/Sources/WhatsNewService.swift), then run
   `node scripts/gen-releases.mjs`. `CHANGELOG.md` is generated; never edit it
