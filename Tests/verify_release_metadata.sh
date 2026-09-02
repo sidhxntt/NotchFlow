@@ -66,13 +66,16 @@ require_text 'bash Tests/verify_next_release_version.sh' "$pr_workflow"
 protection_script=scripts/protect-main-branch.sh
 require_text 'repository="${1:-sidhxntt/NotchFlow}"' "$protection_script"
 require_text 'branches/main/protection' "$protection_script"
-require_text 'Validate Pull Request / app-verification' "$protection_script"
+require_text '"contexts": ["app-verification"]' "$protection_script"
 require_text '"required_approving_review_count": 0' "$protection_script"
 require_text '"required_linear_history": true' "$protection_script"
 require_text '"allow_force_pushes": false' "$protection_script"
 require_text '"allow_deletions": false' "$protection_script"
 require_text '"required_conversation_resolution": true' "$protection_script"
 require_text '"enforce_admins": true' "$protection_script"
+if grep -Fq 'dismissal_restrictions' "$protection_script"; then
+  fail 'main protection must not send organization-only dismissal restrictions'
+fi
 
 # The notarized ticket must be stapled to the source app before the DMG/ZIP
 # helpers copy it. Stapling only after DMG creation leaves the mounted app
