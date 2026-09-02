@@ -3,10 +3,24 @@ import AppKit
 
 /// Compatibility listener for Codex sessions started in Terminal.
 ///
-/// The user's existing `~/.codex/hooks.json` already invokes AgentNotch's
-/// `notch-codex-hook.py`. Rather than rewriting that user-owned configuration,
-/// NotchFlow speaks the same private Unix-socket protocol while it is running.
-/// Each hook process remains blocked until the user chooses in the Agent tab.
+/// Codex has no per-launch `--settings` equivalent the way Claude Code does
+/// (see `ClaudeHookBridge`), so there is no way to reach a session the user
+/// starts unassisted in their own terminal except through Codex's one shared,
+/// user-owned `~/.codex/hooks.json`. `startIfNeeded` installs and self-heals
+/// NotchFlow's own entries there — additively, never touching another tool's
+/// hooks — so a fresh install and a corrupted file both end up wired without
+/// a manual step. NotchFlow speaks the private Unix-socket protocol that
+/// script talks while the app is running. Each hook process remains blocked
+/// until the user chooses in the Agent tab.
+///
+/// Trust is the one piece this cannot do for the user: Codex requires an
+/// explicit `/hooks` acceptance the first time a hook's content changes, and
+/// there is no supported API to grant that on the user's behalf (see
+/// https://github.com/openai/codex/issues/21615, open as of 2026-09-02).
+/// Silently writing to Codex's own trust cache would mean forging a security
+/// consent Codex deliberately keeps explicit, so this bridge does not attempt
+/// it — only the wiring is automatic; trusting it is still the user's call,
+/// once, the first time.
 @MainActor
 final class CodexTerminalHookBridge: ObservableObject {
     static let shared = CodexTerminalHookBridge()
@@ -43,6 +57,14 @@ final class CodexTerminalHookBridge: ObservableObject {
         ]
     }
 
+    private static var codexHookScriptURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/notch-codex-hook.py")
+    }
+
+    private static var codexHooksConfigURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/hooks.json")
+    }
+
     var hasPendingApprovals: Bool { !sessionQueues.isEmpty }
 
     private init() {
@@ -55,6 +77,7 @@ final class CodexTerminalHookBridge: ObservableObject {
     func startIfNeeded() {
         guard LicenseService.shared.state.allowsProductServices else { return }
         guard listenFD < 0 else { return }
+        Self.ensureGlobalHookInstalled()
         do {
             listenFD = try Self.bindListener(at: Self.socketPath)
         } catch {
@@ -151,6 +174,196 @@ final class CodexTerminalHookBridge: ObservableObject {
         guard let url = hookConfigurationURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
+
+    /// Writes the hook script and wires `~/.codex/hooks.json` so this
+    /// machine's Codex terminal sessions reach the socket above without any
+    /// separate installer. Runs on every `startIfNeeded`, so it also repairs
+    /// a file an old or incompatible entry already broke.
+    ///
+    /// Additive and defensive by construction:
+    ///  - Another tool's entries, under this event or any other, are never
+    ///    touched — only a hook-group already running this exact script and
+    ///    subcommand is treated as "already installed".
+    ///  - Every `null` value under `hooks` is dropped, whatever key it is
+    ///    under. `null` is valid JSON but not a valid hook value; Codex's own
+    ///    config parser rejects the WHOLE file over one such key (`invalid
+    ///    type: null`, reproduced 2026-09-02), so a single dead entry from
+    ///    however it got there — a previous NotchFlow version, a hand edit —
+    ///    silently zeroed out every hook, including ones nothing here owns.
+    ///  - A parse failure on the existing file is treated the same as no
+    ///    file: this rebuilds a valid one rather than leaving Codex unable to
+    ///    load any hook at all.
+    private static func ensureGlobalHookInstalled() {
+        let scriptURL = codexHookScriptURL
+        let configURL = codexHooksConfigURL
+        do {
+            try FileManager.default.createDirectory(
+                at: scriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let existing = try? String(contentsOf: scriptURL, encoding: .utf8)
+            if existing != hookScriptContents {
+                try hookScriptContents.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
+            }
+        } catch { return }
+
+        var configuration: [String: Any] = [:]
+        if let data = try? Data(contentsOf: configURL),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            configuration = parsed
+        }
+
+        var hooks = configuration["hooks"] as? [String: Any] ?? [:]
+        hooks = hooks.filter { !($0.value is NSNull) }
+
+        let scriptPath = scriptURL.path
+        hooks["PermissionRequest"] = ensuring(
+            command: "\"/usr/bin/python3\" \"\(scriptPath)\" gate", timeout: 1800, matcher: "*",
+            in: hooks["PermissionRequest"])
+        hooks["Stop"] = ensuring(
+            command: "\"/usr/bin/python3\" \"\(scriptPath)\" clear", timeout: nil, matcher: nil,
+            in: hooks["Stop"])
+        hooks["UserPromptSubmit"] = ensuring(
+            command: "\"/usr/bin/python3\" \"\(scriptPath)\" clear", timeout: nil, matcher: nil,
+            in: hooks["UserPromptSubmit"])
+
+        configuration["hooks"] = hooks
+        guard JSONSerialization.isValidJSONObject(configuration),
+              let data = try? JSONSerialization.data(withJSONObject: configuration,
+                                                      options: [.prettyPrinted, .sortedKeys])
+        else { return }
+        try? data.write(to: configURL, options: .atomic)
+    }
+
+    /// Appends a hook group running `command` to `existing` (one event's
+    /// array of hook groups) unless a group already runs this exact command —
+    /// so any other tool's group under the same event, and a NotchFlow group
+    /// already present, both survive untouched.
+    private static func ensuring(command: String, timeout: Int?, matcher: String?,
+                                 in existing: Any?) -> [Any] {
+        var groups = existing as? [Any] ?? []
+        let alreadyPresent = groups.contains { group in
+            guard let group = group as? [String: Any],
+                  let innerHooks = group["hooks"] as? [Any] else { return false }
+            return innerHooks.contains { ($0 as? [String: Any])?["command"] as? String == command }
+        }
+        guard !alreadyPresent else { return groups }
+
+        var hook: [String: Any] = ["type": "command", "command": command]
+        if let timeout { hook["timeout"] = timeout }
+        var group: [String: Any] = ["hooks": [hook]]
+        if let matcher { group["matcher"] = matcher }
+        groups.append(group)
+        return groups
+    }
+
+    /// The hook process itself — unchanged from the version this app's
+    /// predecessor installed by hand, so a machine that already has a working
+    /// copy is byte-identical and never gets rewritten. Fails OPEN on purpose:
+    /// if NotchFlow is not listening, or nobody answers in time, this prints
+    /// nothing and Codex falls back to its own approval prompt.
+    private static let hookScriptContents = """
+    #!/usr/bin/env python3
+    # Agent Notch Codex bridge — DO NOT EDIT (managed by Agent Notch).
+    # notch-codex-hook v4  (forward justification/escalation + apply_patch files
+    # so the notch can say what's being approved and why)
+    import sys, os, json, socket
+
+    def sock_path():
+        p = os.environ.get("AGENT_NOTCH_SOCKET")
+        if p:
+            return p
+        return os.path.expanduser("~/Library/Application Support/AgentNotch/notch.sock")
+
+    def send(msg, wait, timeout):
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(3.0)
+            s.connect(sock_path())
+        except Exception:
+            return None
+        try:
+            s.sendall((json.dumps(msg) + "\\n").encode("utf-8"))
+            if not wait:
+                return None
+            s.settimeout(timeout)
+            buf = b""
+            while b"\\n" not in buf:
+                chunk = s.recv(4096)
+                if not chunk:
+                    return None
+                buf += chunk
+            return json.loads(buf.split(b"\\n", 1)[0].decode("utf-8"))
+        except Exception:
+            return None
+        finally:
+            try: s.close()
+            except Exception: pass
+
+    def main():
+        action = sys.argv[1] if len(sys.argv) > 1 else "clear"
+        try:
+            d = json.load(sys.stdin)
+        except Exception:
+            d = {}
+        # Codex has emitted both session_id and thread_id across terminal and
+        # app-server-adjacent hook payloads. Treat them as the same queue key.
+        sid = d.get("session_id") or d.get("thread_id") or d.get("threadId") or ""
+        if not sid:
+            return
+        tool = d.get("tool_name") or ""
+        ti = d.get("tool_input") or {}
+        if not isinstance(ti, dict):
+            ti = {}
+        cmd = ti.get("command")
+        if isinstance(cmd, list):  # Codex sends argv arrays, e.g. ["bash","-lc","…"]
+            parts = [str(x) for x in cmd]
+            if len(parts) >= 3 and parts[1] in ("-lc", "-c"):
+                cmd = parts[-1]    # the shell wrapper adds nothing — show the script
+            else:
+                cmd = " ".join(parts)
+        # apply_patch approvals carry the change, not a command — surface the
+        # files touched so the row isn't blank.
+        patch = ti.get("changes") or ti.get("files") or ti.get("patch")
+        if not cmd and patch:
+            if isinstance(patch, dict):
+                cmd = "patch: " + ", ".join(os.path.basename(str(p)) for p in list(patch.keys())[:4])
+            elif isinstance(patch, list):
+                cmd = "patch: " + ", ".join(os.path.basename(str(p)) for p in patch[:4])
+        detail = cmd or ti.get("file_path") or ti.get("path") or ti.get("description") or ""
+        # Why Codex is asking: its own user-facing justification for escalating,
+        # and whether it wants to run outside the sandbox.
+        reason = ti.get("justification") or ""
+        escalated = ti.get("sandbox_permissions") == "require_escalated"
+        base = {"v": 1, "source": "codex", "session_id": sid,
+                "cwd": d.get("cwd", ""), "tool_name": tool, "detail": detail,
+                "reason": reason, "escalated": escalated}
+
+        if action == "clear":
+            send({**base, "action": "clear"}, False, 0)
+            return
+        if action != "gate":
+            return
+
+        resp = send({**base, "action": "gate"}, True, 1795)
+        if not resp:
+            return  # fail open / timeout → Codex's own prompt
+        behavior = resp.get("behavior", "")
+        # Codex's PermissionRequest decision: an allow needs no updatedInput (unlike
+        # Claude Code); a deny carries a message. Passthrough/unknown → no output.
+        if behavior == "allow":
+            dec = {"behavior": "allow"}
+        elif behavior == "deny":
+            dec = {"behavior": "deny", "message": "Denied from Agent Notch"}
+        else:
+            return
+        print(json.dumps({"continue": True, "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest", "decision": dec}}))
+
+    try:
+        main()
+    except Exception:
+        pass
+    """
 
     func decide(_ decision: Decision, for approval: AgentApproval) {
         guard let connection = connections.removeValue(forKey: approval.id) else {

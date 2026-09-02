@@ -74,14 +74,20 @@ final class ClaudeHookBridge: ObservableObject {
     static let decisionTimeout: TimeInterval = 300
 
     /// The tools gated by the hook. Deliberately only the ones that execute,
-    /// mutate, or leave the machine (network): a card for every `Read`/`Glob`/
-    /// `Grep` would be unusable, and unusable prompts are how people learn to
-    /// click Approve without reading. `WebFetch`/`WebSearch` reach the network
-    /// on the user's behalf, which is exactly the class of action this bridge
-    /// exists to surface — leaving them ungated meant a NotchFlow-launched
-    /// Claude run could fetch/search without ever asking. Verified that
-    /// `matcher` takes a regex in 2.1.226, so one entry covers all six.
-    static let gatedTools = ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"]
+    /// mutate, or leave the machine (network): a card for every in-project
+    /// `Read`/`Glob`/`Grep` would be unusable, and unusable prompts are how
+    /// people learn to click Approve without reading. `WebFetch`/`WebSearch`
+    /// reach the network on the user's behalf, which is exactly the class of
+    /// action this bridge exists to surface — leaving them ungated meant a
+    /// NotchFlow-launched Claude run could fetch/search without ever asking.
+    /// `Read` is gated too, but only actually surfaces a card for a path
+    /// outside the session's working directory (see `enqueue`) — the same
+    /// case Claude's own permission system singles out (a pasted image lands
+    /// in a temp directory, not the project), so that prompt now reaches the
+    /// notch instead of the terminal, while an ordinary in-project read stays
+    /// silent. Verified that `matcher` takes a regex in 2.1.226, so one entry
+    /// covers all seven.
+    static let gatedTools = ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Read"]
 
     var hasPendingApprovals: Bool { !sessionQueues.isEmpty }
 
@@ -233,6 +239,16 @@ final class ClaudeHookBridge: ObservableObject {
 
     private func enqueue(_ request: ClaudeHookRequest, connection: HookConnection,
                          identity: ConnectionIdentity) {
+        // A `Read` inside the session's own working directory is the ordinary
+        // case (source files, the project's own assets) — carding it would be
+        // the alert-fatigue noise `gatedTools`' doc comment warns about. Only a
+        // `Read` reaching outside the project (a pasted image lands in a temp
+        // directory, never the project) is worth a card; answer everything
+        // else immediately, same as if the hook were not watching `Read` at all.
+        if request.toolName == "Read", Self.isWithinWorkingDirectory(request) {
+            _ = connection.send(line: ClaudeHookResponse.line(for: .allow))
+            return
+        }
         // `tool_use_id` is unique per tool call, so this is normally just it. The
         // fallback covers the pathological repeat: the queue dedupes on id, and a
         // silently dropped request would park its hook until the timeout.
@@ -265,6 +281,17 @@ final class ClaudeHookBridge: ObservableObject {
         queue.resolve(id: id)
         AgentSessionActivityStore.shared.record(marker: .transportEnded(for: approval))
         publishQueue()
+    }
+
+    /// Whether a `Read`'s target sits inside the session's own working
+    /// directory. Missing data (no path, no cwd) is treated as "outside" —
+    /// there is nothing to silently clear, so it takes the card path instead
+    /// of guessing.
+    private static func isWithinWorkingDirectory(_ request: ClaudeHookRequest) -> Bool {
+        guard let filePath = request.filePath, let cwd = request.cwd else { return false }
+        let path = (filePath as NSString).standardizingPath
+        let directory = (cwd as NSString).standardizingPath
+        return path == directory || path.hasPrefix(directory + "/")
     }
 
     private func pendingApproval(id: String) -> AgentApproval? {

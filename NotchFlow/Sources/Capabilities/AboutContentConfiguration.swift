@@ -8,7 +8,6 @@ public struct AboutContentConfiguration: Codable, Equatable, Sendable {
     public let website: String
     public let aboutMeURL: String
     public let xURL: String
-    public let supportURL: String
     public let privacyURL: String
     public let feedbackURL: String
 
@@ -18,19 +17,17 @@ public struct AboutContentConfiguration: Codable, Equatable, Sendable {
         website: "https://www.notch.website",
         aboutMeURL: "",
         xURL: "https://x.com/cyrusss_7",
-        supportURL: "https://buymeacoffee.com/cyrus007",
         privacyURL: "https://sidhxntt.github.io/NotchFlow/privacy/",
         feedbackURL: ""
     )
 
     public init(name: String, tagline: String, website: String, aboutMeURL: String,
-                xURL: String, supportURL: String, privacyURL: String, feedbackURL: String) {
+                xURL: String, privacyURL: String, feedbackURL: String) {
         self.name = name
         self.tagline = tagline
         self.website = website
         self.aboutMeURL = aboutMeURL
         self.xURL = xURL
-        self.supportURL = supportURL
         self.privacyURL = privacyURL
         self.feedbackURL = feedbackURL
     }
@@ -66,7 +63,6 @@ public struct AboutContentConfiguration: Codable, Equatable, Sendable {
         try validateURL(website, field: "website", required: true)
         try validateURL(aboutMeURL, field: "aboutMeURL", required: false)
         try validateURL(xURL, field: "xURL", required: false)
-        try validateURL(supportURL, field: "supportURL", required: false)
         try validateURL(privacyURL, field: "privacyURL", required: false)
         try validateURL(feedbackURL, field: "feedbackURL", required: false)
     }
