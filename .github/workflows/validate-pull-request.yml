@@ -10,6 +10,23 @@ permissions:
   contents: read
 
 jobs:
+  commit-message:
+    name: commit-message
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout complete history
+        # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          fetch-depth: 0
+
+      - name: Validate Conventional Commit messages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bash scripts/verify-conventional-commits.sh "$BASE_SHA" "$HEAD_SHA" "$PR_TITLE"
+
   app-verification:
     name: app-verification
     # Keep the validation compiler aligned with release.yml's macOS 26 APIs.

@@ -32,8 +32,10 @@ require_file scripts/create-dmg.sh
 require_file scripts/create-zip.sh
 require_file scripts/next-release-version.sh
 require_file scripts/protect-main-branch.sh
+require_file scripts/verify-conventional-commits.sh
 require_file .github/workflows/auto-release-tag.yml
 require_file .github/workflows/validate-pull-request.yml
+require_file Tests/verify_conventional_commit_messages.sh
 require_file README.zh-CN.md
 require_text '[Release Notes](CHANGELOG.md)' README.md
 
@@ -59,6 +61,9 @@ require_text 'branches: [main]' "$pr_workflow"
 require_text 'name: app-verification' "$pr_workflow"
 require_text 'bash Tests/verify_release_metadata.sh' "$pr_workflow"
 require_text 'bash Tests/verify_next_release_version.sh' "$pr_workflow"
+require_text 'name: commit-message' "$pr_workflow"
+require_text 'fetch-depth: 0' "$pr_workflow"
+require_text 'bash scripts/verify-conventional-commits.sh "$BASE_SHA" "$HEAD_SHA" "$PR_TITLE"' "$pr_workflow"
 
 # The remotely applied protection requires a pull request, the unique PR
 # validation check, linear history, conversation resolution, and blocks force
@@ -66,7 +71,7 @@ require_text 'bash Tests/verify_next_release_version.sh' "$pr_workflow"
 protection_script=scripts/protect-main-branch.sh
 require_text 'repository="${1:-sidhxntt/NotchFlow}"' "$protection_script"
 require_text 'branches/main/protection' "$protection_script"
-require_text '"contexts": ["app-verification"]' "$protection_script"
+require_text '"contexts": ["app-verification", "commit-message"]' "$protection_script"
 require_text '"required_approving_review_count": 0' "$protection_script"
 require_text '"required_linear_history": true' "$protection_script"
 require_text '"allow_force_pushes": false' "$protection_script"
