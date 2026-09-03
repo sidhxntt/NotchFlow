@@ -113,6 +113,7 @@ final class AlertBannerWatcher {
     private struct TrackedBanner {
         let identity: String
         let element: AXUIElement
+        let deliverySignature: AlertBannerDeliverySignature
     }
 
     /// Live banners, by the token we handed the store.
@@ -222,10 +223,20 @@ final class AlertBannerWatcher {
             onVanished?(token)
         }
 
-        let known = Set(live.values.map(\.identity))
-        for (identity, group) in onScreen where !known.contains(identity) {
+        let tokensByIdentity = Dictionary(uniqueKeysWithValues: live.map { ($0.value.identity, $0.key) })
+        for (identity, group) in onScreen {
             guard let banner = extract(from: group) else { continue }
-            live[banner.token] = TrackedBanner(identity: identity, element: group)
+            if let token = tokensByIdentity[identity], let tracked = live[token] {
+                guard tracked.deliverySignature != banner.deliverySignature else { continue }
+                // Notification Center reused this AX container for a different
+                // delivery. Retire the old token and publish the replacement so
+                // the feed increments its per-app burst count.
+                live[token] = nil
+                onVanished?(token)
+            }
+            live[banner.token] = TrackedBanner(identity: identity,
+                                                element: group,
+                                                deliverySignature: banner.deliverySignature)
             onBanner?(banner)
         }
 

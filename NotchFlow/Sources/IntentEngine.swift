@@ -14,11 +14,10 @@ import FoundationModels
 /// engine is model-based but still fully **on-device and provider-independent**:
 ///
 ///   1. The user's line is embedded with `NLContextualEmbedding` — the OS's
-///      built-in multilingual transformer (NaturalLanguage framework, macOS 14+,
-///      no Apple Intelligence requirement, available in mainland China).
+///      built-in English transformer (NaturalLanguage framework, macOS 14+).
 ///   2. A tiny **logistic head** over that embedding space scores ask vs. note.
 ///      The head is fit *on this device, once* from the bundled labeled examples
-///      in `IntentExamples` (a few hundred lines per language), then cached to
+///      in `IntentExamples`, then cached to
 ///      disk keyed by the embedding model's identity — so a future OS model
 ///      revision retrains automatically instead of misreading a shifted space.
 ///   3. On machines where Apple Intelligence is live (macOS 26+), the system LLM
@@ -54,12 +53,7 @@ actor IntentEngine {
         static let empty = Reading(intent: .ambiguous, confidence: 0, source: "none")
     }
 
-    // MARK: - Spaces (one per embedding model)
-
-    /// The OS ships separate contextual-embedding models per script family, with
-    /// *different, incomparable* vector spaces — so each gets its own model + its
-    /// own trained head. Text containing any Han/Kana/Hangul routes to the CJK
-    /// space; everything else to the Latin one.
+    // MARK: - English embedding space
     private final class Space {
         enum State { case idle, ready, unavailable }
         let language: NLLanguage
@@ -83,7 +77,6 @@ actor IntentEngine {
         }
     }
 
-    private var cjk: Space?
     private var latin: Space?
     private var prepared = false
 
@@ -105,13 +98,12 @@ actor IntentEngine {
     private var llmResolverChecked = false
 
     init() {
-        cjk = Space(language: .simplifiedChinese, examples: IntentExamples.chinese)
         latin = Space(language: .english, examples: IntentExamples.english)
     }
 
     // MARK: - Prepare (assets → load → train-or-restore the heads)
 
-    /// Bring both spaces up: download embedding assets if the OS hasn't already,
+    /// Bring the English space up: download embedding assets if needed,
     /// load the models, and fit (or restore from disk) the logistic heads. Safe
     /// to call repeatedly; runs once. Kick this off in the background at app
     /// launch — classification quietly returns `.empty` until it lands.
@@ -121,19 +113,18 @@ actor IntentEngine {
     func prepare(useDiskCache: Bool = true) async {
         guard !prepared else { return }
         prepared = true
-        for space in [cjk, latin].compactMap({ $0 }) {
+        for space in [latin].compactMap({ $0 }) {
             await prepareSpace(space, useDiskCache: useDiskCache)
         }
     }
 
     /// Evaluation entry: rebuild the spaces around injected example sets (e.g. a
     /// train split) and fit fresh heads, bypassing the disk cache entirely.
-    func prepareForEvaluation(chinese: IntentExampleSet, english: IntentExampleSet) async {
-        cjk = Space(language: .simplifiedChinese, examples: chinese)
+    func prepareForEvaluation(english: IntentExampleSet) async {
         latin = Space(language: .english, examples: english)
         cache = [:]; cacheOrder = []
         prepared = true
-        for space in [cjk, latin].compactMap({ $0 }) {
+        for space in [latin].compactMap({ $0 }) {
             await prepareSpace(space, useDiskCache: false)
         }
     }
@@ -233,7 +224,7 @@ actor IntentEngine {
         guard !text.isEmpty else { return .empty }
         if let hit = cache[text] { return hit }
 
-        let space = Self.routesToCJK(text) ? cjk : latin
+        let space = latin
         guard let space, space.state == .ready, let head = space.head,
               let vector = sentenceVector(text, space: space) else {
             return .empty
@@ -291,27 +282,9 @@ actor IntentEngine {
         cache[text] = reading
     }
 
-    /// Any Han / Kana / Hangul routes to the CJK embedding model (it's trained
-    /// for those scripts and copes with embedded Latin tokens, e.g. "买 airpods");
-    /// pure-Latin text takes the Latin model.
-    private static func routesToCJK(_ text: String) -> Bool {
-        text.unicodeScalars.contains { scalar in
-            switch scalar.value {
-            case 0x3400...0x4DBF,   // CJK ext A
-                 0x4E00...0x9FFF,   // CJK unified
-                 0xF900...0xFAFF,   // CJK compatibility
-                 0x3040...0x30FF,   // Hiragana + Katakana
-                 0xAC00...0xD7AF:   // Hangul
-                return true
-            default:
-                return false
-            }
-        }
-    }
-
     /// Sentence vector from the contextual embedding: mean-pool ⧺ max-pool over
     /// the token vectors (2× the model dimension), L2-normalized. Max-pooling
-    /// preserves strong single-token cues ("吗", "remind", a wh-word) that a mean
+    /// preserves strong single-token cues ("remind", a wh-word) that a mean
     /// over a long line would wash out; the mean keeps the overall register.
     private func sentenceVector(_ text: String, space: Space) -> [Double]? {
         guard let result = try? space.embedding.embeddingResult(for: text,
@@ -455,7 +428,7 @@ private final class IntentLLMResolver {
             Answer `note` when the line is something the person is writing down \
             for themselves to keep: a todo, reminder, appointment, idea, \
             shopping item, password, measurement, or log entry.
-            Lines may be in Chinese or English.
+            Lines are in English.
             """)
         session.prewarm()
     }

@@ -78,12 +78,15 @@ public enum RestingNotchPriority {
         return slot != .none
     }
 
-    /// The one occupant, resolved in the order `order.md` specifies.
-    ///
+    /// The one shoulder occupant, resolved in the order `order.md` specifies.
+    public static func slot(for inputs: RestingNotchInputs) -> RestingNotchSlot {
+        return resolvedSlot(for: inputs)
+    }
+
     /// Written as a table walked in rank order rather than a chain of early
     /// returns: adding a slot then means adding a row, and it is impossible to
     /// insert one at the wrong height without the rank being visibly wrong.
-    public static func slot(for inputs: RestingNotchInputs) -> RestingNotchSlot {
+    private static func resolvedSlot(for inputs: RestingNotchInputs) -> RestingNotchSlot {
         guard !inputs.panelOpen else { return .none }
 
         let candidates: [(RestingNotchSlot, Bool)] = [

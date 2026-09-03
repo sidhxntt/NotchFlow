@@ -89,7 +89,9 @@ struct PowerUtilityOverlayView: View {
                 .disabled(!system.isKeepingAwake)
             }
             .foregroundStyle(Tokens.text3)
-            .padding(.horizontal, 3)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.05)))
         }
     }
 
@@ -115,6 +117,7 @@ struct PowerUtilityOverlayView: View {
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.right").font(.sf(8, weight: .bold)).foregroundStyle(Tokens.text3)
             }
+            .frame(minHeight: 18)
             .padding(.vertical, 8)
             .padding(.horizontal, 10)
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))

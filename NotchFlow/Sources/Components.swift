@@ -3205,7 +3205,7 @@ struct WaitElapsedSuffix: View {
 /// streaming and then get replaced by a plain `MarkdownBlocks` once settled.
 /// That swap re-built the whole subtree from a new identity, and the sub-pixel
 /// difference between the two layouts hard-cut the answer ~2pt up-left at
-/// completion (the "突然跳掉位移"). Here the answer is ALWAYS the same
+/// completion. Here the answer is ALWAYS the same
 /// `MarkdownBlocks` — streaming just keeps feeding it more `text` and it reflows
 /// in place; settling only flips `textSelection` on the unchanged tree, which
 /// causes no rebuild and no jump.
@@ -3215,7 +3215,7 @@ struct WaitElapsedSuffix: View {
 /// between agent rounds, but because it's an overlay it has zero footprint on the
 /// answer's own layout — so it can never push the answer around. The overlay also
 /// keeps a layer mounted across every fade, so there's no frame where the slot is
-/// momentarily empty (the "空白帧" between questions).
+/// momentarily empty between questions.
 struct AssistantTurnView: View {
     let text: String
     /// Still in flight. Gates the wait overlay and holds the source badge back
@@ -3844,19 +3844,10 @@ struct InlineMarkdownText: View {
     /// instead (see `Handwriting`), which is what this carries the size for.
     var hand: HandEmphasis? = nil
 
-    /// What a handwritten line needs to resolve its own emphasis faces, and to
-    /// write its Chinese by stroke.
+    /// What a handwritten line needs to resolve its own emphasis faces.
     struct HandEmphasis: Equatable {
         /// Nominal prose size, for picking emphasis faces.
         let size: CGFloat
-        /// The size CJK is actually set at — the em the stroke ink is scaled to.
-        let cjkEm: CGFloat
-        /// The ink colour, which the stroke renderer has to be told: it fills its
-        /// own paths rather than drawing glyphs, so it cannot inherit the text's
-        /// styling the way `GraphicsContext.draw(_:)` does.
-        let color: Color
-        /// True only on the growing tail of a streaming answer.
-        let streaming: Bool
     }
 
     init(_ raw: String, linkColor: Color = Tokens.text1, hand: HandEmphasis? = nil) {
@@ -3867,36 +3858,18 @@ struct InlineMarkdownText: View {
 
     var body: some View {
         Text(attributed)
-            .modifier(InkWritingIfAvailable(
-                plan: hand,
-                // The laid-out characters, not the raw markdown: `**bold**` lays
-                // out as four glyphs, and the renderer maps glyph order onto this
-                // string to know which character it is about to write.
-                characters: hand == nil ? [] : Self.parsed(raw).plain,
-                weights: hand == nil ? [] : Self.parsed(raw).inkWeights))
     }
 
     /// The emphasis kinds worth re-facing by hand. Ordinary body text is `.plain`
     /// — in the printed voice it inherits the block's `.font` modifier as it
-    /// always has, and in the hand it still needs a face of its own because the
-    /// two scripts are set at different sizes (see `Face.cjk`).
+    /// always has, and in the hand it still needs a face of its own.
     private enum Emphasis: Equatable {
         case plain, bold, italic, boldItalic, code
     }
 
-    /// One stretch of a line that wants a single font: an emphasis kind, and
-    /// which script it's in.
-    ///
-    /// Script matters because the two halves of the handwriting stack don't share
-    /// a size. 翩翩体 draws its glyphs small inside the em, so Chinese set at the
-    /// same nominal size as Shantell reads a full point smaller than the English
-    /// beside it — noticeably so in a mixed sentence, which is most of them here.
-    /// Core Text has no way to say "this cascade entry, one size up" (a `.size` on
-    /// a cascade descriptor is ignored), so the correction has to happen where the
-    /// text is, as an explicit per-run font.
+    /// One stretch of a line that wants a single handwriting emphasis face.
     private struct Face: Equatable {
         let emphasis: Emphasis
-        let cjk: Bool
     }
 
     /// One line's parsed text, minus the caller's colour — the cacheable half.
@@ -3908,32 +3881,12 @@ struct InlineMarkdownText: View {
         let text: AttributedString
         let spans: [(offset: Int, length: Int)]
         let faces: [(offset: Int, length: Int, face: Face)]
-        /// The characters as laid out, cached alongside the parse because the
-        /// stroke renderer needs them on every frame of a streaming answer.
-        let plain: [Character]
-        /// Ink weight per character, parallel to `plain`.
-        ///
-        /// The stroke renderer draws its own paths, so it never sees the per-run
-        /// fonts that carry emphasis for type — a bold Chinese character would
-        /// come out exactly as heavy as body text, which is the same silent
-        /// flattening the explicit faces exist to prevent. Emphasis has to reach
-        /// the ink as a number, and this is it.
-        let inkWeights: [CGFloat]
         init(text: AttributedString,
              spans: [(offset: Int, length: Int)],
              faces: [(offset: Int, length: Int, face: Face)]) {
             self.text = text
             self.spans = spans
             self.faces = faces
-            let characters = Array(text.characters)
-            self.plain = characters
-            var weights = [CGFloat](repeating: 1, count: characters.count)
-            for run in faces where run.face.emphasis == .bold || run.face.emphasis == .boldItalic {
-                for i in run.offset..<min(run.offset + run.length, weights.count) {
-                    weights[i] = StrokeInk.boldWeight
-                }
-            }
-            self.inkWeights = weights
         }
     }
 
@@ -3964,7 +3917,7 @@ struct InlineMarkdownText: View {
                 emphasis = .plain
             }
             for character in text[run.range].characters {
-                let face = Face(emphasis: emphasis, cjk: isCJK(character))
+                let face = Face(emphasis: emphasis)
                 if var last = out.last, last.face == face {
                     last.length += 1
                     out[out.count - 1] = last
@@ -3975,30 +3928,6 @@ struct InlineMarkdownText: View {
             }
         }
         return out
-    }
-
-    /// Whether a character belongs to the CJK half of the type stack — Han, kana,
-    /// Hangul, and the full-width / ideographic punctuation that sets with them
-    /// (`，。、（）`). Latin punctuation and spaces deliberately stay on the Latin
-    /// side so a mixed sentence doesn't switch face at every comma.
-    private static func isCJK(_ character: Character) -> Bool {
-        guard let scalar = character.unicodeScalars.first else { return false }
-        switch scalar.value {
-        case 0x2E80...0x303F,   // radicals, Kangxi, CJK symbols & punctuation
-             0x3040...0x30FF,   // kana
-             0x3130...0x318F,   // Hangul compatibility jamo
-             0x3400...0x4DBF,   // unified ideographs extension A
-             0x4E00...0x9FFF,   // unified ideographs
-             0xA960...0xA97F,   // Hangul jamo extended-A
-             0xAC00...0xD7AF,   // Hangul syllables
-             0xF900...0xFAFF,   // compatibility ideographs
-             0xFE30...0xFE4F,   // CJK compatibility forms
-             0xFF01...0xFF60,   // full-width forms
-             0x20000...0x3FFFF: // extensions B and beyond
-            return true
-        default:
-            return false
-        }
     }
 
     /// Memoized inline parse, keyed on the raw line. Every line of an answer runs
@@ -4133,9 +4062,7 @@ struct InlineMarkdownText: View {
     /// SF Mono needs no correction.
     private static func handFont(_ face: Face, size: CGFloat) -> Font {
         guard face.emphasis != .code else { return Handwriting.codeFont(size) }
-        // The two scripts sit at different sizes to read level — that is the
-        // whole reason a line is split into runs at all.
-        let hand = face.cjk ? Handwriting.cjkFont : Handwriting.font
+        let hand = Handwriting.font
         switch face.emphasis {
         case .bold:       return hand(size, .bold, false)
         case .italic:     return hand(size, .regular, true)
@@ -4682,9 +4609,8 @@ enum MarkdownParser {
 
     /// Escape lone `~` so cmark can't read a pair of them as strikethrough.
     ///
-    /// GFM treats `~text~` as a strike, so an answer like `白天 8~12℃ / 夜间 -2~2℃`
-    /// — the ordinary Chinese way to write a range — loses both tildes and comes
-    /// back struck through. Runs of two or more tildes are left alone (real
+    /// GFM treats `~text~` as a strike, so an answer like `8~12°C / -2~2°C`
+    /// loses both tildes and comes back struck through. Runs of two or more tildes are left alone (real
     /// `~~strikethrough~~` still works), as is anything inside a code span, where
     /// a backslash would print literally rather than escape.
     static func escapingLoneTildes(_ line: String) -> String {
@@ -5216,8 +5142,8 @@ struct MarkdownBlocks: View {
 }
 
 /// The streaming face of `MarkdownBlocks`: same layout, but the live tail
-/// **fades in** as chunks land instead of snapping. The result is the "逐字出现"
-/// typewriter feel the answer is supposed to have — text appears to dissolve into
+/// **fades in** as chunks land instead of snapping. The result is a typewriter
+/// feel — text appears to dissolve into
 /// place rather than blink on in jumps.
 ///
 /// Why only the tail: re-parsing the whole `source` every chunk and re-fading all
@@ -5430,206 +5356,6 @@ private struct StreamTailFade: ViewModifier {
     }
 }
 
-// MARK: - Stroke writing (handwriting mode, macOS 15+)
-
-/// Writes a handwritten line the way a hand does: Chinese stroke by stroke in
-/// stroke order, everything else swept under a travelling nib.
-///
-/// # What this replaces
-///
-/// The first attempt at "writing" swept a nib left to right across the whole
-/// line. That is right for joined Latin — a cursive word genuinely is one
-/// left-to-right movement — and wrong for Chinese, where 你 is written 亻 then
-/// 尔 and no part of that is a horizontal sweep. This renderer keeps the sweep
-/// for the scripts it suits and hands every character with stroke data over to
-/// `StrokeInk`.
-///
-/// # Why Chinese is drawn even when it isn't moving
-///
-/// A character mid-write is `StrokeInk`'s marker ink; if a finished character
-/// reverted to the font's glyph it would visibly pop the instant it completed.
-/// So in handwriting mode the ink *is* the typeface for Chinese — settled text
-/// included — and the renderer runs on every handwritten line, not only the
-/// streaming one. `front` is simply past the end when nothing is animating.
-@available(macOS 15.0, *)
-struct InkRenderer: TextRenderer {
-    /// How far writing has got, in glyphs. Fractional: the part after the point
-    /// is how far into the current character the hand has reached, which becomes
-    /// that character's stroke progress.
-    var front: CGFloat
-    /// The laid-out characters, indexed by glyph order.
-    var characters: [Character]
-    /// Ink weight multiplier per character, same indexing.
-    var weights: [CGFloat]
-    /// The size CJK is set at — the em the ink is scaled to.
-    var em: CGFloat
-    /// Ink colour. Filled paths carry no text styling of their own.
-    var color: Color
-
-    var animatableData: CGFloat {
-        get { front }
-        set { front = newValue }
-    }
-
-    /// Length of the wet edge behind the nib, for the scripts that sweep.
-    static let softness: CGFloat = 5
-
-    func draw(layout: Text.Layout, in ctx: inout GraphicsContext) {
-        let shading = GraphicsContext.Shading.color(color)
-        var index = 0
-        for line in layout {
-            var slices: [Text.Layout.RunSlice] = []
-            for run in line {
-                for slice in run { slices.append(slice) }
-            }
-            let first = index
-            index += slices.count
-
-            let lineDone = front >= CGFloat(index)
-            if !lineDone && front <= CGFloat(first) { break }   // nothing here yet, nor below
-
-            // Where the nib sits on this line, for the swept (non-stroke) glyphs.
-            var headX = CGFloat.greatestFiniteMagnitude
-            if !lineDone {
-                let local = min(max(Int(front) - first, 0), slices.count - 1)
-                let rect = slices[local].typographicBounds.rect
-                headX = rect.minX + rect.width * (front - CGFloat(first + local))
-            }
-
-            for (offset, slice) in slices.enumerated() {
-                let position = first + offset
-                let bounds = slice.typographicBounds
-
-                // Chinese with stroke data: draw the ink, written as far as the
-                // hand has got into this character.
-                if let strokes = strokeCount(at: position, advance: bounds.rect.width) {
-                    let written: CGFloat
-                    if front >= CGFloat(position + 1) { written = CGFloat(strokes) }
-                    else if front <= CGFloat(position) { continue }
-                    else { written = (front - CGFloat(position)) * CGFloat(strokes) }
-
-                    if let path = StrokeInk.path(for: characters[position],
-                                                 origin: bounds.origin,
-                                                 em: em,
-                                                 progress: written,
-                                                 weight: position < weights.count ? weights[position] : 1) {
-                        ctx.fill(Path(path), with: shading)
-                    }
-                    continue
-                }
-
-                // Everything else — Latin, punctuation, anything the dataset
-                // doesn't cover — keeps its glyph and passes under the nib.
-                if lineDone || bounds.rect.maxX <= headX - Self.softness {
-                    ctx.draw(slice)
-                } else if bounds.rect.minX >= headX {
-                    break
-                } else {
-                    var nib = ctx
-                    nib.clipToLayer { layer in
-                        layer.fill(Self.wetPath(to: headX), with: Self.wetShading(to: headX))
-                    }
-                    nib.draw(slice)
-                }
-            }
-        }
-    }
-
-    /// The stroke count for the character at `position`, or nil when it should be
-    /// drawn as type.
-    ///
-    /// The advance check is a desync guard. Mapping glyph order onto character
-    /// order is an assumption (true for the linear text these rows hold), and if
-    /// it ever slipped, a Chinese character would be drawn as *a different*
-    /// Chinese character — the one failure mode here that would look like
-    /// corruption rather than like a missing effect. A full-width glyph whose
-    /// advance doesn't match the em it should have is the cheap tell, and falling
-    /// back to the glyph costs nothing.
-    private func strokeCount(at position: Int, advance: CGFloat) -> Int? {
-        guard position < characters.count else { return nil }
-        guard abs(advance - em) < em * 0.2 else { return nil }
-        return StrokeInk.strokeCount(for: characters[position])
-    }
-
-    private static func wetPath(to headX: CGFloat) -> Path {
-        Path(CGRect(x: headX - reach, y: -reach, width: reach, height: reach * 2))
-    }
-
-    private static func wetShading(to headX: CGFloat) -> GraphicsContext.Shading {
-        let solid = (reach - softness) / reach
-        return .linearGradient(
-            Gradient(stops: [.init(color: .black, location: 0),
-                             .init(color: .black, location: solid),
-                             .init(color: .clear, location: 1)]),
-            startPoint: CGPoint(x: headX - reach, y: 0),
-            endPoint: CGPoint(x: headX, y: 0))
-    }
-
-    private static let reach: CGFloat = 4_000
-}
-
-/// Drives the hand across one handwritten line.
-///
-/// While the line is the streaming tail, `front` chases the text's length with a
-/// linear animation retargeted on every pacer tick — it never quite arrives, and
-/// that standing gap is the character currently being written. A settled line
-/// mounts with `front` already past the end, so its Chinese is fully inked
-/// without animating anything.
-@available(macOS 15.0, *)
-private struct InkWriting: ViewModifier {
-    let plan: InlineMarkdownText.HandEmphasis
-    let characters: [Character]
-    let weights: [CGFloat]
-
-    @State private var front: CGFloat = 0
-
-    private static let lag: TimeInterval = 0.16
-
-    func body(content: Content) -> some View {
-        content
-            .textRenderer(InkRenderer(front: front, characters: characters, weights: weights,
-                                      em: plan.cjkEm, color: plan.color))
-            .onAppear {
-                guard plan.streaming else { front = .greatestFiniteMagnitude; return }
-                advance(to: characters.count)
-            }
-            .onChange(of: characters.count) { _, newValue in
-                guard plan.streaming else { front = .greatestFiniteMagnitude; return }
-                advance(to: newValue)
-            }
-            .onChange(of: plan.streaming) { _, streaming in
-                // The block just graduated out of the tail: finish the line
-                // rather than leaving the last characters half-written.
-                if !streaming { front = .greatestFiniteMagnitude }
-            }
-    }
-
-    private func advance(to length: Int) {
-        // A shrink means the tail re-parsed into a different block shape. Snap —
-        // rewriting text the reader has already finished is worse than no
-        // animation at all.
-        guard CGFloat(length) >= front else { front = CGFloat(length); return }
-        withAnimation(.linear(duration: Self.lag)) { front = CGFloat(length) }
-    }
-}
-
-/// Availability shim: stroke writing needs macOS 15's `TextRenderer`. On the 14.0
-/// deployment floor a handwritten answer still gets its faces — it just arrives
-/// as text rather than being written.
-struct InkWritingIfAvailable: ViewModifier {
-    var plan: InlineMarkdownText.HandEmphasis?
-    var characters: [Character]
-    var weights: [CGFloat]
-
-    func body(content: Content) -> some View {
-        if let plan, StrokeInk.isAvailable, #available(macOS 15.0, *) {
-            content.modifier(InkWriting(plan: plan, characters: characters, weights: weights))
-        } else {
-            content
-        }
-    }
-}
-
 /// Availability shim for the printed voice's per-glyph fade (macOS 15+); on the
 /// 14.0 deployment floor the streaming text falls back to the paced reveal alone.
 ///
@@ -5690,24 +5416,14 @@ struct MarkdownBlockRow: View, Equatable {
         proseFont(size, weight: weight, hand: hand)
     }
 
-    /// What `InlineMarkdownText` needs to re-face emphasis inside this row and to
-    /// write its Chinese by stroke, or nil when the row is typeset and SwiftUI's
-    /// own trait promotion is correct.
-    ///
-    /// `opacity` folds the row's own dimming (a done task, a quote) into the ink
-    /// colour: the stroke renderer fills its own paths, so a `.foregroundStyle`
-    /// on the view above never reaches them.
+    /// What `InlineMarkdownText` needs to re-face emphasis inside this row, or
+    /// nil when the row is typeset and SwiftUI's trait promotion is correct.
     private func emphasis(_ size: CGFloat, opacity: Double = 1) -> InlineMarkdownText.HandEmphasis? {
         guard hand else { return nil }
-        return .init(size: size,
-                     cjkEm: Handwriting.cjkEm(size),
-                     color: color.opacity(opacity),
-                     streaming: fadeTail)
+        return .init(size: size)
     }
 
-    /// Leading for a line of this row's prose. A hand needs a touch more air:
-    /// 翩翩体's ascenders and Shantell's bounced baseline both reach past where SF
-    /// sits, so the typeset leading crowds them into the line above.
+    /// Leading for a line of this row's prose. A hand needs a touch more air.
     private func leading(_ factor: CGFloat) -> CGFloat {
         baseFont * (factor + (hand ? Handwriting.extraLineSpacing : 0))
     }
@@ -6019,10 +5735,7 @@ private struct MarkdownTableView: View {
 
     private func cellText(_ raw: String, weight: Font.Weight, opacity: Double) -> some View {
         InlineMarkdownText(raw, linkColor: color.opacity(opacity),
-                           hand: hand ? .init(size: baseFont - 1,
-                                              cjkEm: Handwriting.cjkEm(baseFont - 1),
-                                              color: color.opacity(opacity),
-                                              streaming: false) : nil)
+                           hand: hand ? .init(size: baseFont - 1) : nil)
             .font(proseFont(baseFont - 1, weight: weight, hand: hand))
             .tracking(hand ? 0 : -0.05)
             .foregroundStyle(color.opacity(opacity))

@@ -12,11 +12,6 @@ struct ContentView: View {
     /// hover-to-open never fires during a drag (the tracking area sees no
     /// mouseEntered), so the drop target itself unfurls the panel.
     @State private var agentDropTargeted = false
-    /// The live string store. Observing it here, at the root of every panel, plus
-    /// the `.id(loc.language)` below, rebuilds the whole SwiftUI subtree when the
-    /// App Language changes — so every `L(_:)` lookup re-evaluates at once, no
-    /// relaunch, without each child view having to observe the store itself.
-    @EnvironmentObject private var loc: Localization
     @Environment(\.notchMetrics) private var metrics
     /// Reduce-motion skips the close dissolve (the content fade beat), collapsing in
     /// one step — mirrors how the open spring already degrades to a plain settle.
@@ -38,11 +33,6 @@ struct ContentView: View {
                 // height. Only `MarkdownBlocks` reads it, and that view renders
                 // nothing but assistant output, so the reach is exactly the prose.
                 .environment(\.handwritten, HandwritingFeature.isEnabled && model.handwrittenAnswers)
-                // Rebuild the island's subtree on an App Language switch so every
-                // localized string re-evaluates at once. The island is collapsed
-                // (or being opened) when the user returns from a switch, so the
-                // identity change never interrupts a visible animation.
-                .id(loc.language)
                 // Drop a project folder on the island to start composing a
                 // agent task in it (XII: agent-to-Codex) — the folder is
                 // exactly the argument the mode needs, so one drop enters the
@@ -397,8 +387,8 @@ private struct SenseEarWidthsKey: PreferenceKey {
 /// The copy-sense rest content, in the two-eared compact idiom (the Dynamic
 /// Island's): nothing can sit ON the camera housing — on a notched Mac those
 /// pixels physically don't exist — so the hint splits across the shoulders the
-/// flex opens on each side of it. Left ear: what will happen ("设提醒" / "Set
-/// Reminder"), then the write's dots, then the one-word verdict — the same slot
+/// flex opens on each side of it. Left ear: what will happen ("Set Reminder"),
+/// then the write's dots, then the one-word verdict — the same slot
 /// the busy dots use, so "working" always lives left of the notch. Right ear:
 /// the key to press ("⌘C"), following the macOS menu convention of label left,
 /// shortcut right; it folds shut the moment the offer is consumed. Each ear is
@@ -544,7 +534,8 @@ private struct CollapsedAgentStatusEars: View {
                 .foregroundStyle(Tokens.text2)
                 .lineLimit(1)
                 .fixedSize()
-                .frame(width: earLeft)
+                .padding(.leading, 8)
+                .frame(width: earLeft, alignment: .leading)
 
             Color.clear.frame(width: notchWidth)
 
@@ -1047,8 +1038,8 @@ struct NotchIsland: View {
     /// the resolver says which one wins.
     private typealias RestingEarSlot = RestingNotchSlot
 
-    private var restingSlot: RestingNotchSlot {
-        RestingNotchPriority.slot(for: RestingNotchInputs(
+    private var restingInputs: RestingNotchInputs {
+        RestingNotchInputs(
             panelOpen: model.open,
             liveActivityEnabled: model.liveActivityEnabled,
             notifications: isNotificationAnnouncement,
@@ -1059,7 +1050,11 @@ struct NotchIsland: View {
             focusTransition: focusTimer.transition != nil,
             agentSteady: agentSteadySession != nil,
             nowPlaying: NotchCapabilityPresentation.supportsCollapsedPreview(capabilities.media),
-            clipboardSense: model.clipboardSense != .idle))
+            clipboardSense: model.clipboardSense != .idle)
+    }
+
+    private var restingSlot: RestingNotchSlot {
+        RestingNotchPriority.slot(for: restingInputs)
     }
 
     private var isNotificationAnnouncement: Bool {
@@ -1088,7 +1083,7 @@ struct NotchIsland: View {
 
     /// A permission request is a stronger state than ordinary background work:
     /// it needs the user's attention, so the island becomes the red-edged
-    /// AgentNotch alert and opens directly on the dedicated Agent surface.
+    /// NotchFlow alert and opens directly on the dedicated Agent surface.
     private var agentPermissionPending: Bool {
         guard capabilities.agenticModeEnabled else { return false }
         return codexApprovals.hasPendingApprovals
@@ -1339,7 +1334,8 @@ struct NotchIsland: View {
 
     private var width: CGFloat {
         if isOpen { return model.openWidth }
-        return metrics.notchWidth + earLeft + earRight
+        let shoulderWidth = metrics.notchWidth + earLeft + earRight
+        return shoulderWidth
     }
 
     private var bottomRadius: CGFloat {

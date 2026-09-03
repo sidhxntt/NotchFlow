@@ -207,8 +207,8 @@ final class NotchModel: ObservableObject {
         var turns: [Turn]? = nil
         /// A short title summarizing the actual conversation content. Generated
         /// asynchronously after the first answer so the recent list can show the
-        /// topic (e.g. "小米高管") instead of a generic first prompt (e.g.
-        /// "总结一下"). `nil` for legacy items and for unconfigured/offline sessions.
+        /// topic (e.g. "Acme leadership") instead of a generic first prompt (e.g.
+        /// "Summarize this"). `nil` for legacy items and for unconfigured/offline sessions.
         var title: String? = nil
         /// What the recent list should display: the generated title when available,
         /// otherwise the first user message for backward compatibility.
@@ -382,7 +382,7 @@ final class NotchModel: ObservableObject {
         }
 
         /// Squeeze a stored field onto ONE line: the digest is line-per-row, so a
-        /// multi-line note ("会议结论\n下周二出稿") would otherwise split into what
+        /// multi-line note ("Meeting notes\nDraft due Tuesday") would otherwise split into what
         /// reads as two separate entries.
         private static func flattened(_ s: String) -> String {
             s.split(whereSeparator: \.isWhitespace).joined(separator: " ")
@@ -1248,7 +1248,7 @@ final class NotchModel: ObservableObject {
         if !newValue.opensOnClickOnly { endHoverPeek() }
     }
 
-    // MARK: - Detached session windows (tear-off / 分裂)
+    // MARK: - Detached session windows (tear-off)
 
     /// The live tear-off drag, while the ghost card is still attached to the
     /// island: set by the header drag gesture (NotchBody), rendered as the ghost
@@ -2076,10 +2076,8 @@ final class NotchModel: ObservableObject {
         /// pill show, so `/note` and the hint beside the caret can't disagree.
         var title: String { L("hint." + rawValue) }
 
-        /// What the text after the slash matches on: the English command word
-        /// (stable in every UI language — `/note` works on a Chinese interface),
-        /// a couple of natural aliases, and the localized title, so `/记` finds
-        /// 记录 too.
+        /// What the text after the slash matches on: the English command word,
+        /// a couple of natural aliases, and the command title.
         var keywords: [String] {
             let base: [String]
             switch self {
@@ -2361,9 +2359,8 @@ final class NotchModel: ObservableObject {
     /// people fire at a selection — the prompt-shortcut work — so the wait word
     /// says the work instead of a mood, pinned for the whole round (no rotation).
     ///
-    /// Cues are imperative verbs in the languages the app ships in (EN / 简 / 繁 /
-    /// 日 / 한 / ES), matched anywhere in the line: the instruction can sit either
-    /// side of the quoted text ("翻译一下：…", "… translate to Japanese"). Verbs
+    /// Cues are English imperative verbs, matched anywhere in the line: the
+    /// instruction can sit on either side of the quoted text. Verbs
     /// only, on purpose — a question *about* a translation ("who did the best
     /// translation of Dante") keeps the mood rotation. Order is priority, so
     /// "translate and summarize this" reads "Translating…".
@@ -2374,36 +2371,20 @@ final class NotchModel: ObservableObject {
     static let taskWords: [(word: String, orb: OrbState, cues: [String])] = [
         ("Translating...", .connecting, [
             "translate", "translating",
-            "翻译", "翻譯", "译成", "譯成", "译为", "譯為", "转译", "轉譯",
-            "翻訳", "번역",
-            "traduce", "tradúce", "traducir", "traduzca",
         ]),
         // "summar" on purpose: covers summarize / summarise / summary / summaries
-        // in one cue. Spanish keeps the verb forms only — bare "resume" is the
-        // English noun ("review my resume"), which is not a summary request.
+        // in one cue.
         ("Summarizing...", .composing, [
             "summar", "tl;dr", "tldr", "recap",
-            "总结", "總結", "摘要", "概括", "归纳", "歸納",
-            "要約", "요약",
-            "resumir", "resumen",
         ]),
         ("Proofreading...", .composing, [
             "proofread", "typos",
-            "校对", "校對", "校正", "纠错", "糾錯", "错别字", "錯別字",
-            "誤字", "교정",
-            "corrige los errores",
         ]),
         ("Rewriting...", .composing, [
             "rewrite", "reword", "rephrase", "paraphrase",
-            "改写", "改寫", "重写", "重寫", "润色", "潤色", "改一下措辞",
-            "書き直", "다시 써",
-            "reescribe", "reescribir", "reformula",
         ]),
         ("Explaining...", .composing, [
             "explain", "eli5",
-            "解释", "解釋", "讲解", "講解", "说明一下", "說明一下",
-            "解説", "설명",
-            "explica", "explique",
         ]),
     ]
 
@@ -2633,7 +2614,6 @@ final class NotchModel: ObservableObject {
     /// `summary` is deliberately safe to show (API keys are never echoed).
     private struct PreparedAppSettingChange {
         enum Payload {
-            case language(AppLanguage)
             case dockIcon(DockIconVisibility)
             case menuBarIcon(MenuBarIconVisibility)
             case launchAtLogin(Bool)
@@ -2757,8 +2737,6 @@ final class NotchModel: ObservableObject {
         var refreshAI = false
         for change in effective {
             switch change.payload {
-            case .language(let value):
-                Localization.shared.language = value
             case .dockIcon(let value):
                 DockIconVisibility.current = value
                 NotificationCenter.default.post(name: .dockIconVisibilityChanged, object: nil)
@@ -2877,7 +2855,7 @@ final class NotchModel: ObservableObject {
         // Resolve the due date BEFORE the card, so what the user approves is the
         // moment that will actually be filed — the card and the alarm can never
         // disagree. An explicit `due` wins; without one we fall back to the same
-        // parsers a typed line goes through, so "每周一交周报" still repeats.
+        // parsers a typed line goes through, so an English repeat phrase still repeats.
         var due: Date?
         if request.kind == .reminder {
             if let raw = request.due {
@@ -3001,56 +2979,19 @@ final class NotchModel: ObservableObject {
         return fmt.string(from: due)
     }
 
-    /// The interface language as a `Locale`, for the date strings this file shows
-    /// the user (and states back to the model).
+    /// English date strings for confirmations and the matching tool output.
     private static func localeForInterfaceLanguage() -> Foundation.Locale {
-        switch Localization.shared.language.resolved {
-        case .en:     return Foundation.Locale(identifier: "en_US")
-        case .zhHans: return Foundation.Locale(identifier: "zh_Hans")
-        case .zhHant: return Foundation.Locale(identifier: "zh_Hant")
-        case .ja:     return Foundation.Locale(identifier: "ja_JP")
-        case .ko:     return Foundation.Locale(identifier: "ko_KR")
-        case .fr:     return Foundation.Locale(identifier: "fr_FR")
-        case .es:     return Foundation.Locale(identifier: "es_ES")
-        }
+        Foundation.Locale(identifier: "en_US")
     }
 
-    /// Card copy for a capture confirmation, in the interface language. A reminder
-    /// with a resolved time names it in the question, so the user approves the
-    /// alarm and not just the words.
+    /// Card copy for a capture confirmation. A reminder with a resolved time
+    /// names it in the question, so the user approves the alarm and not just the words.
     private func captureConfirmationCopy(kind: CaptureRequest.Kind,
                                          due: Date?) -> (question: String, confirm: String, cancel: String) {
         let when = due.map { Self.captureDueDescription($0) }
-        switch Localization.shared.language.resolved {
-        case .zhHans:
-            let q = kind == .note ? "保存这条备忘录？"
-                : (when.map { "创建提醒，\($0) 提醒你？" } ?? "创建这条提醒？")
-            return (q, "保存", "取消")
-        case .zhHant:
-            let q = kind == .note ? "儲存這則備忘錄？"
-                : (when.map { "建立提醒，\($0) 提醒你？" } ?? "建立這則提醒？")
-            return (q, "儲存", "取消")
-        case .ja:
-            let q = kind == .note ? "このメモを保存しますか？"
-                : (when.map { "\($0) にリマインドしますか？" } ?? "このリマインダーを作成しますか？")
-            return (q, "保存", "キャンセル")
-        case .ko:
-            let q = kind == .note ? "이 메모를 저장할까요?"
-                : (when.map { "\($0)에 알릴까요?" } ?? "이 미리 알림을 만들까요?")
-            return (q, "저장", "취소")
-        case .fr:
-            let q = kind == .note ? "Enregistrer cette note ?"
-                : (when.map { "Créer un rappel pour le \($0) ?" } ?? "Créer ce rappel ?")
-            return (q, "Enregistrer", "Annuler")
-        case .es:
-            let q = kind == .note ? "¿Guardar esta nota?"
-                : (when.map { "¿Crear un recordatorio para el \($0)?" } ?? "¿Crear este recordatorio?")
-            return (q, "Guardar", "Cancelar")
-        case .en:
-            let q = kind == .note ? "Save this note?"
-                : (when.map { "Create a reminder for \($0)?" } ?? "Create this reminder?")
-            return (q, "Save", "Cancel")
-        }
+        let question = kind == .note ? "Save this note?"
+            : (when.map { "Create a reminder for \($0)?" } ?? "Create this reminder?")
+        return (question, "Save", "Cancel")
     }
 
     /// Route canonical setting ids onto the category that owns their UI control.
@@ -3068,7 +3009,7 @@ final class NotchModel: ObservableObject {
         case "capture", "notes", "note_destination", "notes_folder", "copy_sense",
              "selection_context":
             return "chat"
-        case "general", "app_language", "launch_at_login", "dock_icon", "menu_bar_icon",
+        case "general", "launch_at_login", "dock_icon", "menu_bar_icon",
              "proxy":
             return "global"
         case "shortcuts", "summon_shortcut", "action_shortcut", "prompt_shortcut":
@@ -3128,7 +3069,6 @@ final class NotchModel: ObservableObject {
             return "prompt_shortcut[\(chord)]=\(binding.prompt)"
         }
         return [
-            "app_language=\(Self.languageToken(AppLanguage.current))",
             "dock_icon=\(DockIconVisibility.current.rawValue)",
             "menu_bar_icon=\(MenuBarIconVisibility.current.rawValue)",
             "launch_at_login=\(LaunchAtLogin.isEnabled)",
@@ -3210,13 +3150,6 @@ final class NotchModel: ObservableObject {
         }
 
         switch setting {
-        case "app_language":
-            guard let newValue = Self.parseLanguage(value) else {
-                throw invalidValue(setting, "system, english, chinese_simplified, chinese_traditional, japanese, korean, french, or spanish")
-            }
-            return made(setting, L("general.appLanguage"), newValue.label,
-                        .language(newValue), noOp: newValue == AppLanguage.current)
-
         case "dock_icon":
             guard let newValue = Self.parseDockVisibility(value) else {
                 throw invalidValue(setting, "shown or hidden")
@@ -3516,15 +3449,7 @@ final class NotchModel: ObservableObject {
     }
 
     private func localizedToggle(_ enabled: Bool) -> String {
-        switch Localization.shared.language.resolved {
-        case .zhHans: return enabled ? "开启" : "关闭"
-        case .zhHant: return enabled ? "開啟" : "關閉"
-        case .ja:     return enabled ? "オン" : "オフ"
-        case .ko:     return enabled ? "켬" : "끔"
-        case .fr:     return enabled ? "Activé" : "Désactivé"
-        case .es:     return enabled ? "Activado" : "Desactivado"
-        case .en:     return enabled ? "On" : "Off"
-        }
+        enabled ? "On" : "Off"
     }
 
     // MARK: - Confirmation sentences
@@ -3536,75 +3461,27 @@ final class NotchModel: ObservableObject {
     // value is never shown).
 
     private func changeSentence(_ label: String, _ value: String) -> String {
-        switch Localization.shared.language.resolved {
-        case .zhHans: return "\(label)将改为\(value)"
-        case .zhHant: return "\(label)將改為\(value)"
-        case .ja:     return "\(label)を\(value)に変更します"
-        case .ko:     return "\(label)을 \(value)(으)로 변경합니다"
-        case .fr:     return "\(label) passera à \(value)"
-        case .es:     return "\(label) cambiará a \(value)"
-        case .en:     return "\(label) will change to \(value)"
-        }
+        "\(label) will change to \(value)"
     }
 
     private func clearedSentence(_ label: String) -> String {
-        switch Localization.shared.language.resolved {
-        case .zhHans: return "\(label)将被清空"
-        case .zhHant: return "\(label)將被清空"
-        case .ja:     return "\(label)を消去します"
-        case .ko:     return "\(label)을 비웁니다"
-        case .fr:     return "\(label) sera effacé"
-        case .es:     return "\(label) se borrará"
-        case .en:     return "\(label) will be cleared"
-        }
+        "\(label) will be cleared"
     }
 
     private func removedSentence(_ label: String) -> String {
-        switch Localization.shared.language.resolved {
-        case .zhHans: return "\(label)将被删除"
-        case .zhHant: return "\(label)將被刪除"
-        case .ja:     return "\(label)を削除します"
-        case .ko:     return "\(label)을 삭제합니다"
-        case .fr:     return "\(label) sera supprimé"
-        case .es:     return "\(label) se eliminará"
-        case .en:     return "\(label) will be removed"
-        }
+        "\(label) will be removed"
     }
 
     private func keySetSentence(_ label: String) -> String {
-        switch Localization.shared.language.resolved {
-        case .zhHans: return "\(label)将被设置（密钥不会显示）"
-        case .zhHant: return "\(label)將被設定（金鑰不會顯示）"
-        case .ja:     return "\(label)を設定します（キーは表示しません）"
-        case .ko:     return "\(label)을 설정합니다(키는 표시하지 않음)"
-        case .fr:     return "\(label) sera enregistrée (clé masquée)"
-        case .es:     return "\(label) se guardará (clave oculta)"
-        case .en:     return "\(label) will be set (key hidden)"
-        }
+        "\(label) will be set (key hidden)"
     }
 
     private func promptRunSentence(_ label: String, _ prompt: String) -> String {
-        switch Localization.shared.language.resolved {
-        case .zhHans: return "\(label) 将运行：\(prompt)"
-        case .zhHant: return "\(label) 將執行：\(prompt)"
-        case .ja:     return "\(label) は次を実行します：\(prompt)"
-        case .ko:     return "\(label) 이(가) 다음을 실행합니다: \(prompt)"
-        case .fr:     return "\(label) exécutera : \(prompt)"
-        case .es:     return "\(label) ejecutará: \(prompt)"
-        case .en:     return "\(label) will run: \(prompt)"
-        }
+        "\(label) will run: \(prompt)"
     }
 
     private func appSettingsConfirmationCopy() -> (question: String, confirm: String, cancel: String) {
-        switch Localization.shared.language.resolved {
-        case .zhHans: return ("确认更改以下设置？", "确认", "取消")
-        case .zhHant: return ("確認更改以下設定？", "確認", "取消")
-        case .ja:     return ("次の設定を変更しますか？", "確認", "キャンセル")
-        case .ko:     return ("다음 설정을 변경할까요?", "확인", "취소")
-        case .fr:     return ("Confirmer ces changements ?", "Confirmer", "Annuler")
-        case .es:     return ("¿Confirmar estos cambios?", "Confirmar", "Cancelar")
-        case .en:     return ("Confirm these setting changes?", "Confirm", "Cancel")
-        }
+        ("Confirm these setting changes?", "Confirm", "Cancel")
     }
 
     private static func settingToken(_ raw: String) -> String {
@@ -3619,33 +3496,6 @@ final class NotchModel: ObservableObject {
         case "true", "on", "yes", "enabled", "enable", "show", "shown": return true
         case "false", "off", "no", "disabled", "disable", "hide", "hidden": return false
         default: return nil
-        }
-    }
-
-    private static func parseLanguage(_ raw: String) -> AppLanguage? {
-        switch settingToken(raw) {
-        case "system", "auto", "default": return .system
-        case "english", "en": return .english
-        case "chinese_simplified", "simplified_chinese", "zh_hans": return .chineseSimplified
-        case "chinese_traditional", "traditional_chinese", "zh_hant": return .chineseTraditional
-        case "japanese", "ja": return .japanese
-        case "korean", "ko": return .korean
-        case "french", "fr": return .french
-        case "spanish", "es": return .spanish
-        default: return nil
-        }
-    }
-
-    private static func languageToken(_ language: AppLanguage) -> String {
-        switch language {
-        case .system:             return "system"
-        case .english:            return "english"
-        case .chineseSimplified:  return "chinese_simplified"
-        case .chineseTraditional: return "chinese_traditional"
-        case .japanese:           return "japanese"
-        case .korean:             return "korean"
-        case .french:             return "french"
-        case .spanish:            return "spanish"
         }
     }
 
@@ -4219,9 +4069,7 @@ final class NotchModel: ObservableObject {
     /// single-delete slide.
     @Published var bulkClearing = false
     /// The open settings category (raw value of `InlineSettingsView.Section`),
-    /// held here rather than as view-local `@State` so it survives the panel
-    /// subtree rebuild an App Language switch triggers (root `.id(loc.language)`).
-    /// Without this, switching language while in General would snap back to Model.
+    /// held here rather than as view-local `@State` so it survives panel rebuilds.
     @Published var settingsSection: String = "Model"
     /// Which recent row the keyboard has highlighted while navigating the list
     /// with ↑/↓. `nil` means nothing is highlighted yet — the list may be open
@@ -4250,7 +4098,7 @@ final class NotchModel: ObservableObject {
     /// same thing twice in a row leaves one entry here, so ↑ never fills the same
     /// line twice running and the "x / total" counter counts distinct consecutive
     /// questions. Non-adjacent repeats (asked A, then B, then A again) are kept —
-    /// only *consecutive* duplicates fold, matching "连续两条相同" exactly.
+    /// only *consecutive* duplicates fold.
     private var recallQuestions: [String] {
         var out: [String] = []
         for item in history where
@@ -4680,7 +4528,7 @@ final class NotchModel: ObservableObject {
         }
     }
     /// Legacy key name, kept so the setting survives the agent-only → global move.
-    private static let liveActivityKey = "agentNotchActivityEnabled"
+    private static let liveActivityKey = "notchFlowActivityEnabled"
 
     /// Whether the assistant's answers are written by hand instead of typeset
     /// (Settings → Appearance, "Handwritten answers"). Off by default — the
@@ -5888,7 +5736,7 @@ final class NotchModel: ObservableObject {
         // A pasted image is real input, exactly like typed text — so fold the
         // Recent list the same way the `text` setter does. Without this the
         // list lingers open over the compose until the user also types
-        // something (the bug: "粘贴图片时没有自动收起历史记录，必须要打字").
+        // something (for example, after pasting an image).
         collapseHistory()
         noteUserTyping()
         withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
@@ -7367,9 +7215,8 @@ final class NotchModel: ObservableObject {
     /// verbs are save/keep/bookmark/file, and the useful payload is the copied
     /// URL/snippet, not the directive phrase. "Add this to my reading list" should
     /// file the link, not the literal sentence. Two signals, either is enough:
-    ///   1. A note-filing verb paired with a deictic ("save **this**", "收藏**这个**").
-    ///   2. A very short line that is essentially a bare deictic ("this", "这个") —
-    ///      <=5 words / a lone CJK deictic, with nothing else to file.
+    ///   1. A note-filing verb paired with a deictic ("save **this**").
+    ///   2. A very short line that is essentially a bare deictic ("this").
     /// Conservative by design: a self-contained jot ("buy milk", "dentist tue 3pm")
     /// matches neither and is filed verbatim as today. Lexical only; no model call.
     private func isDeicticNoteCapture(_ line: String) -> Bool {
@@ -7382,24 +7229,18 @@ final class NotchModel: ObservableObject {
         if discourseMarkers.contains(where: { q.contains($0) }) { return false }
 
         let enDeictics = ["this", "that", "these", "those", "it"]
-        let cjkDeictics = ["这个", "这段", "这些", "这条", "这句", "这篇", "它"]
         let hasEnDeictic = enDeictics.contains { containsWord($0, in: q) }
-        let hasCjkDeictic = cjkDeictics.contains { q.contains($0) }
-        let hasDeictic = hasEnDeictic || hasCjkDeictic
-        guard hasDeictic else { return false }
+        guard hasEnDeictic else { return false }
 
         // 1. Note-filing verb + deictic → capture (the verb's object is the clip).
         let enFileVerbs = ["save", "add", "bookmark", "keep", "file", "store",
                            "note", "jot", "log", "put", "record", "capture"]
-        let cjkFileVerbs = ["保存", "收藏", "记下", "记录", "存", "加到", "添加", "留着"]
         let hasFileVerb = enFileVerbs.contains { containsWord($0, in: q) }
-            || cjkFileVerbs.contains { q.contains($0) }
         if hasFileVerb { return true }
 
         // 2. Essentially a bare deictic — nothing else of substance to file.
         let words = q.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" }).count
-        if hasEnDeictic && words <= 5 { return true }
-        if hasCjkDeictic && q.count <= 6 { return true }
+        if words <= 5 { return true }
 
         return false
     }
@@ -7421,7 +7262,7 @@ final class NotchModel: ObservableObject {
         let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !line.isEmpty else { return }
 
-        // A deictic note ("save this", "收藏这个") points at the clipboard, not at
+        // A deictic note ("save this") points at the clipboard, not at
         // itself — fold the copied URL/snippet into the note body so what gets filed
         // is the *referent*, not a useless directive phrase. The raw `line` is still
         // what we persist to Recent and restore on failure; only the Notes payload
@@ -7910,7 +7751,7 @@ final class NotchModel: ObservableObject {
         saveHistory()
 
         // Derive a title from the actual conversation content so the recent list
-        // doesn't just display the first user message — prompts like "总结一下"
+        // doesn't just display the first user message — prompts like "summarize this"
         // would make many rows look identical. Runs asynchronously so the UI is never
         // blocked; if it fails (offline, no key, timeout) the row falls back to
         // the first question.
@@ -8075,16 +7916,16 @@ final class NotchModel: ObservableObject {
     /// `NOTCH_DEMO_THREAD` env path in `AppDelegate`.
     func seedDemoThread() {
         turns = [
-            Turn(role: "user", text: "小米 ceo 是谁"),
-            Turn(role: "assistant", text: "小米公司的创始人兼首席执行官（CEO）是**雷军**。他自 2010 年公司创立起便担任这一职务，并持续领导小米的发展。"),
-            Turn(role: "user", text: "cfo 呢"),
-            Turn(role: "assistant", text: "小米集团首席财务官（CFO）是**林世伟**。他于 2020 年加入小米，此前曾在金融机构有丰富的工作经验。"),
-            Turn(role: "user", text: "其他高管呢"),
-            Turn(role: "assistant", text: "小米其他主要高管包括：\n\n- **卢伟冰**：集团总裁，兼任国际业务部总裁、分管手机部、生态链部等多个关键部门。\n- **曾学忠**：集团高级副总裁，兼任手机部总裁。\n- **王翔**：高级顾问，前集团总裁。\n- **颜克胜**：集团副总裁，负责质量委员会和采购委员会。\n\n这些高管共同组成了小米的管理层核心。"),
-            Turn(role: "user", text: "雷军是哪里人"),
-            Turn(role: "assistant", text: "雷军出生于**湖北省仙桃市**，1969 年出生。他毕业于武汉大学计算机系。"),
-            Turn(role: "user", text: "他还创办过别的公司吗"),
-            Turn(role: "assistant", text: "是的。雷军在创办小米之前，曾长期担任**金山软件**的高管乃至 CEO，并参与创办了**卓越网**（后被亚马逊收购）。他也是知名的天使投资人，通过**顺为资本**投资了大量科技公司。"),
+            Turn(role: "user", text: "Who is Acme's CEO?"),
+            Turn(role: "assistant", text: "**Avery Chen** is Acme's founder and chief executive officer."),
+            Turn(role: "user", text: "What about the CFO?"),
+            Turn(role: "assistant", text: "**Morgan Lee** is Acme's chief financial officer."),
+            Turn(role: "user", text: "Who else is on the leadership team?"),
+            Turn(role: "assistant", text: "Acme's leadership team also includes:\n\n- **Jordan Patel** — President\n- **Riley Kim** — Chief Technology Officer\n- **Casey Rivera** — Chief Operating Officer"),
+            Turn(role: "user", text: "Where is Avery from?"),
+            Turn(role: "assistant", text: "Avery was born in Portland, Oregon, in 1985 and studied computer science."),
+            Turn(role: "user", text: "Did Avery found any other companies?"),
+            Turn(role: "assistant", text: "Before Acme, Avery led product teams at several software companies and invested in early-stage startups."),
         ]
         mode = .result
     }

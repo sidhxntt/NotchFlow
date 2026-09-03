@@ -33,7 +33,7 @@ build:
 	@./scripts/codesign-app.sh --debug $(APP_BUNDLE)
 
 dev:
-	@./script/build_and_run.sh --verify
+	@./scripts/build_and_run.sh --verify
 	@bash Tests/verify_menu_bar_icon.sh
 	@bash Tests/verify_approval_bridges.sh
 

@@ -258,6 +258,14 @@ final class SettingsPolicyTests: XCTestCase {
         }
     }
 
+    func testLegacyYouTubeMusicPinFallsBackToAutomatic() {
+        withStoredValue("mediaPreferredSource") {
+            UserDefaults.standard.set("youtubeMusic", forKey: "mediaPreferredSource")
+            XCTAssertNil(MediaPresentationPolicy.preferredSource,
+                         "a browser site cannot be pinned as though it were a dedicated media source")
+        }
+    }
+
     // MARK: - Clipboard retention
 
     @MainActor

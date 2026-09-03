@@ -431,7 +431,7 @@ extension Array where Element == AgentLogEntry {
     /// parser can't tell mid-run which text block is the last, so every narration
     /// block becomes a trail entry AND the last one also becomes the round's answer
     /// (`finalMessage`). Any view that stacks the trail above the answer therefore
-    /// printed the report twice (the "回答内容重复展示"). Drop it here, where both
+    /// printed the report twice. Drop it here, where both
     /// halves are known. Only a non-mono (narration) tail entry is eligible — a tool
     /// row (`mono`) is never the answer — and only when the answer begins with its
     /// (prefix-capped, whitespace-trimmed) title. Pass an empty `answer` (e.g. while
@@ -631,7 +631,7 @@ final class AgentTaskManager: ObservableObject {
         /// The latest activity line while running ("$ npm test", "Editing Foo.swift").
         var activity: String? = nil
         /// A state-changing tool that is still waiting for its result. This is
-        /// the small bit of state AgentNotch uses to decide whether the user
+        /// the small bit of state NotchFlow uses to decide whether the user
         /// needs to check the interactive terminal.
         var activePermissionTool: String? = nil
         var activePermissionEntryID: UUID? = nil
@@ -797,7 +797,7 @@ final class AgentTaskManager: ObservableObject {
         }
     }
 
-    /// AgentNotch observes the CLIs' persisted JSONL streams instead of owning
+    /// NotchFlow observes the CLIs' persisted JSONL streams instead of owning
     /// their permission buttons. Do the same for active Codex/Claude sessions:
     /// a tool with no matching result after the reference delay is surfaced to
     /// the dedicated Agent tab.
@@ -1662,7 +1662,7 @@ final class AgentTaskManager: ObservableObject {
         NSWorkspace.shared.open(folder)
     }
 
-    /// AgentNotch intentionally sends permission handling back to the terminal
+    /// NotchFlow intentionally sends permission handling back to the terminal
     /// rather than attempting to answer an agent's approval request itself.
     /// Open Terminal in the run's working directory so the relevant session is
     /// immediately discoverable without changing the run's approval state.

@@ -40,6 +40,14 @@ final class AlertFeedStoreTests: XCTestCase {
         XCTAssertEqual(burst.count, 5)
     }
 
+    func testChangedBannerContentHasANewDeliverySignature() {
+        let first = banner(title: "Priya", body: "see you at 8")
+        let next = banner(title: "Avery", body: "meeting moved to 9", token: 2)
+
+        XCTAssertNotEqual(first.deliverySignature, next.deliverySignature,
+                          "a reused Accessibility banner container must emit the next notification")
+    }
+
     func testOurOwnBannersAreIgnored() {
         let store = store()
         store.ingest(banner(app: "NotchFlow", bundleID: "com.notchflow.app"), now: t0)

@@ -12,7 +12,7 @@ import sys
 
 for path in (
     "/Users/sidhxntt/Library/Application Support/NotchFlow/claude-approvals.sock",
-    "/Users/sidhxntt/Library/Application Support/AgentNotch/notch.sock",
+    "/Users/sidhxntt/Library/Application Support/NotchFlow/notch.sock",
 ):
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.settimeout(1)

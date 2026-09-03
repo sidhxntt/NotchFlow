@@ -13,25 +13,10 @@ import SwiftUI
 /// printout. Nothing structural changes: same parser, same blocks, same copy
 /// output. Only the ink changes.
 ///
-/// # The stack
-///
-/// Chinese isn't set in a font at all — it is *drawn*, stroke by stroke in stroke
-/// order, by `StrokeInk`. Read that file for why; the short version is that
-/// writing a character in stroke order needs its stroke shapes and its stroke
-/// centrelines to come from the same source, and a shipped font only has the
-/// first. So the ink is the centreline, and the "typeface" for Chinese is a
-/// rounded marker whose weight is a number we choose.
-///
-/// Latin/digits: **Caveat** (SIL OFL, bundled, 400 KB) — a casual, near-monoline
-/// hand, picked to read as the *same pen* as that marker. A modulated script like
-/// Dancing Script sits beside the ink as an obviously different instrument. Caveat
-/// also carries a real `wght` axis from 400 to 700, which matters more than it
+/// **Caveat** (SIL OFL, bundled, 400 KB) is a casual, near-monoline hand. It
+/// carries a real `wght` axis from 400 to 700, which matters more than it
 /// sounds: single-weight handwriting faces leave `**bold**` with nothing to
 /// resolve to (see below).
-///
-/// Anything neither covers — kana, Hangul, rare hanzi, punctuation, symbols —
-/// falls through Core Text to the system face and simply arrives as type. The
-/// answer stays readable; it just isn't handwritten.
 ///
 /// # Why every face is resolved explicitly, never by trait
 ///
@@ -56,35 +41,17 @@ enum Handwriting {
     /// The bundled Latin family. Registered automatically at launch via
     /// `ATSApplicationFontsPath` (Info.plist → `Fonts`), same as the brand face.
     ///
-    /// **Caveat**, chosen to match the marker that `StrokeInk` draws Chinese with:
-    /// near-monoline, rounded, casual. The alternatives all failed on one of two
-    /// counts — Dancing Script and other modulated scripts read as a different
-    /// instrument beside flat marker ink, and Gochi Hand and Patrick Hand match
-    /// the pen but ship a single weight, which would leave `**bold**` with nothing
-    /// to resolve to.
+    /// Caveat is a near-monoline, casual family with a usable weight axis.
     private static let latinFamily = "Caveat"
-
-    /// CJK faces, used only for *metrics* and as the fallback when a character has
-    /// no stroke data. The ink normally draws over these glyphs' positions without
-    /// ever drawing the glyphs themselves — see `StrokeInk`.
-    private static let cjkRegular = ["HanziPenSC-W3", "STKaitiSC-Regular", "HannotateSC-W5"]
-    private static let cjkBold = ["HanziPenSC-W5", "STKaitiSC-Bold", "HannotateSC-W7"]
 
     // MARK: - Size and slant
 
-    /// Points added to a handwritten run over the nominal prose size — Latin and
-    /// CJK separately, because they do not lift together.
+    /// Points added to a handwritten run over the nominal prose size.
     ///
     /// Caveat's x-height is 0.40 em against SF's 0.53, so set at the nominal size
     /// its lowercase reads a third smaller than the interface around it; +5 brings
-    /// the x-heights level. The CJK number is the em the stroke ink is scaled to,
-    /// tuned to sit level with that.
-    ///
-    /// The two are measured, not shared: the previous pairings needed +0/+1.5 and
-    /// +3/+3, and a mixed sentence set at one size read visibly lopsided every
-    /// time the faces changed.
+    /// the x-heights level.
     private static let latinLift: CGFloat = 7
-    private static let cjkLift: CGFloat = 4
 
     /// Slant applied to italic runs, as a fraction of the em.
     ///
@@ -118,16 +85,6 @@ enum Handwriting {
         return Font(nsFont(size + latinLift, weight: weight, italic: italic) as CTFont)
     }
 
-    /// The em CJK is actually set at, for the nominal prose `size`. The stroke
-    /// ink scales to this, so it lands exactly where the glyph would have.
-    static func cjkEm(_ size: CGFloat) -> CGFloat { size + cjkLift }
-
-    /// The same hand at the size CJK needs to sit level with it.
-    static func cjkFont(_ size: CGFloat, weight: Font.Weight = .regular, italic: Bool = false) -> Font {
-        guard latinAvailable else { return .sf(size, weight: weight) }
-        return Font(nsFont(size + cjkLift, weight: weight, italic: italic) as CTFont)
-    }
-
     /// Whether the bundled Latin family actually registered.
     ///
     /// Worth checking explicitly, because the failure is silent otherwise:
@@ -152,10 +109,7 @@ enum Handwriting {
     /// Extra leading a handwritten line takes over the typeset one, as a multiple
     /// of the base size.
     ///
-    /// Script faces reach further above and below the baseline than SF does —
-    /// 行楷's descending strokes especially — and both lifts above make the line
-    /// box taller again. This keeps a dense paragraph's strokes from tangling
-    /// with the line under it.
+    /// The face's ascenders and bounced baseline need a little additional room.
     static let extraLineSpacing: CGFloat = 0.2
 
     /// Where the setting lives. Named here rather than at either reader because
@@ -199,17 +153,8 @@ enum Handwriting {
     }
 
     private static func build(size: CGFloat, axis: CGFloat, italic: Bool) -> NSFont {
-        // The CJK cascade tracks the Latin weight: a bold run should be bold in
-        // both scripts, and 翩翩体 ships a real W5 for exactly that.
-        let cjk = axis >= 600 ? cjkBold : cjkRegular
-
         var attributes: [NSFontDescriptor.AttributeName: Any] = [.family: latinFamily]
         attributes[.init(rawValue: kCTFontVariationAttribute as String)] = [fourCC("wght"): axis]
-        // A cascade list REPLACES Core Text's default one, but not its last-resort
-        // pass — a glyph none of these faces covers still falls through to the
-        // system font rather than rendering as tofu.
-        attributes[.init(rawValue: kCTFontCascadeListAttribute as String)] =
-            cjk.map { NSFontDescriptor(fontAttributes: [.name: $0]) }
 
         var descriptor = NSFontDescriptor(fontAttributes: attributes)
         if italic {

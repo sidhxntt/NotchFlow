@@ -35,6 +35,7 @@ Icon
 .commandcode/
 .superpowers/
 .agents/
+.vscode/
 
 # Local scratch notes
 temp.md

@@ -15,7 +15,15 @@ public enum MediaSource: String, CaseIterable, Codable, Sendable {
     case appleMusic
     case spotify
     case nowPlaying
+    /// Retained only to decode a preference written by older releases. YouTube
+    /// Music runs inside a browser, so it cannot be a distinct system media
+    /// source; its playback is covered by `.nowPlaying`.
     case youtubeMusic
+
+    /// Sources the Follow player setting can genuinely pin. Browser sites are
+    /// deliberately absent: macOS exposes their active media as one shared
+    /// system-wide Now Playing session.
+    public static let allCases: [MediaSource] = [.appleMusic, .spotify, .nowPlaying]
 
     public var displayName: String {
         switch self {
@@ -55,8 +63,11 @@ public struct MediaState: Equatable, Sendable {
     public var volume: Double
     public var artworkData: Data?
     public var lastAudibleAt: Date
+    /// The app that owns a system now-playing session. Native player states
+    /// leave this nil and use their source's ordinary launch target instead.
+    public var originatingApplicationBundleIdentifier: String?
 
-    public init(source: MediaSource, title: String = "", artist: String = "", album: String = "", isPlaying: Bool = false, position: TimeInterval = 0, duration: TimeInterval = 0, volume: Double = 0.5, artworkData: Data? = nil, lastAudibleAt: Date = .distantPast) {
+    public init(source: MediaSource, title: String = "", artist: String = "", album: String = "", isPlaying: Bool = false, position: TimeInterval = 0, duration: TimeInterval = 0, volume: Double = 0.5, artworkData: Data? = nil, lastAudibleAt: Date = .distantPast, originatingApplicationBundleIdentifier: String? = nil) {
         self.source = source
         self.title = title
         self.artist = artist
@@ -67,11 +78,17 @@ public struct MediaState: Equatable, Sendable {
         self.volume = volume
         self.artworkData = artworkData
         self.lastAudibleAt = lastAudibleAt
+        self.originatingApplicationBundleIdentifier = originatingApplicationBundleIdentifier
     }
 
     public static let inactive = MediaState(source: .nowPlaying)
     public var isActive: Bool { isPlaying && !title.isEmpty }
     public var hasTrack: Bool { !title.isEmpty }
+    public var launchTarget: MediaLaunchTarget {
+        guard let originatingApplicationBundleIdentifier else { return source.launchTarget }
+        return MediaLaunchTarget(applicationBundleIdentifier: originatingApplicationBundleIdentifier,
+                                 fallbackURL: source.webLaunchURL)
+    }
 }
 
 public enum ActivityKind: Equatable, Sendable { case media, download, battery, volume, brightness, webcam }
@@ -134,6 +151,7 @@ public enum MediaPresentationPolicy {
         get {
             UserDefaults.standard.string(forKey: preferredSourceKey)
                 .flatMap(MediaSource.init)
+                .flatMap { MediaSource.allCases.contains($0) ? $0 : nil }
         }
         set {
             if let newValue {
@@ -166,7 +184,7 @@ public enum NotchCapabilityPresentation {
     }
 }
 
-/// Mirrors AgentNotch's deliberately conservative permission cue: only tools
+/// Mirrors NotchFlow's deliberately conservative permission cue: only tools
 /// that ordinarily change state (or an MCP action) are surfaced, and only after
 /// they have remained unresolved for five seconds. Read-only work must never
 /// look like a permission request.
@@ -567,6 +585,10 @@ public final class NotchCapabilityStore: ObservableObject {
 
     public func launchMedia(_ source: MediaSource) {
         mediaService.launch(source)
+    }
+
+    public func launchMedia(_ media: MediaState) {
+        mediaService.launch(media)
     }
 
     public func addShelfItem(url: URL) throws {

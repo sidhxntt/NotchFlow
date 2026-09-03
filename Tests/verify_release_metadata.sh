@@ -36,7 +36,6 @@ require_file scripts/verify-conventional-commits.sh
 require_file .github/workflows/auto-release-tag.yml
 require_file .github/workflows/validate-pull-request.yml
 require_file Tests/verify_conventional_commit_messages.sh
-require_file README.zh-CN.md
 require_text '[Release Notes](CHANGELOG.md)' README.md
 
 # App-source pushes to main receive a version tag. Website-only commits remain
@@ -137,11 +136,10 @@ NODE
 # branch, never an obsolete default branch.
 if grep -nE \
   'raw\.githubusercontent\.com/[[:alnum:]_.-]+/[[:alnum:]_.-]+/master/' \
-  README.md README.zh-CN.md RELEASING.md install.sh .github/workflows/release.yml; then
+  README.md RELEASING.md install.sh .github/workflows/release.yml; then
   fail 'a shipped raw GitHub URL still targets /master/'
 fi
 require_text '/main/install.sh' README.md
-require_text '/main/install.sh' README.zh-CN.md
 require_text '/main/install.sh' .github/workflows/release.yml
 
 # Each note entry must have a generated changelog counterpart. The current

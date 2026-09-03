@@ -5,6 +5,21 @@ import XCTest
 final class MediaCapabilityServiceRankingTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
 
+    func testAutomaticModeRegistersTheSystemNowPlayingProvider() {
+        let service = MediaCapabilityService()
+        let controllers = Mirror(reflecting: service).children
+            .first(where: { $0.label == "controllers" })?.value as? [any MediaControlling]
+
+        XCTAssertNotNil(controllers, "the automatic media sources must be inspectable")
+        XCTAssertTrue(controllers?.contains(where: { $0.source == .nowPlaying }) == true,
+                      "Automatic must include the system-wide Now Playing source, not just Music and Spotify")
+    }
+
+    func testFollowPlayerOptionsDoNotPromiseASiteSpecificBrowserFilter() {
+        XCTAssertFalse(MediaSource.allCases.contains(.youtubeMusic),
+                       "YouTube Music is supplied by a browser-wide Now Playing session, not a separate controllable source")
+    }
+
     // MARK: - The regression: a stale dedicated track must not beat a live browser
 
     func testABrowserActivelyPlayingOutranksAnIdleStaleMusicTrack() {

@@ -641,7 +641,7 @@ struct AgentHarness {
             // search result's text. Keyed off how many search rounds already
             // finished (`searchRounds`), so the first search runs clean and the nudge
             // hardens each subsequent round until the cap. This is what stops a model
-            // from re-wording the same fruitless query forever (the "南昌一月气温" loop).
+            // from re-wording the same fruitless query forever.
             var resultsToSend = completed
             let didSearchThisRound = pendingCalls.contains { Self.isSearchTool($0.name) }
             if didSearchThisRound,
@@ -715,7 +715,7 @@ struct AgentHarness {
     /// An escalating "stop searching, answer now" nudge appended to each search
     /// result's text, keyed by how many search rounds have already happened. This is
     /// the cure for the runaway-search loop: when a query has no clean answer on the
-    /// web (e.g. "南昌一月气温", where every result is near-miss climate filler with no
+    /// web (for example, a query where every result is near-miss climate filler with no
     /// hard number), a model left to its own devices keeps *rewording and re-searching*
     /// forever — each round it sees fresh-but-still-inconclusive results and optimistically
     /// tries again. The nudge raises the pressure to answer from what's in hand, so the

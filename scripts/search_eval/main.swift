@@ -157,51 +157,51 @@ enum QueryKind: String {
 
 let queries: [(id: String, q: String, kind: QueryKind)] = [
     // ── multi-step: the searches should compound, not repeat ──────────────────
-    ("multi-hop-cn",   "英伟达最近一个财季的数据中心营收是多少？和上一财季比涨了多少百分比？", .chain),
+    ("multi-hop-revenue", "What was Nvidia's data-center revenue last quarter, and how much did it change from the prior quarter?", .chain),
     ("multi-hop-en",   "Who is the current CEO of Intel, when did they start, and what was the stock price change on the announcement day?", .chain),
-    ("compare",        "比较一下 DeepSeek 最新旗舰模型和 Qwen 最新旗舰模型的上下文窗口和定价，列出数字。", .chain),
-    ("fresh-cn",       "今天上证指数收盘是多少点？涨跌幅是多少？", .chain),
+    ("compare",        "Compare the latest flagship models from DeepSeek and Qwen: list their context windows and prices.", .chain),
+    ("fresh-market",   "What was today's S&P 500 closing value, and what was its percentage change?", .chain),
     ("fresh-en",       "What is the latest stable version of Swift, and what were the headline changes?", .chain),
-    ("read-page",      "看一下 https://github.com/apple/swift 的 README，用三句话说明这个仓库现在主推什么。", .chain),
-    ("date-math",      "距离下一个 WWDC 还有多少天？先查清楚日期再算。", .chain),
-    ("mixed-tools",    "查一下现在一美元兑人民币多少，然后算 4999 美元是多少人民币。", .chain),
-    ("chained-read",   "找一篇本周关于 Apple Silicon 的新闻，打开它，然后总结它的核心论点。", .chain),
-    ("ambiguous-time", "苹果最近一次发布会是什么时候？发布了哪些硬件？", .chain),
+    ("read-page",      "Read https://github.com/apple/swift's README and summarize its current focus in three sentences.", .chain),
+    ("date-math",      "How many days remain until the next WWDC? Verify the date before calculating.", .chain),
+    ("mixed-tools",    "Look up the current USD to EUR rate, then calculate how many euros $4,999 is.", .chain),
+    ("chained-read",   "Find an Apple Silicon news article from this week, open it, and summarize its central argument.", .chain),
+    ("ambiguous-time", "When was Apple's most recent launch event, and which hardware did it announce?", .chain),
     // Three genuinely separate facts before any arithmetic can start — the
     // deepest chain here, and the clearest test of a ceiling set too low.
-    ("triple-hop",     "特斯拉最近一个财季在全球交付了多少辆车？比亚迪同期卖了多少辆？两者相差多少百分比？", .chain),
-    ("two-lookups-math", "查一下现在一盎司黄金多少美元，再查一下美元兑人民币汇率，然后算出一克黄金大约多少人民币。", .chain),
+    ("triple-hop",     "How many vehicles did Tesla and BYD sell globally last quarter, and what was the percentage difference?", .chain),
+    ("two-lookups-math", "Look up the current price of gold per ounce and the USD to EUR rate, then calculate the approximate price per gram in euros.", .chain),
     // Sources disagree, which tempts the model into re-searching for a tiebreak
     // rather than reporting the disagreement.
-    ("disputed",       "现在世界上最高的建筑是哪一座？有没有已经封顶但还没投入使用、比它更高的？", .chain),
+    ("disputed",       "What is the tallest building in the world? Is there a taller topped-out building not yet in use?", .chain),
 
     // ── fruitless: the shape that produced the blank answers ──────────────────
     // The original incident, verbatim. A substituted-quote meme: the answer is
     // recognising it as a rewrite of a famous line, which no amount of searching
     // the rewritten text will surface.
-    ("quote-origin",   "通过丑化我，丑化张雪峰老师，丑化亿万学子参加的大学招生志愿大填报。张雪峰老师的妻子，三十八年整了。认识还不止，共患难了! 这句话原文是什么", .fruitless),
+    ("quote-origin",   "By mocking me, mocking my teacher, and mocking countless students, you are mocking our work. What is the original quote?", .fruitless),
     // The second incident, verbatim — same shape, different meme.
-    ("meme-origin",    "勃勃，没想到你会问出这样的问题。我记得你可是上通天文下知地理中间还懂线性代数的啊。。 这句话原文是什么", .fruitless),
+    ("meme-origin",    "I never expected you to ask that. I remember you know astronomy, geography, and linear algebra. What is the original quote?", .fruitless),
     // A misremembered line: the words as given appear nowhere, so every search
     // comes back near-miss. Answering well means saying which line it's probably
     // a garbling of — and saying so plainly if unsure.
-    ("misquote",       "「人类的悲欢并不相通，我只觉得他们吵闹」这句话我可能记错了，原话是什么？出自哪里？", .fruitless),
+    ("misquote",       "I may have misremembered this quote: 'Human joy and sorrow do not connect; I only find them noisy.' What is the original and source?", .fruitless),
     // Long-tail with almost no web presence. Classic reword-forever bait, and the
     // honest answer is "I couldn't find it."
-    ("deep-obscure",   "NotchFlow 这个 macOS 刘海小工具是谁做的？用什么写的？开源吗？", .fruitless),
+    ("deep-obscure",   "Who made the NotchFlow macOS utility, what is it written in, and is it open source?", .fruitless),
     // Hyper-specific real-time reading that no page publishes in this form.
-    ("unanswerable",   "此时此刻北京朝阳区的实时 PM2.5 读数是多少？精确到个位。", .fruitless),
+    ("unanswerable",   "What is the real-time PM2.5 reading in downtown Seattle right now, to the nearest unit?", .fruitless),
     // Kept from the original battery — the loop the nudge was first written for.
-    ("no-clean-answer","南昌一月份的平均气温是多少度？", .fruitless),
-    ("obscure",        "Keenable 这家搜索 API 公司是做什么的？定价怎么算？", .fruitless),
+    ("no-clean-answer","What was the average January temperature in a small rural town with limited published climate data?", .fruitless),
+    ("obscure",        "What does the Keenable search API company do, and how is it priced?", .fruitless),
 
     // ── control: searching here is the bug ────────────────────────────────────
-    ("stable-cs",      "冒泡排序的时间复杂度是多少？为什么是这个复杂度？", .trap),
-    ("stable-lang",    "把这句话翻译成英文：光阴似箭，日月如梭。", .trap),
+    ("stable-cs",      "What is bubble sort's time complexity, and why?", .trap),
+    ("stable-lang",    "Translate this sentence into English: Time flies like an arrow.", .trap),
     // Looks like stable product trivia, is actually time-sensitive — the trap in
     // the other direction, so a "stop searching" change can't quietly win by
     // teaching the model to answer everything from memory.
-    ("looks-stable",   "苹果目前在售的 MacBook Pro，顶配是哪颗芯片？", .trap),
+    ("looks-stable",   "Which chip powers Apple's current top-end MacBook Pro?", .trap),
 ]
 
 // MARK: - Runner
