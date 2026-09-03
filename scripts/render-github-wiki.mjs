@@ -27,6 +27,7 @@ const pages = [
   ["wiki/audience.md", "Who-NotchFlow-Is-For.md"],
   ["wiki/modes.md", "Generic-Mode-and-Agentic-Mode.md"],
   ["wiki/architecture.md", "Architecture.md"],
+  ["wiki/implementation-guide.md", "Engineering-Implementation-Guide.md"],
   ["wiki/technology-stack.md", "Technology-Stack.md"],
   ["wiki/engineering-challenges.md", "Engineering-Challenges.md"],
   ["wiki/privacy-and-permissions.md", "Privacy-and-Permissions.md"],
