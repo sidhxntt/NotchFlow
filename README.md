@@ -8,6 +8,10 @@
 
 **Ask**, **save a note**, **set a reminder**, or **hand a task to an AI agent** — all from your Mac's notch.
 
+[![Latest release](https://img.shields.io/github/v/release/sidhxntt/NotchFlow?label=release)](https://github.com/sidhxntt/NotchFlow/releases/latest)
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
+![Apple silicon](https://img.shields.io/badge/Apple%20silicon-arm64-black?logo=apple)
+
 [notch.website](https://notch.website) ·
 [Release Notes](CHANGELOG.md)
 
@@ -15,7 +19,7 @@ Direct download · Apple silicon · macOS 14+
 
 </div>
 
-NotchFlow is a direct-download macOS app that turns the notch into a place to think and act. Whatever you type is automatically recognized as a chat, a note, a reminder, or a coding-agent task.
+NotchFlow is a private macOS companion that brings AI chat, notes, reminders, and coding agents to your Mac's notch. Whatever you type is recognized as a chat, a note, a reminder, or a coding-agent task; prompts and local history stay on your Mac unless you deliberately send them to a provider or service.
 
 ## Install
 

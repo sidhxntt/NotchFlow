@@ -1,1 +1,0 @@
-{"type":"click","text":"Notchi app + UI\n      ↓\n      Ported Boring servicesadapters · one state model\n    \n    \n      A. Native integration — recommended\n      Keep one Notchi application, port Boring’s services and models into feature modules, and rebuild every visible surface in the Notchi design system.","choice":"adapter","id":null,"timestamp":1787777883093}
