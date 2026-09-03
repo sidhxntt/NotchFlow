@@ -35,7 +35,6 @@ All notable user-facing changes to NotchFlow are documented here.
 - Now playing, volume and transport controls for whatever is making sound, plus an announcement when your AirPods connect.
 - Notifications land on the notch's shoulders with an app's icon and unread count.
 - Your calendar's next events, a webcam preview, and handwritten answers if you prefer them typeset by hand.
-- Speaks English, Simplified and Traditional Chinese, Japanese, Korean, French and Spanish.
 
 ### Other
 

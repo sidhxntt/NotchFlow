@@ -817,7 +817,7 @@ public enum AgentSessionObservation {
     }
 }
 
-/// A non-approval interaction emitted by the existing AgentNotch-compatible
+/// A non-approval interaction emitted by the NotchFlow-compatible
 /// hook. A question or plan marker can inform the status UI but never grants a
 /// tool permission — that authority remains with an approval bridge.
 public struct AgentSessionMarker: Equatable, Sendable {

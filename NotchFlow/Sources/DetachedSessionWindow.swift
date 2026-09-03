@@ -632,7 +632,7 @@ final class DetachedSessionWindowController: NSObject, NSWindowDelegate {
         window.alphaValue = eased
         CATransaction.commit()
         // The fill deepens on its own axis, so a slow press keeps showing progress
-        // after the growth has all but finished — the "越来越实心" half of the cue.
+        // after the growth has all but finished — the solidifying half of the cue.
         state.pressDepth = eased
         if !window.isVisible { window.orderFrontRegardless() }
     }
@@ -1559,7 +1559,6 @@ final class DetachedSessionWindowController: NSObject, NSWindowDelegate {
                 self.animateForceTouchHistoryResize = false
                 self.resizeCompactThread(to: h, animated: animated)
             })
-            .environmentObject(Localization.shared)
             // This window's own edges are the wall its hover tooltips clamp to —
             // the island's coordinate space doesn't reach here.
             .notchTooltipClipBox()

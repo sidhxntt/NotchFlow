@@ -14,7 +14,7 @@ import time
 
 paths = (
     "/Users/sidhxntt/Library/Application Support/NotchFlow/claude-approvals.sock",
-    "/Users/sidhxntt/Library/Application Support/AgentNotch/notch.sock",
+    "/Users/sidhxntt/Library/Application Support/NotchFlow/notch.sock",
 )
 
 deadline = time.monotonic() + 10

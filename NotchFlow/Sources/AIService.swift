@@ -270,9 +270,9 @@ have I recorded", "what did I ask you yesterday", "summarize my week", "did I \
 ever note anything about X" → search_history. It reads their own questions, \
 notes, reminders and agent tasks, with timestamps. The current conversation is \
 already in front of you, so only reach for it to see beyond this thread.
-- Saving something for the user — "note this", "记一下", "remember that…" \
+- Saving something for the user — "note this", "remember that…" \
 → create_note; anything that names a moment in time ("remind me tomorrow at \
-3", "每周一交周报") → create_reminder with an absolute local `due`. \
+3") → create_reminder with an absolute local `due`. \
 Decide on your own when a request is a capture, and file the user's full final \
 text. Both tools present their own single Confirm/Cancel card before writing, so \
 never also call ask_user to confirm, and never say it was saved until the tool \
@@ -281,11 +281,8 @@ result says so.
 You don't need to spell out your source every time; cite it only when it \
 matters — when the claim is contested, surprising, or the user would want to \
 check it — and otherwise just answer. \
-When you search, prefer English-language queries and lean on English-language \
-sources, even when answering in another language — they tend to be more \
-timely and reliable. Only fall back to a Chinese-language query when the topic \
-is inherently local (a China-specific product, person, policy, or event) and \
-English sources are thin. Then answer in the user's language as usual.
+When you search, use English-language queries and lean on English-language \
+sources, which tend to be more timely and reliable.
 """
 
 /// The persona with the current local date inlined as the first line, so the
@@ -293,21 +290,12 @@ English sources are thin. Then answer in the user's language as usual.
 /// its memory as potentially stale — turning the bare `current_datetime` tool
 /// (which the model has to *think* to call) into an unconditional fact it always
 /// has. The single-shot `complete` path and the agent path both build the prompt
-/// through here. Rendered in the user's interface language to match the answer,
-/// mirroring `DateTimeTool`'s locale handling.
+/// through here. It uses the app's English interface locale.
 func notchSystemPromptDated(customInstructions: String? = nil) -> String {
     let fmt = DateFormatter()
     fmt.dateStyle = .full
     fmt.timeStyle = .none
-    switch Localization.shared.language.resolved {
-    case .en:     fmt.locale = Foundation.Locale(identifier: "en_US")
-    case .zhHans: fmt.locale = Foundation.Locale(identifier: "zh_Hans")
-    case .zhHant: fmt.locale = Foundation.Locale(identifier: "zh_Hant")
-    case .ja:     fmt.locale = Foundation.Locale(identifier: "ja_JP")
-    case .ko:     fmt.locale = Foundation.Locale(identifier: "ko_KR")
-    case .fr:     fmt.locale = Foundation.Locale(identifier: "fr_FR")
-    case .es:     fmt.locale = Foundation.Locale(identifier: "es_ES")
-    }
+    fmt.locale = Foundation.Locale(identifier: "en_US")
     var prompt = "Today is \(fmt.string(from: Date())).\n\n" + notchSystemPrompt
     // The user's own preferences (XII-137), appended AFTER the built-in persona so
     // the core rules — concise, search-first, honest — are stated first and the
@@ -328,7 +316,7 @@ func notchSystemPromptDated(customInstructions: String? = nil) -> String {
 
 /// System prompt for summarizing a conversation into a short recent-list title.
 /// The title is derived from the *actual* exchange (not the user's first message),
-/// so generic prompts like "总结一下" don't end up as the displayed title.
+/// so generic prompts like "summarize this" don't end up as the displayed title.
 let titleSystemPrompt = """
 You write short, *distinctive* titles for a list of past conversations. The \
 list shows many titles stacked together, so each one must be specific enough \
@@ -338,8 +326,8 @@ Given a conversation, produce a title that:
 - Captures the actual topic discussed (not the user's first message verbatim).
 - Leads with the most distinguishing detail — the specific name, number, \
 place, product, or action involved — rather than a broad category word. \
-Prefer "小米 SU7 售价" over "小米"; prefer "Redis 连接池泄漏" over "Redis 问题".
-- Fits in roughly 16 characters or 10 Chinese characters. Use the space to be \
+Prefer "Acme Q4 revenue" over "Acme"; prefer "Redis connection pool leak" over "Redis issue".
+- Fits in roughly 16 characters. Use the space to be \
 specific; don't pad, but don't truncate away the distinguishing detail either.
 - Is in the same language as the conversation.
 

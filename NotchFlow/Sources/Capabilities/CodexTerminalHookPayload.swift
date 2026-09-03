@@ -1,6 +1,6 @@
 import Foundation
 
-/// The protocol spoken by the already-installed `notch-codex-hook.py` hook for
+/// The protocol spoken by the already-installed `notchflow-codex-hook.py` hook for
 /// interactive Terminal Codex sessions. Its response is intentionally a small
 /// object, not JSON-RPC: the hook prints it directly to Codex's stdout.
 public struct CodexTerminalHookRequest: Equatable, Sendable {
@@ -26,7 +26,7 @@ public struct CodexTerminalHookRequest: Equatable, Sendable {
                 title: detail ?? "Run \(tool)",
                 detail: nonEmpty(object["reason"]) ?? nonEmpty(object["cwd"]),
                 workingDirectory: nonEmpty(object["cwd"]),
-                // AgentNotch's installed Claude hook speaks this same socket
+                // NotchFlow's installed Claude hook speaks this same socket
                 // protocol. Treating it as unknown made the listener close its
                 // connection immediately, which fails the hook open before a
                 // user could ever see a card.

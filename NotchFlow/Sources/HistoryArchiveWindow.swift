@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 
 /// Which compose bucket opened the archive. The menu-bar History command uses
@@ -27,7 +26,6 @@ final class HistoryArchiveWindowController: NSObject, NSWindowDelegate {
     static let shared = HistoryArchiveWindowController()
 
     private var window: NSWindow?
-    private var localizationObservation: AnyCancellable?
 
     /// True while the History window is on screen. The notch-close path checks this
     /// before yielding activation back to the app the user came from: with the
@@ -35,12 +33,7 @@ final class HistoryArchiveWindowController: NSObject, NSWindowDelegate {
     /// down with the whole `.accessory` app, reading as "the window closed itself".
     var isVisible: Bool { window?.isVisible ?? false }
 
-    private override init() {
-        super.init()
-        localizationObservation = Localization.shared.objectWillChange
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.window?.title = L("history.window.title") }
-    }
+    private override init() { super.init() }
 
     /// Open (or bring to front) the History window. Reuses the single instance so
     /// repeated invocations don't stack duplicates.
@@ -55,7 +48,6 @@ final class HistoryArchiveWindowController: NSObject, NSWindowDelegate {
             // Chat (or back) must not retain the previous bucket's rows.
             window.contentView = NSHostingView(
                 rootView: HistoryArchiveView(model: model, scope: scope)
-                    .environmentObject(Localization.shared)
                     .notchTooltipClipBox()
             )
             window.makeKeyAndOrderFront(nil)
@@ -76,7 +68,6 @@ final class HistoryArchiveWindowController: NSObject, NSWindowDelegate {
 
         window.contentView = NSHostingView(
             rootView: HistoryArchiveView(model: model, scope: scope)
-                .environmentObject(Localization.shared)
                 // Same as the detached window: this window's edges are the wall
                 // its hover tooltips clamp to.
                 .notchTooltipClipBox())

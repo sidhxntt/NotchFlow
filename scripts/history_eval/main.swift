@@ -65,36 +65,36 @@ func agent(_ t: Date, title: String, prompt: String, outcome: String?) -> Item {
 
 var fixtures: [Item] = [
     // ── today (Sun 2026-07-26)
-    ask(day(0, 14, 30), title: "小米 SU7 售价", q: "小米su7现在多少钱",
-        a: "标准版 21.59 万起。"),
-    capture(day(0, 11, 5), "会议结论\n下周二出第一版设计稿", .note),   // multi-line
-    agent(day(0, 9, 40), title: "修 hint 闪烁", prompt: "修一下中文输入法下 hint 闪烁",
+    ask(day(0, 14, 30), title: "Acme pricing", q: "What does Acme's standard plan cost?",
+        a: "The standard plan starts at $21.59 per month."),
+    capture(day(0, 11, 5), "Meeting notes\nFirst design draft due Tuesday", .note),   // multi-line
+    agent(day(0, 9, 40), title: "Fix hint flicker", prompt: "Fix the hint flicker while typing",
           outcome: "failure"),
     // ── yesterday (Sat 2026-07-25) — 23:50 is the end-of-day boundary case
-    ask(day(-1, 23, 50), title: "Redis 连接池泄漏", q: "为什么连接数一直涨",
-        a: "多半是连接池没有归还，检查 finally 里的 close。",
-        turns: [Turn(role: "user", text: "为什么连接数一直涨"),
-                Turn(role: "assistant", text: "多半是连接池没有归还。"),
-                Turn(role: "user", text: "怎么确认是 Redis 那边"),
-                Turn(role: "assistant", text: "看 CLIENT LIST 的 age 分布。")]),
-    capture(day(-1, 8, 15), "和房东谈了房租 月底答复", .note),
-    capture(day(-1, 7, 0), "交房租", .reminder),
+    ask(day(-1, 23, 50), title: "Redis connection pool leak", q: "Why does the connection count keep rising?",
+        a: "The pool may not be returning connections; check the close call in finally.",
+        turns: [Turn(role: "user", text: "Why does the connection count keep rising?"),
+                Turn(role: "assistant", text: "The connection pool may not be returning connections."),
+                Turn(role: "user", text: "How can I confirm Redis is responsible?"),
+                Turn(role: "assistant", text: "Inspect the CLIENT LIST age distribution.")]),
+    capture(day(-1, 8, 15), "Discussed rent with landlord; reply due at month end", .note),
+    capture(day(-1, 7, 0), "Pay rent", .reminder),
     // ── 6 days back (Mon 2026-07-20) — outside a 7-day window's far edge is day -6
-    ask(day(-6, 16, 20), title: nil, q: "翻译一下 diligence", a: "尽职、勤勉。"),
-    agent(day(-6, 10, 0), title: "落地页字重", prompt: "把落地页标题字重调细",
+    ask(day(-6, 16, 20), title: nil, q: "Define diligence", a: "Careful and persistent work or effort."),
+    agent(day(-6, 10, 0), title: "Landing-page font weight", prompt: "Make the landing-page heading lighter",
           outcome: "success"),
     // ── 40 days back, for "the whole archive" vs a window
-    capture(day(-40, 12, 0), "旧笔记 早已归档", .note),
+    capture(day(-40, 12, 0), "Old note, already archived", .note),
 ]
 
 // The in-flight question: parked in `history` the instant it's submitted. Must
 // never come back as a past activity.
-var inFlight = ask(day(0, 15, 0), title: nil, q: "我今天的主要工作内容是什么", a: "")
+var inFlight = ask(day(0, 15, 0), title: nil, q: "What is my main work today?", a: "")
 inFlight.pending = true
 fixtures.append(inFlight)
 
 // The thread currently on screen: already in the wire context verbatim.
-fixtures.append(ask(day(0, 14, 55), title: "当前这轮", q: "这个怎么弄", a: "这样弄。",
+fixtures.append(ask(day(0, 14, 55), title: "Current turn", q: "How does this work?", a: "Like this.",
                     id: currentThreadID))
 
 /// The tool under test, anchored and pointed at a given archive.
@@ -167,17 +167,17 @@ print("=== Part A · fixtures (anchor Sun 2026-07-26 15:00) ===\n")
 await check("no arguments → whole archive, newest first", [:]) { d in
     requireCount(d, 9)
         // The two withheld rows.
-        ?? requireAbsent(d, ["我今天的主要工作内容是什么", "当前这轮"])
-        ?? requireContains(d, ["newest first", "小米 SU7 售价", "旧笔记 早已归档"])
+        ?? requireAbsent(d, ["What is my main work today?", "Current turn"])
+        ?? requireContains(d, ["newest first", "Acme pricing", "Old note, already archived"])
         // Newest first: today's Ask must precede yesterday's.
-        ?? (d.range(of: "小米 SU7 售价")!.lowerBound < d.range(of: "Redis 连接池泄漏")!.lowerBound
+        ?? (d.range(of: "Acme pricing")!.lowerBound < d.range(of: "Redis connection pool leak")!.lowerBound
             ? nil : "rows are not newest-first")
 }
 
 await check("days:1 → today only", ["days": 1]) { d in
     requireCount(d, 3)
-        ?? requireContains(d, ["小米 SU7 售价", "会议结论", "修 hint 闪烁"])
-        ?? requireAbsent(d, ["Redis 连接池泄漏"])
+        ?? requireContains(d, ["Acme pricing", "Meeting notes", "Fix hint flicker"])
+        ?? requireAbsent(d, ["Redis connection pool leak"])
 }
 
 await check("since:\"today\" → same as days:1", ["since": "today"]) { d in
@@ -187,18 +187,18 @@ await check("since:\"today\" → same as days:1", ["since": "today"]) { d in
 await check("yesterday, whole day (23:50 row must survive)",
             ["since": "yesterday", "until": "yesterday"]) { d in
     requireCount(d, 3)
-        ?? requireContains(d, ["Redis 连接池泄漏", "和房东谈了房租", "交房租"])
-        ?? requireAbsent(d, ["小米 SU7 售价"])
+        ?? requireContains(d, ["Redis connection pool leak", "Discussed rent", "Pay rent"])
+        ?? requireAbsent(d, ["Acme pricing"])
 }
 
 await check("until:\"today\" includes all of today (00:00 boundary)",
             ["until": "today"]) { d in
-    requireCount(d, 9) ?? requireContains(d, ["小米 SU7 售价"])
+    requireCount(d, 9) ?? requireContains(d, ["Acme pricing"])
 }
 
 await check("explicit ISO window 07-20 → 07-21", ["since": "2026-07-20", "until": "2026-07-21"]) { d in
     requireCount(d, 2)
-        ?? requireContains(d, ["diligence", "落地页字重", "2026-07-20 → 2026-07-21"])
+        ?? requireContains(d, ["diligence", "Landing-page font weight", "2026-07-20 → 2026-07-21"])
 }
 
 await check("kind:note", ["kind": "note"]) { d in
@@ -208,20 +208,20 @@ await check("kind:note", ["kind": "note"]) { d in
 }
 
 await check("kind:reminder", ["kind": "reminder"]) { d in
-    requireCount(d, 1) ?? requireContains(d, ["交房租"])
+    requireCount(d, 1) ?? requireContains(d, ["Pay rent"])
 }
 
 await check("keyword in a NOTE's body (Recent's filter can't do this)",
-            ["query": "房东"]) { d in
-    requireCount(d, 1) ?? requireContains(d, ["和房东谈了房租", "matching"])
+            ["query": "landlord"]) { d in
+    requireCount(d, 1) ?? requireContains(d, ["Discussed rent", "matching"])
 }
 
 await check("keyword in an ANSWER, not the title", ["query": "finally"]) { d in
-    requireCount(d, 1) ?? requireContains(d, ["Redis 连接池泄漏"])
+    requireCount(d, 1) ?? requireContains(d, ["Redis connection pool leak"])
 }
 
 await check("keyword deep in a multi-turn thread", ["query": "CLIENT LIST"]) { d in
-    requireCount(d, 1) ?? requireContains(d, ["Redis 连接池泄漏"])
+    requireCount(d, 1) ?? requireContains(d, ["Redis connection pool leak"])
 }
 
 await check("no match → explicit \"nothing recorded\", no invention",
@@ -237,7 +237,7 @@ await check("agent rows carry their outcome", ["kind": "agent"]) { d in
 
 await check("limit:2 caps the list AND admits it is a slice", ["limit": 2]) { d in
     requireCount(d, 2)
-        ?? requireContains(d, ["小米 SU7 售价",
+        ?? requireContains(d, ["Acme pricing",
                                "The 2 most recent of 9 matching entries",
                                "only the newest slice"])
 }
@@ -255,11 +255,11 @@ await check("backwards window is read as the window meant",
             ["since": "today", "until": "2026-07-20"]) { d in
     requireCount(d, 8)
         ?? requireContains(d, ["2026-07-20 → 2026-07-26"])
-        ?? requireAbsent(d, ["旧笔记 早已归档"])
+        ?? requireAbsent(d, ["Old note, already archived"])
 }
 
 await check("multi-line note is flattened onto one line", ["kind": "note", "days": 1]) { d in
-    requireContains(d, ["会议结论 下周二出第一版设计稿"])
+    requireContains(d, ["Meeting notes First design draft due Tuesday"])
         ?? requireCount(d, 1)
 }
 
@@ -280,12 +280,12 @@ await check("unknown kind is ignored rather than matching nothing",
 await check("an Ask with no generated title doesn't repeat itself",
             ["query": "diligence"]) { d in
     // Headline IS the question here, so no "asked:" echo line.
-    requireCount(d, 1) ?? requireAbsent(d, ["asked: 翻译一下 diligence"])
+    requireCount(d, 1) ?? requireAbsent(d, ["asked: Define diligence"])
 }
 
 await check("an Ask WITH a title also shows the literal question",
-            ["query": "小米"]) { d in
-    requireContains(d, ["小米 SU7 售价", "asked: 小米su7现在多少钱"])
+            ["query": "Acme"]) { d in
+    requireContains(d, ["Acme pricing", "asked: What does Acme's standard plan cost?"])
 }
 
 await check("empty archive reads as nothing recorded, not as an error",
@@ -296,8 +296,8 @@ await check("empty archive reads as nothing recorded, not as an error",
 // Budget: 400 long rows, all inside the window.
 let fatArchive: [Item] = (0..<400).map { i in
     ask(day(0, 12, i % 60),
-        title: "很长的标题 " + String(repeating: "凑字数", count: 40) + " #\(i)",
-        q: String(repeating: "很长的问题内容", count: 40),
+        title: "Very long title " + String(repeating: "filler text ", count: 40) + " #\(i)",
+        q: String(repeating: "Very long question content ", count: 40),
         a: "answer")
 }
 
@@ -347,14 +347,14 @@ if let data = try? Data(contentsOf: realURL),
     print("  (anchored at the archive's newest day, \(f.string(from: newestDay)))\n")
 
     let probes: [(String, [String: Any])] = [
-        ("“我今天做了什么”",            ["days": 1]),
-        ("“我昨天做了什么”",            ["since": "yesterday", "until": "yesterday"]),
-        ("“我这周主要在忙什么”",        ["days": 7]),
-        ("“我记录的主要内容是什么”",    ["kind": "note"]),
-        ("“我让 agent 干了什么”",       ["kind": "agent", "days": 7]),
-        ("“我问过 Notch 相关的什么”",   ["query": "notch"]),
-        ("“我提过发版的事吗”",          ["query": "发版"]),
-        ("整个档案（无参数）",           [:]),
+        ("What did I do today?",          ["days": 1]),
+        ("What did I do yesterday?",      ["since": "yesterday", "until": "yesterday"]),
+        ("What kept me busy this week?",  ["days": 7]),
+        ("What did I save?",              ["kind": "note"]),
+        ("What did the agent do?",        ["kind": "agent", "days": 7]),
+        ("What did I ask about Notch?",   ["query": "notch"]),
+        ("Did I mention a release?",      ["query": "release"]),
+        ("Entire archive (no arguments)", [:]),
     ]
 
     for (label, input) in probes {
@@ -362,15 +362,14 @@ if let data = try? Data(contentsOf: realURL),
         let digest = (try? await realTool.execute(input)) ?? "<threw>"
         let ms = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e6
         let rows = entryCount(digest)
-        // Rough token proxy: CJK runs about 1 token per character, so chars is the
-        // number that matters for context budget.
+        // Character count is a useful rough proxy for the context budget.
         print(String(format: "  %-26@ → %2d rows, %4d chars, %.1fms",
                      label as NSString, rows, digest.count, ms))
     }
 
     // Show one digest in full — the "what did I do today" case, which is the whole
     // point of the feature.
-    print("\n  ── the digest the model actually reads for “我今天做了什么”:\n")
+    print("\n  ── the digest the model actually reads for “What did I do today?”:\n")
     let sample = (try? await realTool.execute(["days": 1])) ?? ""
     for line in sample.split(separator: "\n", omittingEmptySubsequences: false) {
         print("  | \(line)")

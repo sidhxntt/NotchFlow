@@ -34,17 +34,7 @@ struct DateTimeTool: NotchTool {
         let fmt = DateFormatter()
         fmt.dateStyle = .full
         fmt.timeStyle = .long
-        // Render in the user's chosen interface language so the model reads a date
-        // string in the same language it's answering in.
-        switch Localization.shared.language.resolved {
-        case .en:     fmt.locale = Foundation.Locale(identifier: "en_US")
-        case .zhHans: fmt.locale = Foundation.Locale(identifier: "zh_Hans")
-        case .zhHant: fmt.locale = Foundation.Locale(identifier: "zh_Hant")
-        case .ja:     fmt.locale = Foundation.Locale(identifier: "ja_JP")
-        case .ko:     fmt.locale = Foundation.Locale(identifier: "ko_KR")
-        case .fr:     fmt.locale = Foundation.Locale(identifier: "fr_FR")
-        case .es:     fmt.locale = Foundation.Locale(identifier: "es_ES")
-        }
+        fmt.locale = Foundation.Locale(identifier: "en_US")
         let tz = TimeZone.current
         return "\(fmt.string(from: now)) (timezone \(tz.identifier), UTC offset \(tz.secondsFromGMT() / 3600))"
     }
@@ -480,7 +470,6 @@ struct ManageAppSettingsTool: NotchTool {
     Put multiple requested changes in one call so they share one confirmation.
 
     Supported setting ids and values:
-    - app_language: system, english, chinese_simplified, chinese_traditional, japanese, korean, french, spanish
     - dock_icon / menu_bar_icon: shown or hidden
     - launch_at_login / live_activity / copy_sense: true or false
     - display_placement: all or built_in
@@ -690,7 +679,7 @@ struct CreateReminderTool: NotchTool {
     claim it was created before you read this tool's result. Resolve relative \
     times yourself — call current_datetime first if you are unsure what "now" is — \
     and pass an absolute local `due`. For a repeating reminder, keep the repeat \
-    phrase in `title` ("every day", "每周一", "monthly"): the repeat rule is read \
+    phrase in `title` ("every day", "every Monday", "monthly"): the repeat rule is read \
     from that text. Use create_note when no time is involved.
     """
     let schema: [String: Any] = [

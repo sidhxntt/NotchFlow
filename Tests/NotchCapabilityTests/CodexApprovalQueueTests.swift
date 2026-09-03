@@ -25,7 +25,7 @@ final class CodexApprovalQueueTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(CodexTerminalHookRequest.decode(payload)).approval.threadID, "terminal-thread")
     }
 
-    func testAgentNotchCompatibleClaudeGateUsesTheClaudeApprovalSource() throws {
+    func testNotchFlowCompatibleClaudeGateUsesTheClaudeApprovalSource() throws {
         let payload = Data("""
         {"v":1,"source":"claude","action":"gate","session_id":"claude-terminal-thread","tool_name":"Bash","detail":"npm test"}
         """.utf8)
@@ -97,12 +97,12 @@ final class CodexApprovalQueueTests: XCTestCase {
         let queue = AgentApprovalSessionQueue(threadID: "session-1", approvals: [
             AgentApproval(id: "request-1", threadID: "session-1", itemID: "item-1",
                           title: "git push", detail: "Publish the branch",
-                          workingDirectory: "/work/AgentNotch", source: .codex),
+                          workingDirectory: "/work/NotchFlow", source: .codex),
             AgentApproval(id: "request-2", threadID: "session-1", itemID: "item-2",
                           title: "git status", source: .codex)
         ])
 
-        XCTAssertEqual(queue.compactMetadataLabel, "AgentNotch · 2 queued")
+        XCTAssertEqual(queue.compactMetadataLabel, "NotchFlow · 2 queued")
     }
 
     func testChildApprovalsAppearInTheirRootSessionsSingleFIFOQueue() {

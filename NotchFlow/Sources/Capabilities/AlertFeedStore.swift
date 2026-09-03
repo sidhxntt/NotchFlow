@@ -28,6 +28,25 @@ public struct AlertBanner: Equatable, Sendable {
         if let bundleID, !bundleID.isEmpty { return bundleID }
         return appName.isEmpty ? "unknown" : appName
     }
+
+    /// The displayed payload of one delivery. Accessibility can reuse the same
+    /// banner container for the next notification, so the watcher compares this
+    /// value in addition to that container's identity.
+    public var deliverySignature: AlertBannerDeliverySignature {
+        AlertBannerDeliverySignature(groupKey: groupKey, title: title, body: body)
+    }
+}
+
+public struct AlertBannerDeliverySignature: Hashable, Sendable {
+    public let groupKey: String
+    public let title: String
+    public let body: String
+
+    public init(groupKey: String, title: String, body: String) {
+        self.groupKey = groupKey
+        self.title = title
+        self.body = body
+    }
 }
 
 /// A burst of notifications from ONE app: its identity for the left ear, its

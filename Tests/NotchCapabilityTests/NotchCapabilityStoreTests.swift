@@ -219,6 +219,20 @@ final class NotchCapabilityStoreTests: XCTestCase {
         XCTAssertTrue(AppleScriptMediaController.listItems(from: result).isEmpty)
     }
 
+    func testMediaRemotePayloadRoutesBrowserPlaybackAndItsOpenActionToTheOriginatingBrowser() throws {
+        let data = Data("{\"bundleIdentifier\":\"com.google.Chrome\",\"title\":\"Browser Track\",\"artist\":\"Web Artist\",\"duration\":180,\"elapsedTimeNow\":42,\"playing\":true}".utf8)
+        let payload = try JSONDecoder().decode(MediaRemotePayload.self, from: data)
+
+        let state = payload.mediaState(previous: .inactive)
+
+        XCTAssertEqual(state.source, .nowPlaying)
+        XCTAssertEqual(state.title, "Browser Track")
+        XCTAssertEqual(state.position, 42)
+        XCTAssertTrue(state.isPlaying)
+        XCTAssertEqual(state.originatingApplicationBundleIdentifier, "com.google.Chrome")
+        XCTAssertEqual(state.launchTarget.applicationBundleIdentifier, "com.google.Chrome")
+    }
+
     @MainActor
     func testShelfAddsAndRemovesDroppedFile() throws {
         let store = NotchCapabilityStore()

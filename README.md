@@ -1,5 +1,3 @@
-[English](README.md) · [简体中文](README.zh-CN.md)
-
 <div align="center">
 
 <img src=".github/icon.png" width="96" alt="NotchFlow" />
@@ -151,4 +149,4 @@ Open `NotchFlow.xcodeproj` (Xcode 16+), or run `./scripts/reinstall.sh`.
 
 ## Product license
 
-The downloadable NotchFlow product requires a valid Lemon Squeezy license after its seven-day trial. A paid license is perpetual and includes all future NotchFlow updates. Open-source and third-party notices are available in the repository [LICENSE](LICENSE) and in the app.
+The downloadable NotchFlow product requires a valid Lemon Squeezy license after its seven-day trial. A paid license is perpetual and includes all future NotchFlow updates. NotchFlow's source and product are proprietary; applicable third-party and Notchi-derived notices are available in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and in the app.

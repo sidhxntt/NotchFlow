@@ -123,7 +123,6 @@ final class WhatsNewService: ObservableObject {
                 "Now playing, volume and transport controls for whatever is making sound, plus an announcement when your AirPods connect.",
                 "Notifications land on the notch's shoulders with an app's icon and unread count.",
                 "Your calendar's next events, a webcam preview, and handwritten answers if you prefer them typeset by hand.",
-                "Speaks English, Simplified and Traditional Chinese, Japanese, Korean, French and Spanish.",
             ],
             others: [
                 "Everything stays on your Mac or goes directly to the provider you chose. NotchFlow relays nothing and has no account.",

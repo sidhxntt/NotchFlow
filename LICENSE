@@ -1,22 +1,25 @@
-MIT License
+NotchFlow Proprietary Software License
 
-Copyright (c) 2026 Siddhant Gupta
-Copyright (c) 2026 Cyrus Cai (Notchi, the work this is derived from)
+Copyright (c) 2026 Siddhant Gupta. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+NotchFlow and its associated documentation (the "NotchFlow Materials") are
+proprietary. No license is granted to use, copy, modify, merge, publish,
+distribute, sublicense, sell, or create derivative works of the NotchFlow
+Materials, except where Siddhant Gupta has expressly granted permission in
+writing or under a separately supplied end-user license.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Availability of the NotchFlow Materials in a source-code repository does not
+grant permission to use, reproduce, distribute, or create derivative works
+from them.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+This license does not alter the terms that apply to third-party or
+Notchi-derived material. Those notices and licenses are identified in
+THIRD_PARTY_NOTICES.md and remain in force for their respective material.
+
+THE NOTCHFLOW MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN
+NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
+ARISING FROM, OUT OF, OR IN CONNECTION WITH THE NOTCHFLOW MATERIALS OR THE
+USE OF OR OTHER DEALINGS IN THE NOTCHFLOW MATERIALS.

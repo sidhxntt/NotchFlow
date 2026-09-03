@@ -74,7 +74,7 @@ struct NotchNowPlayingView: View {
                         .font(.sf(10.5, weight: .regular)).foregroundStyle(Tokens.text3).lineLimit(1)
                     }
                     Spacer(minLength: 4)
-                    Button { capabilities.launchMedia(media.source) } label: {
+                    Button { capabilities.launchMedia(media) } label: {
                         Image(systemName: "arrow.up.forward.app")
                     }
                 }

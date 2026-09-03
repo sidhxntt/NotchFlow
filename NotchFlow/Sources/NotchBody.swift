@@ -28,7 +28,7 @@ struct NotchBody: View {
     /// transport is a `PreToolUse` hook talking to a Unix socket this app owns —
     /// but it publishes the identical per-session FIFO queue.
     @ObservedObject private var claudeApprovals = ClaudeHookBridge.shared
-    /// Existing Codex sessions launched in Terminal use the installed AgentNotch
+    /// Existing Codex sessions launched in Terminal use the installed NotchFlow
     /// hook protocol, which NotchFlow accepts on a compatibility socket.
     @ObservedObject private var terminalCodexApprovals = CodexTerminalHookBridge.shared
     /// Recent Codex and Claude sessions, independently observed from the
@@ -4138,7 +4138,7 @@ struct NotchBody: View {
             // Assistant turn — streaming AND settled share ONE view tree, so the
             // moment the stream ends there's no structural swap to a different
             // renderer (that swap is what hard-cut the answer ~2pt up-left at
-            // completion — the "突然跳掉位移"). `AssistantTurnView` always lays the
+            // completion. `AssistantTurnView` always lays the
             // answer out through the same `MarkdownBlocks`, and only fades a
             // thinking/activity overlay on top while the text is still empty; the
             // overlay never participates in the answer's layout, so it can't shift
@@ -6729,7 +6729,7 @@ private struct BucketWord: View {
         // spring: the word wipes open beside its mark while the other wipes shut
         // and the well glides between them. A `if active { Text }` instead would
         // pop the label in and out of layout and leave the outgoing word fading
-        // outside the flow — the desynced, un-"一镜到底" version of this.
+        // outside the flow — the desynchronized version of this.
         //
         // A DESTINATION change is the one thing that does swap identity, because
         // it has to: the mark is a Path and two paths can't interpolate. It stays

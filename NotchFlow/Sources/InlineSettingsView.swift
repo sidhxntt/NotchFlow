@@ -526,10 +526,8 @@ struct InlineSettingsView: View {
             }
         }
     }
-    /// The open category, backed by `model.settingsSection` (not plain `@State`)
-    /// so an App Language switch — which rebuilds this whole subtree via the
-    /// root's `.id(loc.language)` — keeps the user on the pane they were on (e.g.
-    /// General, where the language picker lives) instead of snapping back to Model.
+    /// The open category, backed by `model.settingsSection` rather than local
+    /// `@State`, so it persists while the panel is open.
     private var section: Section {
         get {
             switch model.settingsSection {
@@ -541,11 +539,6 @@ struct InlineSettingsView: View {
         }
         nonmutating set { model.settingsSection = newValue.rawValue }
     }
-
-    /// The interface language — mirrors the persisted value; writes go through
-    /// `selectAppLanguage`, which republishes `Localization.shared` so the whole
-    /// app re-renders in the new language at once.
-    @State private var appLanguage: AppLanguage = .current
 
     /// Which screens carry an island — mirrors the persisted value; writes go
     /// through `selectPlacement` so `AppDelegate` rebuilds panels immediately.
@@ -970,7 +963,6 @@ struct InlineSettingsView: View {
                 utilitiesSettingsSection
             case .global:
                 agenticModeRow
-                appLanguageRow
                 Text(L("general.appPresence"))
                     .captionLabel()
                     .padding(.top, 2)
@@ -3567,37 +3559,6 @@ struct InlineSettingsView: View {
         }
     }
 
-    /// The interface language. `System` follows the Mac; the explicit picks
-    /// (English / 简体中文 / 繁體中文 / 日本語 / 한국어) each named in their own
-    /// script. Switching
-    /// republishes `Localization.shared`, so the whole app — this panel included —
-    /// re-renders in the new language at once, no relaunch.
-    private var appLanguageRow: some View {
-        settingRow(label: L("general.appLanguage")) {
-            GlassMenu(title: appLanguage.label) {
-                ForEach(AppLanguage.allCases) { lang in
-                    Button {
-                        selectAppLanguage(lang)
-                    } label: {
-                        if lang == appLanguage {
-                            Label(lang.label, systemImage: "checkmark")
-                        } else {
-                            Text(lang.label)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func selectAppLanguage(_ newValue: AppLanguage) {
-        guard newValue != appLanguage else { return }
-        appLanguage = newValue
-        // Drives the live switch: republishing `language` re-renders every view
-        // reading `L(_:)` (and rebuilds the panel subtree via `.id(loc.language)`).
-        Localization.shared.language = newValue
-    }
-
     // MARK: - Product mode
 
     /// Chat and Agent are an optional layer over NotchFlow's always-available
@@ -5346,9 +5307,6 @@ struct InlineSettingsView: View {
                 }
                 aboutLink("SIL OFL 1.1") {
                     NSWorkspace.shared.open(URL(string: "https://openfontlicense.org")!)
-                }
-                aboutLink("hanzi-writer-data") {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/chanind/hanzi-writer-data")!)
                 }
             }
         }

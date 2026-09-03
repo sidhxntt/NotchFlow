@@ -41,7 +41,7 @@ final class CodexTerminalHookBridge: ObservableObject {
 
     private static var socketPath: String {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AgentNotch/notch.sock").path
+            .appendingPathComponent("Library/Application Support/NotchFlow/notch.sock").path
     }
 
     private static var currentClaudeHookScriptPath: String? {
@@ -58,11 +58,16 @@ final class CodexTerminalHookBridge: ObservableObject {
     }
 
     private static var codexHookScriptURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/notch-codex-hook.py")
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/notchflow-codex-hook.py")
     }
 
     private static var codexHooksConfigURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/hooks.json")
+    }
+
+    private static var claudeLifecycleHookScriptURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/notchflow/notchflow-hook.py")
     }
 
     var hasPendingApprovals: Bool { !sessionQueues.isEmpty }
@@ -197,13 +202,8 @@ final class CodexTerminalHookBridge: ObservableObject {
         let scriptURL = codexHookScriptURL
         let configURL = codexHooksConfigURL
         do {
-            try FileManager.default.createDirectory(
-                at: scriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let existing = try? String(contentsOf: scriptURL, encoding: .utf8)
-            if existing != hookScriptContents {
-                try hookScriptContents.write(to: scriptURL, atomically: true, encoding: .utf8)
-                try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
-            }
+            try writeManagedHook(hookScriptContents, to: scriptURL)
+            try writeManagedHook(claudeLifecycleHookScriptContents, to: claudeLifecycleHookScriptURL)
         } catch { return }
 
         var configuration: [String: Any] = [:]
@@ -234,6 +234,15 @@ final class CodexTerminalHookBridge: ObservableObject {
         try? data.write(to: configURL, options: .atomic)
     }
 
+    private static func writeManagedHook(_ contents: String, to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let existing = try? String(contentsOf: url, encoding: .utf8)
+        guard existing != contents else { return }
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+    }
+
     /// Appends a hook group running `command` to `existing` (one event's
     /// array of hook groups) unless a group already runs this exact command —
     /// so any other tool's group under the same event, and a NotchFlow group
@@ -257,22 +266,21 @@ final class CodexTerminalHookBridge: ObservableObject {
     }
 
     /// The hook process itself — unchanged from the version this app's
-    /// predecessor installed by hand, so a machine that already has a working
-    /// copy is byte-identical and never gets rewritten. Fails OPEN on purpose:
+    /// predecessor installed by hand. Fails OPEN on purpose:
     /// if NotchFlow is not listening, or nobody answers in time, this prints
     /// nothing and Codex falls back to its own approval prompt.
     private static let hookScriptContents = """
     #!/usr/bin/env python3
-    # Agent Notch Codex bridge — DO NOT EDIT (managed by Agent Notch).
-    # notch-codex-hook v4  (forward justification/escalation + apply_patch files
+    # NotchFlow Codex bridge — DO NOT EDIT (managed by NotchFlow).
+    # notchflow-codex-hook v1  (forward justification/escalation + apply_patch files
     # so the notch can say what's being approved and why)
     import sys, os, json, socket
 
     def sock_path():
-        p = os.environ.get("AGENT_NOTCH_SOCKET")
+        p = os.environ.get("NOTCHFLOW_SOCKET")
         if p:
             return p
-        return os.path.expanduser("~/Library/Application Support/AgentNotch/notch.sock")
+        return os.path.expanduser("~/Library/Application Support/NotchFlow/notch.sock")
 
     def send(msg, wait, timeout):
         try:
@@ -353,7 +361,7 @@ final class CodexTerminalHookBridge: ObservableObject {
         if behavior == "allow":
             dec = {"behavior": "allow"}
         elif behavior == "deny":
-            dec = {"behavior": "deny", "message": "Denied from Agent Notch"}
+            dec = {"behavior": "deny", "message": "Denied from NotchFlow"}
         else:
             return
         print(json.dumps({"continue": True, "hookSpecificOutput": {
@@ -363,6 +371,71 @@ final class CodexTerminalHookBridge: ObservableObject {
         main()
     except Exception:
         pass
+    """
+
+    /// The lifecycle bridge for Claude Code sessions started in a terminal. It
+    /// emits the same lightweight marker protocol that the socket listener
+    /// already accepts, while leaving actual permission decisions to the
+    /// NotchFlow approval hook configured for gated tools.
+    private static let claudeLifecycleHookScriptContents = """
+    #!/usr/bin/env python3
+    # NotchFlow Claude lifecycle bridge — DO NOT EDIT (managed by NotchFlow).
+    import json, os, socket, sys
+
+    def sock_path():
+        return os.environ.get("NOTCHFLOW_SOCKET") or os.path.expanduser(
+            "~/Library/Application Support/NotchFlow/notch.sock")
+
+    def send(message):
+        client = None
+        try:
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.settimeout(3.0)
+            client.connect(sock_path())
+            client.sendall((json.dumps(message) + "\\n").encode("utf-8"))
+        except Exception:
+            pass
+        finally:
+            try:
+                if client: client.close()
+            except Exception: pass
+
+    def main():
+        action = sys.argv[1] if len(sys.argv) > 1 else "clear"
+        try: payload = json.load(sys.stdin)
+        except Exception: payload = {}
+        session_id = payload.get("session_id") or ""
+        if not session_id: return
+        tool = payload.get("tool_name") or ""
+        tool_input = payload.get("tool_input") or {}
+        if not isinstance(tool_input, dict): tool_input = {}
+        detail = (tool_input.get("command") or tool_input.get("file_path")
+                  or tool_input.get("path") or tool_input.get("description") or "")
+        message = {"v": 1, "source": "claude", "session_id": session_id,
+                   "cwd": payload.get("cwd", ""), "tool_name": tool,
+                   "detail": detail, "reason": ""}
+        if action in ("clear", "start", "busy", "busydone", "done"):
+            send({**message, "action": action})
+        elif action == "idle":
+            send({**message, "action": "marker", "kind": "idle"})
+        elif action == "ask":
+            kind = "plan" if tool == "ExitPlanMode" else "question"
+            marker = {**message, "action": "marker", "kind": kind}
+            if kind == "question":
+                questions = tool_input.get("questions")
+                first = questions[0] if isinstance(questions, list) and questions and isinstance(questions[0], dict) else {}
+                if isinstance(first.get("question"), str) and first["question"].strip():
+                    marker["detail"] = first["question"].strip()[:500]
+                options = first.get("options")
+                if isinstance(options, list):
+                    marker["options"] = [option["label"].strip()[:120] for option in options
+                                         if isinstance(option, dict) and isinstance(option.get("label"), str)
+                                         and option["label"].strip()][:8]
+                if isinstance(questions, list) and len(questions) > 1:
+                    marker["more_questions"] = len(questions) - 1
+            send(marker)
+
+    main()
     """
 
     func decide(_ decision: Decision, for approval: AgentApproval) {
@@ -432,27 +505,20 @@ final class CodexTerminalHookBridge: ObservableObject {
     }
 
     private enum SocketError: LocalizedError {
-        case activeAgentNotch
+        case activeNotchFlow
         case failed(String, Int32)
 
         var errorDescription: String? {
             switch self {
-            case .activeAgentNotch: return "AgentNotch is already handling Terminal Codex approvals"
+            case .activeNotchFlow: return "NotchFlow is already handling Terminal Codex approvals"
             case let .failed(call, code): return "\(call) failed (\(String(cString: strerror(code))))"
             }
         }
     }
 
     private static func bindListener(at path: String) throws -> Int32 {
-        // This is a compatibility endpoint, so a *running* AgentNotch owns it.
-        // Merely having AgentNotch installed is not ownership: the old rule
-        // rejected a stale socket after every NotchFlow reinstall and terminal
-        // Codex approvals silently failed open even though no process listened.
-        if NSWorkspace.shared.runningApplications.contains(where: {
-            $0.bundleIdentifier == "app.agentnotch.AgentNotch"
-        }) {
-            throw SocketError.activeAgentNotch
-        }
+        // A listening socket belongs to a running NotchFlow instance. A stale
+        // socket is removed below so a relaunch can restore terminal approvals.
         let parent = (path as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
         if FileManager.default.fileExists(atPath: path) {
@@ -465,7 +531,7 @@ final class CodexTerminalHookBridge: ObservableObject {
                     }
                 }
                 Darwin.close(probe)
-                if connected == 0 { throw SocketError.activeAgentNotch }
+                if connected == 0 { throw SocketError.activeNotchFlow }
             }
             unlink(path)
         }

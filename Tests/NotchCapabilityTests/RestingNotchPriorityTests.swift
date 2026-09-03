@@ -93,6 +93,14 @@ func steadyAgentWorkYieldsToShortAnnouncements() {
             == .agentSteady)
 }
 
+@Test("a notification takes the normal preview shoulders while work is active")
+func notificationReplacesWorkingAndPlanning() {
+    #expect(RestingNotchPriority.slot(for: .init(notifications: true, backgroundWork: true))
+            == .notifications)
+    #expect(RestingNotchPriority.slot(for: .init(notifications: true, agentSteady: true))
+            == .notifications)
+}
+
 @Test("the steady state resumes once the announcement above it clears")
 func steadyStateResumesAfterTheAnnouncement() {
     var inputs = RestingNotchInputs(accessoryEvent: true, agentSteady: true)

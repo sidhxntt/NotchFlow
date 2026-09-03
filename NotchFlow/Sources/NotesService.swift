@@ -77,9 +77,8 @@ enum NotesService {
         // newlines into <br> before this ever sees it. Setting only `body`
         // (no `name`) makes Notes use the first line as the title automatically.
         // Note target, in order of preference:
-        //   1. The default account's *first* folder — robust against the top-level
-        //      folder being localized ("备忘录" on a zh system) or not literally
-        //      named "Notes". Hard-coding `folder "Notes"` was the main source of
+        //   1. The default account's *first* folder — robust against a renamed
+        //      top-level folder. Hard-coding `folder "Notes"` was the main source of
         //      the intermittent "AppleEvent handler failed" (-10000): on iCloud
         //      accounts that reference often doesn't resolve, and it momentarily
         //      vanishes mid-sync.

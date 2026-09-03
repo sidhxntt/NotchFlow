@@ -5,23 +5,23 @@ import Testing
 @Test("hiding a project removes only its AI activity row")
 func hidingAProjectRemovesOnlyThatActivityRow() {
     var visibility = AIActivityProjectVisibility()
-    visibility.hide("AgentNotch")
+    visibility.hide("NotchFlow")
 
-    #expect(visibility.visible(["AgentNotch", "DevXp"]) == ["DevXp"])
+    #expect(visibility.visible(["NotchFlow", "DevXp"]) == ["DevXp"])
 }
 
 @Test("hidden AI activity projects can be restored individually or all at once")
 func hiddenAIActivityProjectsCanBeRestored() {
     var visibility = AIActivityProjectVisibility()
-    visibility.hide("AgentNotch")
+    visibility.hide("NotchFlow")
     visibility.hide("DevXp")
 
-    visibility.show("AgentNotch")
-    #expect(visibility.visible(["AgentNotch", "DevXp"]) == ["AgentNotch"])
+    visibility.show("NotchFlow")
+    #expect(visibility.visible(["NotchFlow", "DevXp"]) == ["NotchFlow"])
     #expect(visibility.hiddenCount == 1)
 
     visibility.reset()
-    #expect(visibility.visible(["AgentNotch", "DevXp"]) == ["AgentNotch", "DevXp"])
+    #expect(visibility.visible(["NotchFlow", "DevXp"]) == ["NotchFlow", "DevXp"])
     #expect(visibility.hiddenCount == 0)
 }
 
@@ -86,10 +86,10 @@ func sessionStateUsesRootProjectLabel() {
         id: "session-1",
         source: .codex,
         status: .working,
-        projectName: "AgentNotch"
+        projectName: "NotchFlow"
     )
 
-    #expect(state.projectName == "AgentNotch")
+    #expect(state.projectName == "NotchFlow")
 }
 
 @Test("a terminal Codex approval joins the sole live root in its workspace")
@@ -99,14 +99,14 @@ func terminalCodexApprovalJoinsItsWorkspaceRoot() {
         threadID: "hook-thread",
         itemID: "command",
         title: "Run command",
-        workingDirectory: "/work/AgentNotch",
+        workingDirectory: "/work/NotchFlow",
         source: .codex
     )
     let liveRoot = AgentSessionState(
         id: "transcript-root",
         source: .codex,
         status: .working,
-        workingDirectory: "/work/AgentNotch"
+        workingDirectory: "/work/NotchFlow"
     )
 
     #expect(AgentSessionWorkspaceMatcher.rootID(for: approval, among: [liveRoot]) == "transcript-root")
@@ -119,7 +119,7 @@ func claudeMarkerJoinsItsWorkspaceSession() {
         threadID: "hook-session",
         itemID: "marker",
         title: "Working",
-        workingDirectory: "/work/AgentNotch",
+        workingDirectory: "/work/NotchFlow",
         source: .claude
     )
     let liveSession = AgentSessionState(
@@ -128,7 +128,7 @@ func claudeMarkerJoinsItsWorkspaceSession() {
         status: .working,
         contextUsed: 88_000,
         contextWindow: 200_000,
-        workingDirectory: "/work/AgentNotch"
+        workingDirectory: "/work/NotchFlow"
     )
 
     #expect(AgentSessionWorkspaceMatcher.rootID(for: marker, among: [liveSession]) == "transcript-session")
@@ -141,12 +141,12 @@ func terminalCodexApprovalDoesNotMergeConcurrentWorkspaceRoots() {
         threadID: "hook-thread",
         itemID: "command",
         title: "Run command",
-        workingDirectory: "/work/AgentNotch",
+        workingDirectory: "/work/NotchFlow",
         source: .codex
     )
     let roots = [
-        AgentSessionState(id: "root-a", source: .codex, status: .working, workingDirectory: "/work/AgentNotch"),
-        AgentSessionState(id: "root-b", source: .codex, status: .planning, workingDirectory: "/work/AgentNotch")
+        AgentSessionState(id: "root-a", source: .codex, status: .working, workingDirectory: "/work/NotchFlow"),
+        AgentSessionState(id: "root-b", source: .codex, status: .planning, workingDirectory: "/work/NotchFlow")
     ]
 
     #expect(AgentSessionWorkspaceMatcher.rootID(for: approval, among: roots) == "hook-thread")

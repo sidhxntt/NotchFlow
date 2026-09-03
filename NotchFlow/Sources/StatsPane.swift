@@ -892,13 +892,8 @@ private struct StatsHeatmap: View {
 
 // MARK: - Formatting
 
-/// The pane's formatters, built once per interface language.
-///
-/// They speak the *interface* language (Settings → General), not the system's, so
-/// a Chinese UI on an English Mac still reads "8月" over its columns — and they
-/// are cached, because these are read per weekday label, per month label and on
-/// every hover: a `DateFormatter` allocated inside a view body is the classic way
-/// to make a grid feel heavy for no reason.
+/// The pane's English formatters are cached because they are read per weekday
+/// label, per month label, and on every hover.
 @MainActor
 enum StatsFormat {
     private struct Kit {
@@ -921,9 +916,9 @@ enum StatsFormat {
             monthYear.setLocalizedDateFormatFromTemplate("MMMyy")
             hour = DateFormatter()
             hour.locale = locale
-            // "j" is the locale's *own* hour field: 11 PM in English, 23時 in
-            // Japanese, 23:00 where the clock runs to 24. Hard-coding "h a" would
-            // put an English AM/PM on a Chinese pane.
+            // "j" is the locale's *own* hour field: 11 PM in English, or 23:00
+            // where the clock runs to 24. Hard-coding "h a" would use an unsuitable
+            // hour style for a 24-hour clock.
             hour.setLocalizedDateFormatFromTemplate("j")
             day = DateFormatter()
             day.locale = locale
@@ -943,7 +938,7 @@ enum StatsFormat {
     private static var cached: Kit?
 
     private static var kit: Kit {
-        let locale = Localization.shared.language.resolved.foundation
+        let locale = Foundation.Locale(identifier: "en_US")
         if let cached, cached.locale == locale { return cached }
         let fresh = Kit(locale)
         cached = fresh
@@ -979,9 +974,9 @@ enum StatsFormat {
     /// Plain grouped digits, every figure on the pane.
     ///
     /// The word count was compact for a while ("29K", the way the reference
-    /// screenshot does it) — but compact notation rounds to one significant digit
-    /// in Chinese, where 30,458 words comes back as "3万". A number that loses an
-    /// order of magnitude of precision to save four characters is not worth the
+    /// screenshot does it) — but compact notation can round to one significant
+    /// digit. A number that loses an order of magnitude of precision to save four
+    /// characters is not worth the
     /// four characters; the tile has room for the real figure.
     static func count(_ value: Int) -> String {
         kit.number.string(from: NSNumber(value: value)) ?? "\(value)"
@@ -1008,7 +1003,7 @@ enum StatsFormat {
     /// and eight digits — "12,847,336" is wider than a quarter of the card at any
     /// scale factor the tile will accept. Three significant digits with a K/M/B
     /// suffix, spelled here rather than taken from compact `NumberFormatter`,
-    /// which rounds to one significant digit in Chinese (12.8M → "1300万"). The
+    /// which can round too aggressively. The
     /// exact figure isn't lost — the tile's ⓘ prints it in full.
     static func compact(_ value: Int) -> String {
         func scaled(_ value: Double, _ suffix: String) -> String {
@@ -1148,18 +1143,3 @@ enum StatsSnapshot {
     }
 }
 #endif
-
-extension Localization.Locale {
-    /// The Foundation locale this interface language formats dates and numbers in.
-    var foundation: Foundation.Locale {
-        switch self {
-        case .en:     return Foundation.Locale(identifier: "en_US")
-        case .zhHans: return Foundation.Locale(identifier: "zh_Hans")
-        case .zhHant: return Foundation.Locale(identifier: "zh_Hant")
-        case .ja:     return Foundation.Locale(identifier: "ja_JP")
-        case .ko:     return Foundation.Locale(identifier: "ko_KR")
-        case .fr:     return Foundation.Locale(identifier: "fr_FR")
-        case .es:     return Foundation.Locale(identifier: "es_ES")
-        }
-    }
-}

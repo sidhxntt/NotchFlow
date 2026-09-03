@@ -59,22 +59,18 @@ func evaluate(_ engine: IntentEngine, _ label: String, _ lines: [String],
 
 for seed in [42, 7, 1234] as [UInt64] {
     var rng = SeededRNG(state: seed)
-    let zhAsk = split(IntentExamples.chinese.ask, rng: &rng, testFraction: 0.2)
-    let zhNote = split(IntentExamples.chinese.note, rng: &rng, testFraction: 0.2)
     let enAsk = split(IntentExamples.english.ask, rng: &rng, testFraction: 0.2)
     let enNote = split(IntentExamples.english.note, rng: &rng, testFraction: 0.2)
 
     let engine = IntentEngine()
     let prepStart = Date()
     await engine.prepareForEvaluation(
-        chinese: IntentExampleSet(ask: zhAsk.train, note: zhNote.train),
         english: IntentExampleSet(ask: enAsk.train, note: enNote.train))
     print(String(format: "—— seed %d (prepare %.1fs) ——", seed,
                  Date().timeIntervalSince(prepStart)))
 
     var trainTotals = (0, 0)
     for (lines, expect): ([String], IntentEngine.Intent) in [
-        (zhAsk.train, .ask), (zhNote.train, .note),
         (enAsk.train, .ask), (enNote.train, .note),
     ] {
         let (c, n) = await evaluate(engine, "", lines, expect: expect, quiet: true)
@@ -85,8 +81,6 @@ for seed in [42, 7, 1234] as [UInt64] {
 
     var totals = (0, 0)
     for (label, lines, expect): (String, [String], IntentEngine.Intent) in [
-        ("zh ask ", zhAsk.test, .ask),
-        ("zh note", zhNote.test, .note),
         ("en ask ", enAsk.test, .ask),
         ("en note", enNote.test, .note),
     ] {

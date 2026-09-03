@@ -11,7 +11,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
 APP_BUNDLE="$BUILD_DIR/Build/Products/$BUILD_CONFIGURATION/$APP_NAME.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
-INSTALLED_APP_BUNDLE="/Applications/$APP_NAME.app"
+# `/Applications` can be protected by macOS even for a bundle whose Unix owner
+# is the current user. Keep the developer install under the user's Applications
+# directory so `make dev` neither requires administrator access nor fails after
+# an OS update changes that protection.
+DEVELOPMENT_APPLICATIONS_DIR="${HOME}/Applications"
+INSTALLED_APP_BUNDLE="$DEVELOPMENT_APPLICATIONS_DIR/$APP_NAME.app"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
@@ -39,6 +44,11 @@ stabilize_tcc_identity() {
   # Sign nested executables before the outer wrapper. `codesign --deep` signs
   # them after the wrapper and invalidates its resource seal on current Xcode
   # debug products.
+  while IFS= read -r framework; do
+    [[ -d "$framework" ]] || continue
+    /usr/bin/codesign --force --sign - "$framework"
+  done < <(find "$APP_BUNDLE/Contents" -type d -name '*.framework')
+
   while IFS= read -r nested_code; do
     [[ "$nested_code" == "$APP_BINARY" ]] && continue
     # Re-signing a nested executable can briefly create a sibling `.cstemp`
@@ -67,12 +77,14 @@ verify_tcc_identity() {
 stabilize_tcc_identity
 
 install_app() {
-  # Launchpad indexes the installed bundle, not Xcode's DerivedData product.
+  # LaunchServices indexes the installed bundle, not Xcode's DerivedData product.
   # Mirror it instead of merging with `ditto`: stale frameworks or resources
   # from an earlier build invalidate the bundle's signature and can leave the
   # launched app out of sync with the verified build product.
+  mkdir -p "$DEVELOPMENT_APPLICATIONS_DIR"
   /usr/bin/rsync -a --delete "$APP_BUNDLE/" "$INSTALLED_APP_BUNDLE/"
-  "$LSREGISTER" -u "$INSTALLED_APP_BUNDLE" || true
+  # An app may not be registered yet on its first development launch.
+  "$LSREGISTER" -u "$INSTALLED_APP_BUNDLE" >/dev/null 2>&1 || true
   "$LSREGISTER" -f "$INSTALLED_APP_BUNDLE"
 }
 

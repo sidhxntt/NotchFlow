@@ -265,8 +265,7 @@ final class OpenRouterAuth: ObservableObject {
 
     /// What the redirect tab shows. Styled to read as the app speaking — dark,
     /// quiet, one line — since this page IS the end of the user-visible flow.
-    /// Computed (not stored) so the copy tracks the live App Language rather than
-    /// freezing at first access.
+    /// Computed rather than stored so the page content is always generated fresh.
     private static var successPage: String {
         page(title: L("or.page.connected.title"),
              line: L("or.page.connected.line"))

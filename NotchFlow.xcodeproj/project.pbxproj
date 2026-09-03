@@ -15,7 +15,6 @@
 		A1000015 /* NotchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000006 /* NotchModel.swift */; };
 		A1000016 /* GlassBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000007 /* GlassBackground.swift */; };
 		A1000C10 /* Handwriting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000C11 /* Handwriting.swift */; };
-		A1000C12 /* StrokeInk.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000C13 /* StrokeInk.swift */; };
 		A1000017 /* NotchBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000008 /* NotchBody.swift */; };
 		A1000018 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000009 /* Components.swift */; };
 		A100001A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000A /* ContentView.swift */; };
@@ -76,6 +75,8 @@
 		A10004B1 /* intro-sunrise.m4a in Resources */ = {isa = PBXBuildFile; fileRef = A10004B0 /* intro-sunrise.m4a */; };
 		A1000C15 /* strokes.bin in Resources */ = {isa = PBXBuildFile; fileRef = A1000C14 /* strokes.bin */; };
 		A10004B3 /* buy-me-a-coffee.gif in Resources */ = {isa = PBXBuildFile; fileRef = A10004B2 /* buy-me-a-coffee.gif */; };
+		A1002001 /* mediaremote-adapter.pl in Resources */ = {isa = PBXBuildFile; fileRef = A1002002 /* mediaremote-adapter.pl */; };
+		A1002003 /* MediaRemoteAdapter.framework in Resources */ = {isa = PBXBuildFile; fileRef = A1002004 /* MediaRemoteAdapter.framework */; };
 		A1000710 /* AgentHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000720 /* AgentHarness.swift */; };
 		A1000711 /* AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000721 /* AgentTools.swift */; };
 		A1000912 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1000913 /* PrivacyInfo.xcprivacy */; };
@@ -186,7 +187,6 @@
 		A1000067 /* IntentExamples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentExamples.swift; sourceTree = "<group>"; };
 		A1000007 /* GlassBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassBackground.swift; sourceTree = "<group>"; };
 		A1000C11 /* Handwriting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Handwriting.swift; sourceTree = "<group>"; };
-		A1000C13 /* StrokeInk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StrokeInk.swift; sourceTree = "<group>"; };
 		A1000008 /* NotchBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchBody.swift; sourceTree = "<group>"; };
 		A1000009 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		A100000A /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -257,6 +257,8 @@
 		A10004B0 /* intro-sunrise.m4a */ = {isa = PBXFileReference; lastKnownFileType = file; path = "intro-sunrise.m4a"; sourceTree = "<group>"; };
 		A1000C14 /* strokes.bin */ = {isa = PBXFileReference; lastKnownFileType = file; path = strokes.bin; sourceTree = "<group>"; };
 		A10004B2 /* buy-me-a-coffee.gif */ = {isa = PBXFileReference; lastKnownFileType = image.gif; path = "buy-me-a-coffee.gif"; sourceTree = "<group>"; };
+		A1002002 /* mediaremote-adapter.pl */ = {isa = PBXFileReference; lastKnownFileType = text.script.perl; path = "mediaremote-adapter.pl"; sourceTree = "<group>"; };
+		A1002004 /* MediaRemoteAdapter.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = MediaRemoteAdapter.framework; sourceTree = "<group>"; };
 		A1000100 /* NotchFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NotchFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -394,7 +396,6 @@
 				A1000067 /* IntentExamples.swift */,
 				A1000007 /* GlassBackground.swift */,
 				A1000C11 /* Handwriting.swift */,
-				A1000C13 /* StrokeInk.swift */,
 				A1000008 /* NotchBody.swift */,
 				A1000009 /* Components.swift */,
 				A100000A /* ContentView.swift */,
@@ -421,6 +422,8 @@
 				A10004B0 /* intro-sunrise.m4a */,
 				A1000C14 /* strokes.bin */,
 				A10004B2 /* buy-me-a-coffee.gif */,
+				A1002002 /* mediaremote-adapter.pl */,
+				A1002004 /* MediaRemoteAdapter.framework */,
 				A1000913 /* PrivacyInfo.xcprivacy */,
 			);
 			path = Resources;
@@ -498,6 +501,8 @@
 				A10004B1 /* intro-sunrise.m4a in Resources */,
 				A1000C15 /* strokes.bin in Resources */,
 				A10004B3 /* buy-me-a-coffee.gif in Resources */,
+				A1002001 /* mediaremote-adapter.pl in Resources */,
+				A1002003 /* MediaRemoteAdapter.framework in Resources */,
 				A100AA37 /* input.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -566,7 +571,6 @@
 				A1000066 /* IntentExamples.swift in Sources */,
 				A1000016 /* GlassBackground.swift in Sources */,
 				A1000C10 /* Handwriting.swift in Sources */,
-				A1000C12 /* StrokeInk.swift in Sources */,
 				A1000017 /* NotchBody.swift in Sources */,
 				A1000018 /* Components.swift in Sources */,
 				A100001A /* ContentView.swift in Sources */,

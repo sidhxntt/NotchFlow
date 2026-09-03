@@ -157,6 +157,19 @@ fi
 # outside first would immediately invalidate it. (`--deep` would do this too but
 # Apple deprecated it, and it applies the main executable's options to nested
 # code, which is wrong: entitlements belong only to the main executable.)
+# The MediaRemote bridge is deliberately a bundled framework rather than linked
+# app code, so it needs its own signature before the outer app seals it.
+nested_frameworks="$(find "$APP/Contents" -type d -name '*.framework' 2>/dev/null || true)"
+if [ -n "$nested_frameworks" ]; then
+  info "Signing bundled frameworks…"
+  printf '%s\n' "$nested_frameworks" | while IFS= read -r framework; do
+    [ -n "$framework" ] || continue
+    printf '    %s\n' "$(basename "$framework")"
+    # shellcheck disable=SC2086
+    codesign --force --sign "$sign_as" $timestamp_args $keychain_args "$framework"
+  done
+fi
+
 nested="$(find "$APP" -type f \( -name '*.dylib' -o -name '*.so' \) 2>/dev/null || true)"
 if [ -n "$nested" ]; then
   info "Signing nested code…"

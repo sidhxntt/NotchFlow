@@ -1638,10 +1638,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AnyView(
             ContentView(model: model, capabilities: capabilities, utilities: utilityCapabilities)
                 .frame(width: canvasWidth, height: canvasHeight, alignment: .top)
-                // The live string store — observed app-wide so an App Language
-                // switch re-renders every panel's SwiftUI tree instantly, no
-                // relaunch.
-                .environmentObject(Localization.shared)
                 .environment(\.notchMetrics, metrics)
         )
     }
