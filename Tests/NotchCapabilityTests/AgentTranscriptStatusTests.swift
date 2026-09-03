@@ -113,7 +113,7 @@ func claudeInterruptionIsAClosedSession() {
 
     let status = ClaudeTranscriptStatus.reading(in: entries).status
     #expect(status == .interrupted)
-    #expect(status.previewLabel == "Session closed")
+    #expect(status.previewLabel == "Closed")
 }
 
 @Test("an ordinary Claude turn is never mistaken for an interruption")

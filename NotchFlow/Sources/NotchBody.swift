@@ -2142,7 +2142,7 @@ struct NotchBody: View {
         case .question: return "A question"
         case .planReady: return "Done"
         case .done: return "Done"
-        case .interrupted: return "Session closed"
+        case .interrupted: return "Closed"
         }
     }
 

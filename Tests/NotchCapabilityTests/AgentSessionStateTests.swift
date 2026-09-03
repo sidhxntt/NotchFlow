@@ -230,7 +230,7 @@ func staleWorkingMarkerDoesNotReopenClosedSession() {
 func interruptedTerminalEventUsesInterruptedStatus() {
     #expect(AgentSessionStatus.working.resolved(terminal: .interrupted) == .interrupted)
     #expect(AgentSessionStatus.planning.resolved(terminal: .completed) == .planReady)
-    #expect(AgentSessionStatus.interrupted.previewLabel == "Session closed")
+    #expect(AgentSessionStatus.interrupted.previewLabel == "Closed")
 }
 
 @Test("an inactive turn remains open until an explicit abort or completion")
