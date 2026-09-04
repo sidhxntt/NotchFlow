@@ -153,6 +153,14 @@ private func codexTurn(mode: String = "default") -> [String: Any] {
     ["type": "turn_context", "payload": ["collaboration_mode": ["mode": mode]]]
 }
 
+private func codexGoal(_ status: String) -> [String: Any] {
+    ["type": "event_msg", "payload": [
+        "type": "thread_goal_updated",
+        "threadId": "root-1",
+        "goal": ["threadId": "root-1", "objective": "Ship the goal preview", "status": status]
+    ]]
+}
+
 @Test("an aborted Codex turn reads as a closed session")
 func codexAbortedTurnIsAClosedSession() {
     // `turn_aborted` lives inside the `event_msg` envelope. Matching it on the
@@ -194,6 +202,21 @@ func codexAbortOutranksCompletion() {
     let entries = [codexTurn(), codexEvent("task_complete"), codexEvent("turn_aborted")]
 
     #expect(CodexTranscriptStatus.terminal(in: entries) == .interrupted)
+}
+
+@Test("the newest Codex goal event reports an active goal")
+func codexGoalSetIsObserved() {
+    let goal = CodexTranscriptStatus.goal(in: [codexGoal("completed"), codexGoal("active")])
+
+    #expect(goal?.status == .active)
+    #expect(goal?.objective == "Ship the goal preview")
+}
+
+@Test("a completed Codex goal is distinguished from an ordinary completed turn")
+func codexGoalCompletionIsObserved() {
+    let goal = CodexTranscriptStatus.goal(in: [codexTurn(), codexEvent("task_complete"), codexGoal("complete")])
+
+    #expect(goal?.status == .completed)
 }
 
 // MARK: - Activity aggregation

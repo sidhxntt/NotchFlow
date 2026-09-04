@@ -385,6 +385,54 @@ public enum AgentSessionPreviewTone: Equatable, Sendable {
     case blue, yellow, amber, green, orange
 }
 
+/// The goal lifecycle exposed by an agent runtime. Goals are intentionally
+/// separate from a turn's status: a session may complete many ordinary turns
+/// while one long-running goal remains active.
+public enum AgentGoalStatus: Equatable, Sendable {
+    case active, completed, paused, blocked
+
+    public init?(runtimeValue: String) {
+        switch runtimeValue.lowercased() {
+        case "active": self = .active
+        case "complete", "completed": self = .completed
+        case "paused": self = .paused
+        case "blocked": self = .blocked
+        default: return nil
+        }
+    }
+
+    /// Goal start and successful completion are both brief, affirmative
+    /// announcements in the folded Notch. Paused/blocked goals remain visible
+    /// on their session card without falsely reporting progress as success.
+    public var previewLabel: String? {
+        switch self {
+        case .active: return "Goal set"
+        case .completed: return "Goal completed"
+        case .paused, .blocked: return nil
+        }
+    }
+
+    public var previewTone: AgentSessionPreviewTone? {
+        switch self {
+        case .active, .completed: return .green
+        case .paused, .blocked: return nil
+        }
+    }
+}
+
+/// One goal observed for a session. Its objective is retained for the expanded
+/// session surface; the folded preview deliberately uses only concise lifecycle
+/// copy so private task text never spills into the menu bar.
+public struct AgentGoal: Equatable, Sendable {
+    public let status: AgentGoalStatus
+    public let objective: String?
+
+    public init(status: AgentGoalStatus, objective: String? = nil) {
+        self.status = status
+        self.objective = objective
+    }
+}
+
 /// Colour semantics for a context capacity bar. Kept independent of SwiftUI so
 /// the threshold behaviour remains testable on every Agent surface.
 public enum AgentContextTone: Equatable, Sendable {
@@ -632,17 +680,22 @@ public struct AgentSessionState: Equatable, Identifiable, Sendable {
     /// The plan this session is presenting, when its transcript records one.
     /// Only the agent's own proposal — never the user's prompt.
     public var planSummary: String?
+    /// The latest goal lifecycle state for this session, if its runtime emits
+    /// one. This does not replace `status`: goals span multiple ordinary turns.
+    public var goal: AgentGoal?
 
     public init(id: String, source: AgentApprovalSource, status: AgentSessionStatus,
                 contextUsed: Int? = nil, contextWindow: Int? = nil,
                 subagentCount: Int = 0, projectName: String? = nil, modelName: String? = nil,
-                workingDirectory: String? = nil, planSummary: String? = nil) {
+                workingDirectory: String? = nil, planSummary: String? = nil,
+                goal: AgentGoal? = nil) {
         self.id = id; self.source = source; self.status = status; self.projectName = projectName
         self.modelName = modelName
         self.workingDirectory = workingDirectory
         self.contextUsed = contextUsed; self.contextWindow = contextWindow
         self.subagentCount = max(0, subagentCount)
         self.planSummary = planSummary
+        self.goal = goal
     }
 
     /// The denominator the meter and its label agree on.
@@ -759,16 +812,44 @@ public struct AgentSessionPreview: Equatable, Sendable {
     public static let duration: TimeInterval = 5
 
     public let session: AgentSessionState
+    public let announcement: AgentSessionPreviewAnnouncement
     public let shownAt: Date
 
-    public init(session: AgentSessionState, shownAt: Date = Date()) {
+    public init(session: AgentSessionState,
+                announcement: AgentSessionPreviewAnnouncement? = nil,
+                shownAt: Date = Date()) {
         self.session = session
+        self.announcement = announcement ?? .session(session.status)
         self.shownAt = shownAt
     }
+
+    public var label: String { announcement.label }
+    public var tone: AgentSessionPreviewTone { announcement.tone }
 
     public func isVisible(at date: Date = Date()) -> Bool {
         let age = date.timeIntervalSince(shownAt)
         return age >= 0 && age < Self.duration
+    }
+}
+
+/// The fact the folded Notch is briefly announcing. A goal's lifecycle must
+/// not be reduced to its session's ordinary Working/Done state.
+public enum AgentSessionPreviewAnnouncement: Equatable, Sendable {
+    case session(AgentSessionStatus)
+    case goal(AgentGoalStatus)
+
+    public var label: String {
+        switch self {
+        case .session(let status): return status.previewLabel
+        case .goal(let status): return status.previewLabel ?? "Goal"
+        }
+    }
+
+    public var tone: AgentSessionPreviewTone {
+        switch self {
+        case .session(let status): return status.previewTone
+        case .goal(let status): return status.previewTone ?? .amber
+        }
     }
 }
 
@@ -826,14 +907,27 @@ public struct AgentSessionMarker: Equatable, Sendable {
     public let status: AgentSessionStatus
     public let detail: String?
     public let options: [String]
+    /// Lifecycle data is separate from `status`: a goal can complete while its
+    /// owning session continues with ordinary work or waits on an approval.
+    public let goal: AgentGoal?
     /// Kept for safe transcript matching only; the UI renders the transcript's
     /// compact project name rather than this full path.
     public let workingDirectory: String?
 
     public init(sessionID: String, source: AgentApprovalSource, status: AgentSessionStatus,
-                detail: String? = nil, options: [String] = [], workingDirectory: String? = nil) {
+                detail: String? = nil, options: [String] = [], workingDirectory: String? = nil,
+                goal: AgentGoal? = nil) {
         self.sessionID = sessionID; self.source = source; self.status = status
         self.detail = detail; self.options = options; self.workingDirectory = workingDirectory
+        self.goal = goal
+    }
+
+    /// A transport update (for example, an approval) changes the session status
+    /// but must not discard a goal lifecycle event that arrived first.
+    public func retaining(goal: AgentGoal?) -> AgentSessionMarker {
+        AgentSessionMarker(sessionID: sessionID, source: source, status: status,
+                           detail: detail, options: options, workingDirectory: workingDirectory,
+                           goal: goal)
     }
 
     /// A direct hook process has ended. Its visible status must settle instead
@@ -852,23 +946,30 @@ public struct AgentSessionMarker: Equatable, Sendable {
               let sessionID = nonEmpty(object["session_id"]),
               let action = object["action"] as? String else { return nil }
         let status: AgentSessionStatus
+        let goal: AgentGoal?
         switch action {
         case "marker":
             switch object["kind"] as? String {
-            case "question": status = .question
-            case "plan": status = .planning
-            case "plan_done", "planDone": status = .planReady
-            case "idle": status = .done
+            case "question": status = .question; goal = nil
+            case "plan": status = .planning; goal = nil
+            case "plan_done", "planDone": status = .planReady; goal = nil
+            case "idle": status = .done; goal = nil
+            case "goal_set", "goalSet":
+                status = .working
+                goal = .init(status: .active, objective: nonEmpty(object["detail"]))
+            case "goal_completed", "goalCompleted":
+                status = .working
+                goal = .init(status: .completed, objective: nonEmpty(object["detail"]))
             default: return nil
             }
-        case "start", "busy", "busydone": status = .working
-        case "done": status = .done
+        case "start", "busy", "busydone": status = .working; goal = nil
+        case "done": status = .done; goal = nil
         default: return nil
         }
         return AgentSessionMarker(sessionID: sessionID, source: source, status: status,
                                   detail: nonEmpty(object["detail"]),
                                   options: (object["options"] as? [Any] ?? []).compactMap { nonEmpty($0) },
-                                  workingDirectory: nonEmpty(object["cwd"]))
+                                  workingDirectory: nonEmpty(object["cwd"]), goal: goal)
     }
 
     private static func nonEmpty(_ value: Any?) -> String? {

@@ -2874,11 +2874,15 @@ final class AgentSessionActivityStore: ObservableObject {
     }
 
     func record(marker: AgentSessionMarker) {
-        let normalized = normalized(marker)
+        var normalized = normalized(marker)
+        let markerKey = key(normalized.source, normalized.sessionID)
+        if normalized.goal == nil, let retainedGoal = markers[markerKey]?.value.goal {
+            normalized = normalized.retaining(goal: retainedGoal)
+        }
         if !isTerminal(normalized.status) {
             dismissedCompletedSessionKeys.remove(key(normalized.source, normalized.sessionID))
         }
-        markers[key(normalized.source, normalized.sessionID)] = Marker(value: normalized, receivedAt: Date())
+        markers[markerKey] = Marker(value: normalized, receivedAt: Date())
         rebuild(from: scannedSessions, at: Date())
         refresh()
     }
@@ -3001,12 +3005,15 @@ final class AgentSessionActivityStore: ObservableObject {
                 //
                 // A pending permission or question is never in the transcript,
                 // so those markers are exempt and hold until they are resolved.
-                if marker.value.status.isTranscriptObservable, marker.receivedAt < scannedAt {
+                if marker.value.goal == nil,
+                   marker.value.status.isTranscriptObservable, marker.receivedAt < scannedAt {
                     continue
                 }
-                all[index].apply(status: marker.value.status)
+                if let goal = marker.value.goal { all[index].goal = goal }
+                else { all[index].apply(status: marker.value.status) }
             } else {
-                all.append(.init(id: marker.value.sessionID, source: marker.value.source, status: marker.value.status))
+                all.append(.init(id: marker.value.sessionID, source: marker.value.source,
+                                 status: marker.value.status, goal: marker.value.goal))
                 indexes[id] = all.count - 1
             }
         }
@@ -3038,11 +3045,21 @@ final class AgentSessionActivityStore: ObservableObject {
     }
 
     private func announceChangedStatus(in next: [AgentSessionState], at now: Date) {
-        let prior = Dictionary(uniqueKeysWithValues: sessions.map { (key($0.source, $0.id), $0.status) })
+        let prior = Dictionary(uniqueKeysWithValues: sessions.map { (key($0.source, $0.id), $0) })
         guard let changed = next.first(where: {
-            $0.status != .needsYou && prior[key($0.source, $0.id)] != $0.status
+            let previous = prior[key($0.source, $0.id)]
+            if $0.goal != previous?.goal, $0.goal?.status.previewLabel != nil { return true }
+            return $0.status != .needsYou && previous?.status != $0.status
         }) else { return }
-        preview = AgentSessionPreview(session: changed, shownAt: now)
+        let previous = prior[key(changed.source, changed.id)]
+        let announcement: AgentSessionPreviewAnnouncement
+        if changed.goal != previous?.goal, let goal = changed.goal,
+           goal.status.previewLabel != nil {
+            announcement = .goal(goal.status)
+        } else {
+            announcement = .session(changed.status)
+        }
+        preview = AgentSessionPreview(session: changed, announcement: announcement, shownAt: now)
         previewExpiryTimer?.invalidate()
         previewExpiryTimer = Timer.scheduledTimer(withTimeInterval: AgentSessionPreview.duration,
                                                    repeats: false) { [weak self] _ in
@@ -3234,6 +3251,7 @@ final class AgentSessionActivityStore: ObservableObject {
         let window: Int?
         let model: String?
         let cwd: String?
+        let goal: AgentGoal?
     }
 
     /// Parsed rollouts, keyed by path and invalidated by size and modification
@@ -3308,7 +3326,8 @@ final class AgentSessionActivityStore: ObservableObject {
                 guard let payload = item["payload"] as? [String: Any] else { return nil }
                 return string(payload["model"])
             }.first,
-            cwd: string(meta["cwd"]))
+            cwd: string(meta["cwd"]),
+            goal: CodexTranscriptStatus.goal(in: tailEntries))
 
         codexFactsLock.lock()
         codexFactsCache[url.path] = (stamp, facts)
@@ -3339,7 +3358,7 @@ final class AgentSessionActivityStore: ObservableObject {
                                           model: model, source: .codex, observedUsed: used)
                                   },
                                   projectName: projectName(for: facts.cwd), modelName: model,
-                                  workingDirectory: facts.cwd))
+                                  workingDirectory: facts.cwd, goal: facts.goal))
     }
 
     /// Everything in a Claude transcript derived from bytes rather than time.

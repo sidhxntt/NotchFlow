@@ -261,6 +261,7 @@ public enum ClaudeTranscriptStatus {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+
 }
 
 /// Reads turn-terminal events out of a Codex rollout transcript.
@@ -284,6 +285,23 @@ public struct CodexSessionIdentity: Equatable, Sendable {
 }
 
 public enum CodexTranscriptStatus {
+
+    /// The newest goal update is authoritative. Codex writes a full goal object
+    /// each time its lifecycle changes, so there is no need to infer completion
+    /// from an unrelated turn terminal event.
+    public static func goal(in entries: [[String: Any]]) -> AgentGoal? {
+        for item in entries.reversed() {
+            guard item["type"] as? String == "event_msg",
+                  let payload = item["payload"] as? [String: Any],
+                  payload["type"] as? String == "thread_goal_updated",
+                  let value = payload["goal"] as? [String: Any],
+                  let rawStatus = nonEmpty(value["status"]),
+                  let status = AgentGoalStatus(runtimeValue: rawStatus)
+            else { continue }
+            return AgentGoal(status: status, objective: nonEmpty(value["objective"]))
+        }
+        return nil
+    }
 
     /// Reads a rollout's identity out of its `session_meta` payload.
     ///
