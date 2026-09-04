@@ -99,6 +99,13 @@ NotchFlow can drive your **Codex**, **Claude Code**, **Grok**, and other CLIs, w
 
 NotchFlow is drawn in macOS Liquid Glass — including the edge glow and physical motion of native macOS 26.
 
+## Engineering evidence
+
+The [engineering challenges guide](docs/wiki/engineering-challenges.md) maps
+each feature area to the reliability, privacy, concurrency, macOS-integration,
+or security constraint it addresses, with implementation and verification
+evidence. It is the canonical reference for factual project and resume claims.
+
 ## Privacy
 
 NotchFlow has no separate product account. Prompts, chats, notes, reminders, agent sessions, clipboard, and history stay on your Mac, or go directly to the AI provider you configured. NotchFlow does not relay request content.

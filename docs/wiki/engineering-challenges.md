@@ -4,6 +4,37 @@ Building a small app that sits at the top of the screen sounds simple at first. 
 
 This page explains the important problems we had to solve in plain language.
 
+## Feature-by-feature engineering evidence
+
+Every user-facing capability listed on the [Features](features.md) page has a
+corresponding engineering constraint. This is the source of truth for product
+and resume claims: describe the capability and the problem it solves together;
+do not attach unmeasured speed, adoption, reliability, or usage numbers.
+
+| Feature area | Engineering challenge | Evidence in this page | Primary implementation evidence | Repeatable verification where available |
+| --- | --- | --- | --- | --- |
+| Smart capture and assistant | Keep intent suggestion local and non-blocking; stream provider or CLI output without freezing the composer; keep credentials out of ordinary preferences. | [3. Reading output](#3-reading-output-from-other-programs-without-getting-stuck), [10. Local data](#10-saving-local-data-without-losing-it), [12. Intent suggestion](#12-suggesting-an-intent-without-taking-control) | [`IntentEngine.swift`](../../NotchFlow/Sources/IntentEngine.swift), [`AIService.swift`](../../NotchFlow/Sources/AIService.swift), [`APIKeyStore.swift`](../../NotchFlow/Sources/APIKeyStore.swift) | Local capability tests cover command evaluation and Keychain migration; provider and CLI streaming require a configured integration. |
+| Notes and reminders | Avoid a first-use Apple Notes Automation deadlock, preserve arbitrary user text safely, and offer a useful local fallback when permission is unavailable. | [1. Notes permission](#1-the-apple-notes-permission-deadlock), [10. Local data](#10-saving-local-data-without-losing-it) | [`NotesService.swift`](../../NotchFlow/Sources/NotesService.swift), [`FileNotesService.swift`](../../NotchFlow/Sources/FileNotesService.swift), [`RemindersService.swift`](../../NotchFlow/Sources/RemindersService.swift) | Requires macOS permission integration testing; the fallback remains available without Notes Automation. |
+| Agent work | Normalize incompatible CLI streams and session IDs, keep long-running work alive after the panel closes, and expose control only when ownership is verified. | [3. Reading output](#3-reading-output-from-other-programs-without-getting-stuck) through [7. GUI environment](#7-a-gui-app-does-not-have-the-same-environment-as-terminal) | [`AgentTaskService.swift`](../../NotchFlow/Sources/AgentTaskService.swift), [`AgentApprovalQueue.swift`](../../NotchFlow/Sources/Capabilities/AgentApprovalQueue.swift), [`CodexTerminalHookBridge.swift`](../../NotchFlow/Sources/CodexTerminalHookBridge.swift) | `AgentSessionStateTests`, `CodexApprovalQueueTests`, `ClaudeApprovalQueueTests`, and `AgentTranscriptFilesTests`. |
+| Media and playback | Select the currently relevant source across dedicated players and system Now Playing, while hiding controls a source cannot safely perform. | [9. Media ranking](#9-media-is-not-as-universal-as-it-looks) | [`MediaCapabilityService.swift`](../../NotchFlow/Sources/Capabilities/MediaCapabilityService.swift), bundled `MediaRemoteAdapter` | `MediaCapabilityServiceRankingTests`. |
+| Files, clipboard, and quick utilities | Treat dropped files, conversions, clipboard capture, and history as local state with bounded retention and failure reporting rather than an opaque temporary workflow. | [3. Reading output](#3-reading-output-from-other-programs-without-getting-stuck), [10. Local data](#10-saving-local-data-without-losing-it) | [`ShelfDropService.swift`](../../NotchFlow/Sources/Capabilities/ShelfDropService.swift), [`FileConversionService.swift`](../../NotchFlow/Sources/Capabilities/FileConversionService.swift), [`ClipboardHistoryStore.swift`](../../NotchFlow/Sources/Capabilities/ClipboardHistoryStore.swift) | `FileConversionServiceTests`, `ClipboardHistoryStoreTests`, and `ClipboardHistoryServiceTests`. |
+| Interface, displays, and customization | Keep a transparent panel correct across displays, Spaces, full-screen apps, virtual notches, and input-method candidate windows without layout feedback loops. | [8. Window and display rules](#8-the-notch-has-unusual-window-and-display-rules) | [`NotchPanel.swift`](../../NotchFlow/Sources/NotchPanel.swift), [`AppDelegate.swift`](../../NotchFlow/Sources/AppDelegate.swift), [`Components.swift`](../../NotchFlow/Sources/Components.swift) | Requires visual and multi-display macOS integration testing. |
+| Distribution, licensing, and updates | Treat licenses, secrets, downloaded app bundles, signatures, and rollback as security-sensitive state. | [10. Local data](#10-saving-local-data-without-losing-it), [11. Safe updates](#11-updating-an-app-safely-is-a-security-feature) | [`LicenseService.swift`](../../NotchFlow/Sources/Capabilities/LicenseService.swift), [`UpdateArtifactVerifier.swift`](../../NotchFlow/Sources/UpdateArtifactVerifier.swift), [`UpdaterService.swift`](../../NotchFlow/Sources/UpdaterService.swift) | `LicenseServiceTests`, `DiskImageInstallPlannerTests`, plus release artifact and code-signing verification scripts. |
+| Feature availability and recovery | Do not present a permission-, provider-, or executable-dependent action as complete when macOS or the integration cannot safely perform it. | [5. Safe authority](#5-seeing-an-agent-is-different-from-controlling-an-agent), [7. GUI environment](#7-a-gui-app-does-not-have-the-same-environment-as-terminal), [10. Local data](#10-saving-local-data-without-losing-it) | [`InlineSettingsView.swift`](../../NotchFlow/Sources/InlineSettingsView.swift), [`ShellEnvironment.swift`](../../NotchFlow/Sources/ShellEnvironment.swift), [`NotesService.swift`](../../NotchFlow/Sources/NotesService.swift) | `SettingsPolicyTests`, agent approval tests, and permission-aware macOS integration testing. |
+
+### Resume-safe summary
+
+The evidence above supports factual claims such as: **Built a private macOS
+notch companion in SwiftUI and AppKit that combines local capture, AI and
+coding-agent workflows, media, and desktop utilities; designed its macOS
+integrations around permission-safe concurrency, streaming-process recovery,
+capability-aware agent control, secure local persistence, and verified update
+delivery.**
+
+This wording intentionally names the engineering work that exists in the
+repository. Quantitative outcome claims belong in a resume only when they have
+their own recorded measurement method, population, and time range.
+
 ## A few useful words first
 
 | Word | Plain-English meaning |
@@ -244,6 +275,35 @@ The updater does not remove macOS quarantine to force a launch. Apple’s trust 
 ### Why this matters
 
 Users receive a verified new build or keep their working old build. A failed or suspicious artifact does not simply replace the application because it had a higher version number.
+
+## 12. Suggesting an intent without taking control
+
+### The problem
+
+The composer can help decide whether someone is asking a question, saving a
+note, creating a reminder, or starting an agent task. That suggestion is useful
+only if it never makes typing lag and never silently sends text to the wrong
+destination. A model can also be unavailable while macOS prepares it or after
+an operating-system update.
+
+### How NotchFlow handles it
+
+The intent engine runs outside the interactive view as an actor. It uses an
+on-device NaturalLanguage embedding, a small local classifier, and nearby
+examples, with debouncing and caching around the typing path. The embedding
+model identity participates in the cache key, so an operating-system model
+change triggers retraining instead of reusing incompatible learned data.
+
+If the local model is unavailable, still preparing, or uncertain, the app
+returns an ambiguous suggestion. The visible intent selector remains the
+person's final decision; the app does not convert text into a Note, Reminder,
+Ask, or Agent action by itself.
+
+### Why this matters
+
+Typing stays responsive and the convenience feature does not become a privacy
+or correctness hazard. A degraded model means less automation, not an
+unexplained destination change.
 
 ## The main lessons
 
