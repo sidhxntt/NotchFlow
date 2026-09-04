@@ -190,8 +190,8 @@ func endedSubagentApprovalKeepsItsChildIdentity() {
     #expect(marker.isSubagent)
 }
 
-@Test("only a root terminal marker may settle the Agent tab row")
-func onlyRootTerminalMarkerMaySettleTheAgentTabRow() {
+@Test("only a root completion marker may complete the Agent tab row")
+func onlyRootCompletionMarkerMayCompleteTheAgentTabRow() {
     let hierarchy = CodexSessionHierarchy(parentBySessionID: ["child-thread": "root-thread"])
     let childDone = AgentSessionMarker(sessionID: "child-thread", source: .codex, status: .done)
     let rootDone = AgentSessionMarker(sessionID: "root-thread", source: .codex, status: .done)
@@ -199,11 +199,37 @@ func onlyRootTerminalMarkerMaySettleTheAgentTabRow() {
         sessionID: "child-thread", source: .claude, status: .interrupted, isSubagent: true
     )
 
-    #expect(!childDone.maySettleRootSession(
+    #expect(!childDone.mayUpdateRootSession(
         hierarchyRoot: hierarchy.rootSessionID(for: childDone.sessionID)
     ))
-    #expect(rootDone.maySettleRootSession(hierarchyRoot: "root-thread"))
-    #expect(!groupedChildClosed.maySettleRootSession(hierarchyRoot: "child-thread"))
+    #expect(rootDone.mayUpdateRootSession(hierarchyRoot: "root-thread"))
+    #expect(groupedChildClosed.mayUpdateRootSession(hierarchyRoot: "child-thread"))
+}
+
+@Test("an active sub-agent keeps a completed root session working")
+func activeSubagentKeepsACompletedRootWorking() {
+    #expect(AgentSessionStatus.aggregating(root: .done, children: [.working]) == .working)
+    #expect(AgentSessionStatus.aggregating(root: .planReady, children: [.planning]) == .working)
+}
+
+@Test("a completed root is done after all sub-agents settle")
+func completedRootIsDoneAfterAllSubagentsSettle() {
+    #expect(AgentSessionStatus.aggregating(root: .done, children: [.done, .planReady]) == .done)
+}
+
+@Test("any interrupted agent interrupts the root session")
+func anyInterruptedAgentInterruptsTheRootSession() {
+    #expect(AgentSessionStatus.aggregating(root: .working, children: [.done, .interrupted]) == .interrupted)
+    #expect(AgentSessionStatus.aggregating(root: .interrupted, children: [.done]) == .interrupted)
+}
+
+@Test("an interruption overrides a live root session marker")
+func interruptionOverridesALiveRootSessionMarker() {
+    var state = AgentSessionState(id: "root", source: .codex, status: .working)
+
+    state.apply(status: .interrupted)
+
+    #expect(state.status == .interrupted)
 }
 
 @Test("a timely done marker settles a working session")

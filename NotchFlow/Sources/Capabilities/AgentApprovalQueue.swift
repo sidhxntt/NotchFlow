@@ -319,6 +319,18 @@ public enum AgentSessionStatus: String, Equatable, Sendable {
     /// a regular completion, a completed plan (both shown as Done), or Closed.
     public var isClearable: Bool { isSettled }
 
+    /// Chooses the one state shown for a root and all of its delegated work.
+    /// A root can emit its terminal event before its children have returned, so
+    /// live children keep the shared row honest as Working. An interruption is
+    /// terminal for the whole delegation tree and therefore outranks every
+    /// other state.
+    public static func aggregating(root: AgentSessionStatus,
+                                   children: [AgentSessionStatus]) -> AgentSessionStatus {
+        if root == .interrupted || children.contains(.interrupted) { return .interrupted }
+        if children.contains(where: { !$0.isSettled }) { return .working }
+        return root
+    }
+
     /// Turn terminal events override the provisional activity state. A completed
     /// plan retains its distinct completed-plan presentation; an aborted or
     /// stale uncompleted turn is explicitly shown as interrupted.
@@ -712,7 +724,9 @@ public struct AgentSessionState: Equatable, Identifiable, Sendable {
         // plan is a real transition, handled by `workResumesAfterPlan` below.
         if (status == .done || status == .interrupted) && next == .working { return }
         let workResumesAfterPlan = next == .working && (status == .planning || status == .planReady)
-        if next == .done || next.priority >= status.priority || workResumesAfterPlan { status = next }
+        if next == .done || next == .interrupted || next.priority >= status.priority || workResumesAfterPlan {
+            status = next
+        }
     }
 
     private static func format(_ count: Int) -> String {
@@ -854,11 +868,13 @@ public struct AgentSessionMarker: Equatable, Sendable {
                            workingDirectory: approval.workingDirectory)
     }
 
-    /// Child activity may share a root card, but a terminal child event cannot
-    /// complete that root's turn. `hierarchyRoot` is the marker's Codex root
-    /// when known and its own id for every independent session.
-    public func maySettleRootSession(hierarchyRoot: String) -> Bool {
-        !status.isSettled || (!isSubagent && sessionID == hierarchyRoot)
+    /// Child activity may share a root card, but a terminal child completion
+    /// cannot complete that root's turn. An interruption is different: it is
+    /// terminal for the whole delegation tree. `hierarchyRoot` is the marker's
+    /// Codex root when known and its own id for every independent session.
+    public func mayUpdateRootSession(hierarchyRoot: String) -> Bool {
+        if status == .interrupted { return true }
+        return !status.isSettled || (!isSubagent && sessionID == hierarchyRoot)
     }
 
     public static func decode(_ data: Data) -> AgentSessionMarker? {

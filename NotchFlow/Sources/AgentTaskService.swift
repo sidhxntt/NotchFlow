@@ -3065,11 +3065,12 @@ final class AgentSessionActivityStore: ObservableObject {
     private func normalized(_ marker: AgentSessionMarker) -> AgentSessionMarker? {
         let hierarchyRoot = rootSessionID(for: marker.source, sessionID: marker.sessionID)
         // A child is allowed to lift live activity and a permission request
-        // into the root's shared card. Its own terminal event is different:
-        // completing (or closing) one delegated task says nothing about the
-        // root's turn. The Codex hierarchy catches raw hook markers, while the
-        // explicit flag preserves the same rule for grouped Claude approvals.
-        if !marker.maySettleRootSession(hierarchyRoot: hierarchyRoot) { return nil }
+        // into the root's shared card. Its own completion is different: ending
+        // one delegated task says nothing about the root's turn, while an
+        // interruption settles the whole delegation tree. The Codex hierarchy
+        // catches raw hook markers, while the explicit flag preserves the same
+        // distinction for grouped Claude approvals.
+        if !marker.mayUpdateRootSession(hierarchyRoot: hierarchyRoot) { return nil }
         let presentationID: String
         if let workingDirectory = marker.workingDirectory {
             let probe = AgentApproval(id: "marker:\(marker.sessionID)", threadID: hierarchyRoot,
@@ -3223,6 +3224,11 @@ final class AgentSessionActivityStore: ObservableObject {
             .map(\.id))
         let sessions = records.filter { !$0.child }.map { record -> AgentSessionState in
             var state = record.state
+            let childStatuses = records.lazy
+                .filter { $0.child && hierarchy.rootSessionID(for: $0.id) == record.id }
+                .map(\.state.status)
+            state.status = AgentSessionStatus.aggregating(root: state.status,
+                                                           children: Array(childStatuses))
             state.subagentCount = hierarchy.activeSubagentCount(for: record.id,
                                                                 activeIDs: activeChildIDs)
             return state
@@ -3437,13 +3443,13 @@ final class AgentSessionActivityStore: ObservableObject {
         let subdir = url.deletingLastPathComponent()
             .appendingPathComponent(url.deletingPathExtension().lastPathComponent, isDirectory: true)
             .appendingPathComponent("subagents", isDirectory: true)
-        let children = recentFiles(subdir, now: now, predicate: { _ in true })
-            .count { child in
-                guard let childFacts = claudeFacts(child.url, modifiedAt: child.fileModifiedAt) else { return false }
-                return !childFacts.reading
+        let childStatuses = recentFiles(subdir, now: now, predicate: { _ in true })
+            .compactMap { child -> AgentSessionStatus? in
+                guard let childFacts = claudeFacts(child.url, modifiedAt: child.fileModifiedAt) else { return nil }
+                return childFacts.reading
                     .resolved(inactiveFor: max(0, now.timeIntervalSince(child.modifiedAt)))
-                    .isSettled
             }
+        let children = childStatuses.count { !$0.isSettled }
         let resolvedStatus = facts.reading.resolved(inactiveFor: max(0, now.timeIntervalSince(modifiedAt)))
         let workingDirectory = facts.workingDirectory
         let model = facts.model
@@ -3452,7 +3458,8 @@ final class AgentSessionActivityStore: ObservableObject {
         let window = used.map { _ in
             AgentModelContextWindow.window(for: model, source: .claude, observedUsed: used)
         }
-        return .init(id: id, source: .claude, status: resolvedStatus,
+        return .init(id: id, source: .claude,
+                     status: AgentSessionStatus.aggregating(root: resolvedStatus, children: childStatuses),
                      contextUsed: used, contextWindow: window, subagentCount: children,
                      projectName: projectName(for: workingDirectory), modelName: model,
                      workingDirectory: workingDirectory,
