@@ -2874,7 +2874,7 @@ final class AgentSessionActivityStore: ObservableObject {
     }
 
     func record(marker: AgentSessionMarker) {
-        let normalized = normalized(marker)
+        guard let normalized = normalized(marker) else { return }
         if !isTerminal(normalized.status) {
             dismissedCompletedSessionKeys.remove(key(normalized.source, normalized.sessionID))
         }
@@ -3062,8 +3062,14 @@ final class AgentSessionActivityStore: ObservableObject {
     }
     private func key(_ source: AgentApprovalSource, _ id: String) -> String { "\(source.rawValue):\(id)" }
 
-    private func normalized(_ marker: AgentSessionMarker) -> AgentSessionMarker {
+    private func normalized(_ marker: AgentSessionMarker) -> AgentSessionMarker? {
         let hierarchyRoot = rootSessionID(for: marker.source, sessionID: marker.sessionID)
+        // A child is allowed to lift live activity and a permission request
+        // into the root's shared card. Its own terminal event is different:
+        // completing (or closing) one delegated task says nothing about the
+        // root's turn. The Codex hierarchy catches raw hook markers, while the
+        // explicit flag preserves the same rule for grouped Claude approvals.
+        if !marker.maySettleRootSession(hierarchyRoot: hierarchyRoot) { return nil }
         let presentationID: String
         if let workingDirectory = marker.workingDirectory {
             let probe = AgentApproval(id: "marker:\(marker.sessionID)", threadID: hierarchyRoot,
@@ -3074,6 +3080,7 @@ final class AgentSessionActivityStore: ObservableObject {
             presentationID = hierarchyRoot
         }
         return AgentSessionMarker(sessionID: presentationID, source: marker.source, status: marker.status,
+                                  isSubagent: marker.isSubagent,
                                   detail: marker.detail, options: marker.options,
                                   workingDirectory: marker.workingDirectory)
     }
@@ -3081,7 +3088,7 @@ final class AgentSessionActivityStore: ObservableObject {
     private func normalizeStoredMarkers() {
         var rekeyed: [String: Marker] = [:]
         for marker in markers.values {
-            let next = normalized(marker.value)
+            guard let next = normalized(marker.value) else { continue }
             let nextKey = key(next.source, next.sessionID)
             if let existing = rekeyed[nextKey], existing.receivedAt >= marker.receivedAt { continue }
             rekeyed[nextKey] = Marker(value: next, receivedAt: marker.receivedAt)

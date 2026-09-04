@@ -152,11 +152,11 @@ func terminalCodexApprovalDoesNotMergeConcurrentWorkspaceRoots() {
     #expect(AgentSessionWorkspaceMatcher.rootID(for: approval, among: roots) == "hook-thread")
 }
 
-@Test("an ended terminal approval becomes a Closed marker on its presentation root")
-func endedTerminalApprovalBecomesClosedMarker() {
+@Test("an ended root approval becomes a Closed marker on its root")
+func endedRootApprovalBecomesClosedMarker() {
     let approval = AgentApproval(
         id: "permission-1",
-        threadID: "callback-thread",
+        threadID: "root-thread",
         itemID: "command",
         title: "Run command",
         source: .codex,
@@ -166,7 +166,44 @@ func endedTerminalApprovalBecomesClosedMarker() {
     let marker = AgentSessionMarker.transportEnded(for: approval)
 
     #expect(marker.sessionID == "root-thread")
+    #expect(!marker.isSubagent)
     #expect(marker.status == .interrupted)
+}
+
+@Test("an ended sub-agent approval keeps its child identity")
+func endedSubagentApprovalKeepsItsChildIdentity() {
+    let approval = AgentApproval(
+        id: "permission-child",
+        threadID: "child-thread",
+        itemID: "command",
+        title: "Run command",
+        source: .codex,
+        sessionGroupID: "root-thread"
+    )
+
+    let marker = AgentSessionMarker.transportEnded(for: approval)
+
+    // The card is grouped under `root-thread`, but the terminal event belongs
+    // to `child-thread`. The activity store must therefore be able to reject
+    // it rather than settling the root task.
+    #expect(marker.sessionID == "child-thread")
+    #expect(marker.isSubagent)
+}
+
+@Test("only a root terminal marker may settle the Agent tab row")
+func onlyRootTerminalMarkerMaySettleTheAgentTabRow() {
+    let hierarchy = CodexSessionHierarchy(parentBySessionID: ["child-thread": "root-thread"])
+    let childDone = AgentSessionMarker(sessionID: "child-thread", source: .codex, status: .done)
+    let rootDone = AgentSessionMarker(sessionID: "root-thread", source: .codex, status: .done)
+    let groupedChildClosed = AgentSessionMarker(
+        sessionID: "child-thread", source: .claude, status: .interrupted, isSubagent: true
+    )
+
+    #expect(!childDone.maySettleRootSession(
+        hierarchyRoot: hierarchy.rootSessionID(for: childDone.sessionID)
+    ))
+    #expect(rootDone.maySettleRootSession(hierarchyRoot: "root-thread"))
+    #expect(!groupedChildClosed.maySettleRootSession(hierarchyRoot: "child-thread"))
 }
 
 @Test("a timely done marker settles a working session")
