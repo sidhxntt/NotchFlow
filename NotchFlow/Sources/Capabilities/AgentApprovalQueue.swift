@@ -824,6 +824,11 @@ public struct AgentSessionMarker: Equatable, Sendable {
     public let sessionID: String
     public let source: AgentApprovalSource
     public let status: AgentSessionStatus
+    /// A terminal hook marker can be displayed with its root's approval card
+    /// while still belonging to a child session. This flag preserves that
+    /// distinction until the activity store decides whether it may settle the
+    /// visible root session.
+    public let isSubagent: Bool
     public let detail: String?
     public let options: [String]
     /// Kept for safe transcript matching only; the UI renders the transcript's
@@ -831,8 +836,10 @@ public struct AgentSessionMarker: Equatable, Sendable {
     public let workingDirectory: String?
 
     public init(sessionID: String, source: AgentApprovalSource, status: AgentSessionStatus,
-                detail: String? = nil, options: [String] = [], workingDirectory: String? = nil) {
+                isSubagent: Bool = false, detail: String? = nil, options: [String] = [],
+                workingDirectory: String? = nil) {
         self.sessionID = sessionID; self.source = source; self.status = status
+        self.isSubagent = isSubagent
         self.detail = detail; self.options = options; self.workingDirectory = workingDirectory
     }
 
@@ -840,9 +847,18 @@ public struct AgentSessionMarker: Equatable, Sendable {
     /// of leaving a provisional Working marker in the roster. A live transcript
     /// scan still wins over this lower-priority terminal marker.
     public static func transportEnded(for approval: AgentApproval) -> AgentSessionMarker {
-        AgentSessionMarker(sessionID: approval.sessionGroupID, source: approval.source,
-                           status: .interrupted, detail: approval.detail,
+        AgentSessionMarker(sessionID: approval.threadID, source: approval.source,
+                           status: .interrupted,
+                           isSubagent: approval.threadID != approval.sessionGroupID,
+                           detail: approval.detail,
                            workingDirectory: approval.workingDirectory)
+    }
+
+    /// Child activity may share a root card, but a terminal child event cannot
+    /// complete that root's turn. `hierarchyRoot` is the marker's Codex root
+    /// when known and its own id for every independent session.
+    public func maySettleRootSession(hierarchyRoot: String) -> Bool {
+        !status.isSettled || (!isSubagent && sessionID == hierarchyRoot)
     }
 
     public static func decode(_ data: Data) -> AgentSessionMarker? {
