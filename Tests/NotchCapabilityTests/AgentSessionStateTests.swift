@@ -41,6 +41,46 @@ func completedPlanningUsesDoneLabel() {
     #expect(AgentSessionStatus.planReady.previewTone == .amber)
 }
 
+@Test("goal lifecycle announcements use the requested green Notch copy")
+func goalLifecycleAnnouncementsAreGreen() {
+    #expect(AgentGoalStatus.active.previewLabel == "Goal set")
+    #expect(AgentGoalStatus.active.previewTone == .green)
+    #expect(AgentGoalStatus.completed.previewLabel == "Goal completed")
+    #expect(AgentGoalStatus.completed.previewTone == .green)
+}
+
+@Test("a goal preview keeps its lifecycle label instead of the session status")
+func goalPreviewUsesGoalAnnouncement() {
+    let session = AgentSessionState(id: "session-1", source: .codex, status: .working,
+                                    goal: .init(status: .active))
+    let preview = AgentSessionPreview(session: session, announcement: .goal(.active))
+
+    #expect(preview.label == "Goal set")
+    #expect(preview.tone == .green)
+}
+
+@Test("a Claude goal marker carries lifecycle state without becoming an approval")
+func claudeGoalMarkerIsDecoded() {
+    let marker = AgentSessionMarker.decode(Data("""
+    {"source":"claude","session_id":"claude-1","cwd":"/work/NotchFlow","detail":"Implement goal previews","action":"marker","kind":"goal_set"}
+    """.utf8))
+
+    #expect(marker?.status == .working)
+    #expect(marker?.goal == .init(status: .active, objective: "Implement goal previews"))
+}
+
+@Test("an approval marker can retain the active goal it follows")
+func approvalMarkerRetainsGoal() {
+    let goal = AgentGoal(status: .active, objective: "Route approvals")
+    let approval = AgentSessionMarker(sessionID: "claude-1", source: .claude, status: .needsYou,
+                                      detail: "Run command")
+
+    let retained = approval.retaining(goal: goal)
+
+    #expect(retained.status == .needsYou)
+    #expect(retained.goal == goal)
+}
+
 @Test("a new working marker replaces planning done")
 func workingSupersedesPlanningDone() {
     var state = AgentSessionState(

@@ -507,6 +507,7 @@ private struct WorkEarWidthsKey: PreferenceKey {
 private struct CollapsedAgentStatusEars: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let session: AgentSessionState
+    let announcement: AgentSessionPreviewAnnouncement?
     let notchWidth: CGFloat
     let earLeft: CGFloat
     let earRight: CGFloat
@@ -516,11 +517,11 @@ private struct CollapsedAgentStatusEars: View {
     }
 
     private var label: String {
-        session.status.previewLabel
+        announcement?.label ?? session.status.previewLabel
     }
 
     private var color: Color {
-        session.status.previewTone.color
+        (announcement?.tone ?? session.status.previewTone).color
     }
 
     var body: some View {
@@ -1143,6 +1144,11 @@ struct NotchIsland: View {
         }
     }
 
+    private var collapsedAgentAnnouncement: AgentSessionPreviewAnnouncement? {
+        guard restingSlot == .agentAnnouncement else { return nil }
+        return agentSessions.preview?.announcement
+    }
+
     private var showingAgentStatus: Bool {
         switch restingSlot {
         case .agentQuestion, .agentAnnouncement, .agentSteady: return true
@@ -1455,6 +1461,7 @@ struct NotchIsland: View {
                 if showingAgentStatus, let session = collapsedAgentSession {
                     CollapsedAgentStatusEars(
                         session: session,
+                        announcement: collapsedAgentAnnouncement,
                         notchWidth: metrics.notchWidth,
                         earLeft: earLeft,
                         earRight: earRight)

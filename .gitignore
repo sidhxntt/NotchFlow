@@ -36,6 +36,7 @@ Icon
 .superpowers/
 .agents/
 .vscode/
+.worktrees/
 
 # Local scratch notes
 temp.md
