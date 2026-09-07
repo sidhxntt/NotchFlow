@@ -23,6 +23,7 @@ cd ../notchflow.wiki
 git status
 git add Home.md Product-Overview.md Features.md Who-NotchFlow-Is-For.md \
   Generic-Mode-and-Agentic-Mode.md Architecture.md Engineering-Challenges.md \
+  Engineering-Implementation-Guide.md \
   Technology-Stack.md \
   Privacy-and-Permissions.md Release-Signing-Notarization-DMG-and-ZIP-Delivery.md \
   Updates-and-Versioning.md Development.md Frequently-Asked-Questions.md \
@@ -43,6 +44,7 @@ The renderer writes only the NotchFlow-managed Wiki pages. It does not delete ot
 | `docs/wiki/audience.md` | `Who-NotchFlow-Is-For` |
 | `docs/wiki/modes.md` | `Generic-Mode-and-Agentic-Mode` |
 | `docs/wiki/architecture.md` | `Architecture` |
+| `docs/wiki/implementation-guide.md` | `Engineering-Implementation-Guide` |
 | `docs/wiki/technology-stack.md` | `Technology-Stack` |
 | `docs/wiki/engineering-challenges.md` | `Engineering-Challenges` |
 | `docs/wiki/privacy-and-permissions.md` | `Privacy-and-Permissions` |
