@@ -106,6 +106,34 @@ public enum ShelfTraySelection {
         return items.first { $0.id == selectedID }
     }
 
+    /// Applies the tray's desktop selection gesture without coupling selection
+    /// policy to a particular view. A Shift-click adds the contiguous range
+    /// between the last selection anchor and the clicked item; a normal click
+    /// retains the tray's existing toggle behavior.
+    public static func selectedIDsAfterClick(
+        in items: [NotchShelfItem],
+        selectedIDs: Set<UUID>,
+        anchorID: UUID?,
+        clickedID: UUID,
+        isShiftPressed: Bool
+    ) -> Set<UUID> {
+        guard isShiftPressed,
+              let anchorID,
+              let anchorIndex = items.firstIndex(where: { $0.id == anchorID }),
+              let clickedIndex = items.firstIndex(where: { $0.id == clickedID }) else {
+            var updatedIDs = selectedIDs
+            if updatedIDs.contains(clickedID) {
+                updatedIDs.remove(clickedID)
+            } else {
+                updatedIDs.insert(clickedID)
+            }
+            return updatedIDs
+        }
+
+        let bounds = min(anchorIndex, clickedIndex)...max(anchorIndex, clickedIndex)
+        return selectedIDs.union(items[bounds].map(\.id))
+    }
+
     /// Retains the tray's visual order so batch actions behave predictably even
     /// when files were selected in a different order.
     public static func items(in items: [NotchShelfItem], selectedIDs: Set<UUID>) -> [NotchShelfItem] {

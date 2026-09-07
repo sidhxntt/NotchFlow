@@ -266,6 +266,40 @@ final class NotchCapabilityStoreTests: XCTestCase {
         XCTAssertEqual(selected.map(\.id), [first.id, third.id])
     }
 
+    func testFileTrayShiftClickSelectsTheInclusiveRangeFromItsAnchor() {
+        let first = NotchShelfItem.text("First")
+        let second = NotchShelfItem.text("Second")
+        let third = NotchShelfItem.text("Third")
+        let fourth = NotchShelfItem.text("Fourth")
+
+        let selected = ShelfTraySelection.selectedIDsAfterClick(
+            in: [first, second, third, fourth],
+            selectedIDs: [first.id],
+            anchorID: first.id,
+            clickedID: fourth.id,
+            isShiftPressed: true
+        )
+
+        XCTAssertEqual(selected, [first.id, second.id, third.id, fourth.id])
+    }
+
+    func testFileTrayShiftClickPreservesExistingSeparateSelections() {
+        let first = NotchShelfItem.text("First")
+        let second = NotchShelfItem.text("Second")
+        let third = NotchShelfItem.text("Third")
+        let fourth = NotchShelfItem.text("Fourth")
+
+        let selected = ShelfTraySelection.selectedIDsAfterClick(
+            in: [first, second, third, fourth],
+            selectedIDs: [first.id, fourth.id],
+            anchorID: fourth.id,
+            clickedID: second.id,
+            isShiftPressed: true
+        )
+
+        XCTAssertEqual(selected, [first.id, second.id, third.id, fourth.id])
+    }
+
     func testAIActivityGroupsMultipleClaudeSessionsIntoOneProviderSummary() {
         let summaries = AIActivityProviderAggregation.summaries(for: [
             .init(id: "claude-chat", providerID: "claude", provider: "Claude Code", model: "Opus 5", status: "Current chat", isCurrentChat: true),

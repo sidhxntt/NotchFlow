@@ -8,6 +8,7 @@ struct NotchShelfView: View {
     @ObservedObject private var conversions = FileConversionService.shared
     @State private var isDropTargeted = false
     @State private var selectedItemIDs = Set<UUID>()
+    @State private var selectionAnchorID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -78,10 +79,24 @@ struct NotchShelfView: View {
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .background(selectedItemIDs.contains(item.id) ? Color.white.opacity(0.10) : .clear,
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .onTapGesture { toggleSelection(of: item.id) }
-                .onDrag {
-                    if let url = item.url { return NSItemProvider(object: url as NSURL) }
-                    return NSItemProvider(object: item.displayName as NSString)
+                .overlay {
+                    ShelfTrayRowInteractionBridge(
+                        isSelected: selectedItemIDs.contains(item.id),
+                        prepareDragPayloads: { isShiftPressed, wasSelected in
+                            dragPayloadsForMouseDown(
+                                on: item.id,
+                                isShiftPressed: isShiftPressed,
+                                wasSelected: wasSelected
+                            )
+                        },
+                        completeClick: { isShiftPressed, wasSelected in
+                            completeClick(
+                                on: item.id,
+                                isShiftPressed: isShiftPressed,
+                                wasSelected: wasSelected
+                            )
+                        }
+                    )
                 }
             }
         }
@@ -126,11 +141,40 @@ struct NotchShelfView: View {
         ShelfTraySelection.items(in: capabilities.shelfItems, selectedIDs: selectedItemIDs)
     }
 
-    private func toggleSelection(of id: UUID) {
-        if selectedItemIDs.contains(id) {
-            selectedItemIDs.remove(id)
-        } else {
-            selectedItemIDs.insert(id)
+    private func dragPayloadsForMouseDown(
+        on id: UUID,
+        isShiftPressed: Bool,
+        wasSelected: Bool
+    ) -> [any NSPasteboardWriting] {
+        if isShiftPressed || !wasSelected {
+            updateSelection(on: id, isShiftPressed: isShiftPressed)
+        }
+        return dragPayloads(for: selectedItems)
+    }
+
+    private func completeClick(on id: UUID, isShiftPressed: Bool, wasSelected: Bool) {
+        guard !isShiftPressed, wasSelected else { return }
+        selectedItemIDs.remove(id)
+        if selectionAnchorID == id {
+            selectionAnchorID = selectedItems.last?.id
+        }
+    }
+
+    private func updateSelection(on id: UUID, isShiftPressed: Bool) {
+        selectedItemIDs = ShelfTraySelection.selectedIDsAfterClick(
+            in: capabilities.shelfItems,
+            selectedIDs: selectedItemIDs,
+            anchorID: selectionAnchorID,
+            clickedID: id,
+            isShiftPressed: isShiftPressed
+        )
+        selectionAnchorID = id
+    }
+
+    private func dragPayloads(for items: [NotchShelfItem]) -> [any NSPasteboardWriting] {
+        items.map { item in
+            if let url = item.url { return url as NSURL }
+            return item.displayName as NSString
         }
     }
 
@@ -240,6 +284,92 @@ struct NotchShelfView: View {
             guard let url = item.url, url.isFileURL else { return false }
             return !FileConversionCatalog.actions(for: url).isEmpty
         }
+    }
+}
+
+/// SwiftUI's `onDrag` creates one item provider per source view, while Finder
+/// and other macOS destinations need a single `NSDraggingSession` to receive a
+/// group of files. This transparent bridge owns only that AppKit edge; SwiftUI
+/// remains the source of truth for which tray rows are selected.
+private struct ShelfTrayRowInteractionBridge: NSViewRepresentable {
+    let isSelected: Bool
+    let prepareDragPayloads: (_ isShiftPressed: Bool, _ wasSelected: Bool) -> [any NSPasteboardWriting]
+    let completeClick: (_ isShiftPressed: Bool, _ wasSelected: Bool) -> Void
+
+    func makeNSView(context: Context) -> ShelfTrayRowInteractionView {
+        ShelfTrayRowInteractionView(
+            isSelected: isSelected,
+            prepareDragPayloads: prepareDragPayloads,
+            completeClick: completeClick
+        )
+    }
+
+    func updateNSView(_ nsView: ShelfTrayRowInteractionView, context: Context) {
+        nsView.isSelected = isSelected
+        nsView.prepareDragPayloads = prepareDragPayloads
+        nsView.completeClick = completeClick
+    }
+}
+
+private final class ShelfTrayRowInteractionView: NSView, NSDraggingSource {
+    var isSelected: Bool
+    var prepareDragPayloads: (_ isShiftPressed: Bool, _ wasSelected: Bool) -> [any NSPasteboardWriting]
+    var completeClick: (_ isShiftPressed: Bool, _ wasSelected: Bool) -> Void
+    private var dragPayloads: [any NSPasteboardWriting] = []
+    private var dragStartEvent: NSEvent?
+    private var hasStartedDragging = false
+    private var wasSelectedAtMouseDown = false
+    private var wasShiftPressedAtMouseDown = false
+
+    init(
+        isSelected: Bool,
+        prepareDragPayloads: @escaping (_ isShiftPressed: Bool, _ wasSelected: Bool) -> [any NSPasteboardWriting],
+        completeClick: @escaping (_ isShiftPressed: Bool, _ wasSelected: Bool) -> Void
+    ) {
+        self.isSelected = isSelected
+        self.prepareDragPayloads = prepareDragPayloads
+        self.completeClick = completeClick
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        wasSelectedAtMouseDown = isSelected
+        wasShiftPressedAtMouseDown = event.modifierFlags.contains(.shift)
+        dragPayloads = prepareDragPayloads(wasShiftPressedAtMouseDown, wasSelectedAtMouseDown)
+        dragStartEvent = event
+        hasStartedDragging = false
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard !hasStartedDragging else { return }
+        completeClick(wasShiftPressedAtMouseDown, wasSelectedAtMouseDown)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !hasStartedDragging, let dragStartEvent, !dragPayloads.isEmpty else { return }
+        hasStartedDragging = true
+
+        let image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Files")
+            ?? NSImage(size: NSSize(width: 32, height: 32))
+        let draggingItems = dragPayloads.enumerated().map { index, payload in
+            let item = NSDraggingItem(pasteboardWriter: payload)
+            let offset = CGFloat(index) * 4
+            item.setDraggingFrame(
+                NSRect(x: bounds.midX - 16 + offset, y: bounds.midY - 16 - offset, width: 32, height: 32),
+                contents: image
+            )
+            return item
+        }
+        beginDraggingSession(with: draggingItems, event: dragStartEvent, source: self)
+    }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        .copy
     }
 }
 
