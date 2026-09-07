@@ -11,6 +11,7 @@
 ## How It Works
 
 - [[Architecture|Architecture]]
+- [[Engineering-Implementation-Guide|Implementation guide]]
 - [[Technology-Stack|Technology stack]]
 - [[Engineering-Challenges|Engineering challenges]]
 - [[Privacy-and-Permissions|Privacy and permissions]]

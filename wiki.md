@@ -10,6 +10,7 @@ The complete GitHub Wiki source is maintained under [`docs/wiki/`](docs/wiki/ind
 | [`docs/wiki/audience.md`](docs/wiki/audience.md) | Who NotchFlow is for |
 | [`docs/wiki/modes.md`](docs/wiki/modes.md) | Generic mode and agentic mode |
 | [`docs/wiki/architecture.md`](docs/wiki/architecture.md) | Architecture |
+| [`docs/wiki/implementation-guide.md`](docs/wiki/implementation-guide.md) | Engineering implementation guide |
 | [`docs/wiki/technology-stack.md`](docs/wiki/technology-stack.md) | Technology stack |
 | [`docs/wiki/engineering-challenges.md`](docs/wiki/engineering-challenges.md) | Engineering challenges |
 | [`docs/wiki/privacy-and-permissions.md`](docs/wiki/privacy-and-permissions.md) | Privacy and permissions |
