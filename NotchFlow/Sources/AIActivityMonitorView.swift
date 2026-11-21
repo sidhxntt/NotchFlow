@@ -7,7 +7,10 @@ struct AIActivityMonitorView: View {
     @ObservedObject var sessions: AgentSessionActivityStore
     @ObservedObject var tasks: AgentTaskManager
     @State private var selectedID: String?
-    @State private var selectedProvider = "Codex"
+    /// The provider page the user picked, if any. Nil follows the selected
+    /// project's own provider, so a Claude-only project doesn't open on an
+    /// empty Codex page.
+    @State private var pickedProvider: String?
     @State private var visibility = AIActivityProjectVisibility()
     private static let providerPages = ["Codex", "Claude", "Chat"]
     /// The scrollable body's height, matched to the File tray's (`NotchShelfView`)
@@ -19,33 +22,39 @@ struct AIActivityMonitorView: View {
         TimelineView(.periodic(from: .now, by: 0.5)) { _ in
             let entries = projectEntries.filter { visibility.isVisible($0.id) }
             let selected = entries.first(where: { $0.id == selectedID }) ?? entries.first
+            let selectedProvider = pickedProvider ?? selected.flatMap(Self.defaultProvider) ?? "Codex"
             EqualHeightUtilitiesLayout(spacing: 10) {
                 projectList(entries: entries, selected: selected)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                projectDetail(entry: selected)
+                projectDetail(entry: selected, provider: selectedProvider)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
 
         }
     }
 
-    /// Historical Codex usage is persisted in TokenMeter; live sessions join
-    /// the same project immediately so Claude and Codex never split merely
-    /// because one provider has not yet emitted a usage record.
+    /// Historical usage is persisted in TokenMeter; live sessions join the same
+    /// project immediately so Claude and Codex never split merely because one
+    /// provider has not yet emitted a usage record. A live session's context is
+    /// read from its transcript just now, so it wins over the stored snapshot
+    /// (which only Codex records at all).
     private var projectEntries: [TokenMeter.ProjectActivity] {
         var entries = TokenMeter.shared.projectActivities()
-        let live = sessions.sessions.map { (AIActivityProject.display($0.projectName), $0.source.displayName) }
-            + tasks.tasks.map { ($0.folder.lastPathComponent, $0.engine.displayName) }
-        for (project, provider) in live {
-            if let index = entries.firstIndex(where: { $0.project == project }) {
+        let live: [(project: String, provider: String, used: Int?, window: Int?)] =
+            sessions.sessions.map { (AIActivityProject.display($0.projectName), $0.source.displayName,
+                                     $0.contextUsed, $0.contextWindow) }
+            + tasks.tasks.map { ($0.folder.lastPathComponent, $0.engine.displayName, nil, nil) }
+        for session in live {
+            if let index = entries.firstIndex(where: { $0.project == session.project }) {
                 let current = entries[index]
-                let providers = Array(Set(current.providers + [provider])).sorted()
+                let providers = Array(Set(current.providers + [session.provider])).sorted()
                 entries[index] = .init(id: current.id, project: current.project, providers: providers,
                                        sessionCount: current.sessionCount + 1,
-                                       contextUsed: current.contextUsed, contextWindow: current.contextWindow)
+                                       contextUsed: session.used ?? current.contextUsed,
+                                       contextWindow: session.used != nil ? session.window : current.contextWindow)
             } else {
-                entries.append(.init(id: project, project: project, providers: [provider], sessionCount: 1,
-                                     contextUsed: nil, contextWindow: nil))
+                entries.append(.init(id: session.project, project: session.project, providers: [session.provider],
+                                     sessionCount: 1, contextUsed: session.used, contextWindow: session.window))
             }
         }
         return entries.sorted { $0.project.localizedCaseInsensitiveCompare($1.project) == .orderedAscending }
@@ -66,7 +75,12 @@ struct AIActivityMonitorView: View {
                 LazyVStack(spacing: 5) {
                 ForEach(entries) { entry in
                     HStack(spacing: 4) {
-                    Button { withAnimation(.easeOut(duration: 0.18)) { selectedID = entry.id } } label: {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            selectedID = entry.id
+                            pickedProvider = nil
+                        }
+                    } label: {
                         HStack(spacing: 7) {
                             Image(systemName: "folder.fill").font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(entry.id == selected?.id ? Tokens.accent : Tokens.text3).frame(width: 15)
@@ -114,7 +128,7 @@ struct AIActivityMonitorView: View {
     }
 
     @ViewBuilder
-    private func projectDetail(entry: TokenMeter.ProjectActivity?) -> some View {
+    private func projectDetail(entry: TokenMeter.ProjectActivity?, provider: String) -> some View {
         card(title: "Usage") {
             // Bounded to the same body height as the list beside it. Both cards
             // are equalised by the layout, so leaving this one to grow would set
@@ -123,7 +137,7 @@ struct AIActivityMonitorView: View {
             // keeps the tab the same compact size as Utilities.
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 7) {
-                    detailContent(entry: entry)
+                    detailContent(entry: entry, selectedProvider: provider)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -133,11 +147,11 @@ struct AIActivityMonitorView: View {
     }
 
     @ViewBuilder
-    private func detailContent(entry: TokenMeter.ProjectActivity?) -> some View {
+    private func detailContent(entry: TokenMeter.ProjectActivity?, selectedProvider: String) -> some View {
         Group {
             if let entry {
                 Text(entry.project).font(.sf(12, weight: .semibold)).foregroundStyle(Tokens.text1).lineLimit(1)
-                providerCarousel
+                providerCarousel(selectedProvider)
                 statRow("Sessions", entry.sessionCount.formatted())
                 if entry.providers.map(Self.usageProvider).contains(selectedProvider), let used = entry.contextUsed {
                     let window = max(used, entry.contextWindow ?? used)
@@ -150,18 +164,18 @@ struct AIActivityMonitorView: View {
                 let week = TokenMeter.shared.usage(provider: selectedProvider, window: .week, project: entry.project)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("\(selectedProvider) usage").font(.sf(10.5, weight: .semibold)).foregroundStyle(Tokens.text2)
-                    usageRow(title: "5-hour window", reading: fiveHour)
-                    usageRow(title: "This week", reading: week)
+                    usageRow(title: "Last 5 hours", reading: fiveHour)
+                    usageRow(title: "Last 7 days", reading: week)
                 }
             }
         }
     }
 
-    private var providerCarousel: some View {
+    private func providerCarousel(_ selectedProvider: String) -> some View {
         HStack(spacing: 5) {
             ForEach(Self.providerPages, id: \.self) { provider in
                 Button {
-                    withAnimation(.easeOut(duration: 0.18)) { selectedProvider = provider }
+                    withAnimation(.easeOut(duration: 0.18)) { pickedProvider = provider }
                 } label: {
                     Text(provider)
                         .font(.sf(9.5, weight: .semibold))
@@ -187,15 +201,11 @@ struct AIActivityMonitorView: View {
                     .font(.sf(9.5, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Tokens.text1)
             }
-            HStack(spacing: 6) {
-                Text("In \(reading.input.formatted()) · Out \(reading.output.formatted())")
-                    .font(.sf(8.5, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Tokens.text4)
-                Spacer(minLength: 4)
-                Text("Resets \(resetLabel(reading.endsAt))")
-                    .font(.sf(8.5, weight: .medium))
-                    .foregroundStyle(Tokens.text4)
-            }
+            // Input includes cache reads and writes — on a long agent session
+            // they are most of it, and they are what the provider reported.
+            Text("In \(reading.input.formatted()) (incl. cache) · Out \(reading.output.formatted())")
+                .font(.sf(8.5, weight: .medium).monospacedDigit())
+                .foregroundStyle(Tokens.text4)
         }
     }
 
@@ -232,12 +242,11 @@ struct AIActivityMonitorView: View {
         }
     }
 
-    private func resetLabel(_ end: Date, now: Date = .now) -> String {
-        let seconds = max(0, end.timeIntervalSince(now))
-        let hours = Int(seconds) / 3_600
-        let minutes = (Int(seconds) % 3_600) / 60
-        if hours > 0 { return "in \(hours)h \(minutes)m" }
-        return "in \(max(1, minutes))m"
+    /// The page a project opens on: its own provider when it has exactly the
+    /// pages' spelling of one, else the first it has.
+    private static func defaultProvider(for entry: TokenMeter.ProjectActivity) -> String? {
+        let own = entry.providers.map(usageProvider)
+        return providerPages.first { own.contains($0) }
     }
 
     private static func usageProvider(for name: String) -> String {

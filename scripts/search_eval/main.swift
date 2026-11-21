@@ -20,7 +20,7 @@
 // Keys are never passed in or printed: the harness reads the running app's own
 // settings (`com.notchflow.app` defaults) at runtime, exactly as the app does.
 //
-// `OrbState` is stubbed below rather than dragging in Components.swift (2k lines
+// `OrbState` is stubbed below rather than dragging in Components/ (2k lines
 // of SwiftUI for a four-case tag the harness only forwards to the UI).
 
 import Foundation

@@ -8,6 +8,6 @@ set -euo pipefail
 rg -F 'return NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)' \
   NotchFlow/Sources/AppDelegate.swift >/dev/null
 rg -F 'clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))' \
-  NotchFlow/Sources/InlineSettingsView.swift >/dev/null
+  NotchFlow/Sources/Settings >/dev/null
 rg -F 'clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))' \
-  NotchFlow/Sources/InlineSettingsView.swift >/dev/null
+  NotchFlow/Sources/Settings >/dev/null

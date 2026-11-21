@@ -44,6 +44,7 @@ struct ContentView: View {
                     Task {
                         let items = await ShelfDropService.items(from: providers)
                         Task { @MainActor in
+                            capabilities.endIncomingFileDrag()
                             model.openPanel(on: metrics.displayID)
                             var shelfItems: [NotchShelfItem] = []
                             for item in items {
@@ -1633,6 +1634,17 @@ struct NotchIsland: View {
         // hosted here, above the body but inside the island's own clip, so the
         // backdrop blur stops at the glass edge like every other overlay.
         .imageLightboxHost(topInset: metrics.restHeight)
+        // While a file is being dragged in: one big target in the body, so the
+        // file is let go of there rather than carried up to the notch, where
+        // holding it on the screen's top edge opens Mission Control. Purely a
+        // signpost — the island's own `onDrop` takes the file wherever it lands.
+        .overlay(alignment: .top) {
+            if capabilities.incomingFileDrag, isOpen {
+                IncomingFileDropTarget(topInset: metrics.restHeight)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
         .clipShape(NotchShape(bottomRadius: bottomRadius))
         // The "slab of glass" look (per the reference): the dark body holds and
         // stays readable, the top reads near-solid and the lower body eases more
@@ -2052,6 +2064,34 @@ private extension View {
 }
 
 /// Bridges global key events (Esc) into SwiftUI without stealing focus.
+/// The drop signpost shown over the open island during a file drag.
+private struct IncomingFileDropTarget: View {
+    let topInset: CGFloat
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.78)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.55), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                .padding(.horizontal, 12)
+                .padding(.top, topInset + 8)
+                .padding(.bottom, 12)
+            VStack(spacing: 6) {
+                Image(systemName: "tray.and.arrow.down")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(Tokens.text1)
+                Text("Drop here to add to File tray")
+                    .font(.sf(13, weight: .semibold))
+                    .foregroundStyle(Tokens.text1)
+                Text("Holding a file on the top edge opens Mission Control")
+                    .font(.sf(10.5, weight: .medium))
+                    .foregroundStyle(Tokens.text3)
+            }
+            .padding(.top, topInset)
+        }
+    }
+}
+
 struct KeyEventCatcher: NSViewRepresentable {
     var handler: (NSEvent) -> Bool
 

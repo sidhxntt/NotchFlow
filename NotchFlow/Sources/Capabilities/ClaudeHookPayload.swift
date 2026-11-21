@@ -18,7 +18,18 @@ import Foundation
 ///   "tool_input": { "command": "echo hi", "description": "Echo" },
 ///   "tool_use_id": "toolu_01…" }
 /// ```
+/// Which hook asked. `PreToolUse` fires for every matched tool call of a
+/// NotchFlow-launched run (the app-owned `--settings` file). `PermissionRequest`
+/// fires only when Claude Code is about to show its own permission dialog — in
+/// any session, including one started in Terminal — and covers every tool,
+/// MCP tools included. The two take different answers (`ClaudeHookResponse`).
+public enum ClaudeHookEvent: String, Sendable {
+    case preToolUse = "PreToolUse"
+    case permissionRequest = "PermissionRequest"
+}
+
 public struct ClaudeHookRequest: Equatable, Sendable {
+    public let event: ClaudeHookEvent
     /// The per-session queue key — Claude's `session_id`, the analog of a Codex
     /// `threadId`.
     public let sessionID: String
@@ -41,11 +52,13 @@ public struct ClaudeHookRequest: Equatable, Sendable {
     /// `tool_input.query` — WebSearch.
     public let query: String?
 
-    public init(sessionID: String, toolUseID: String, toolName: String,
+    public init(event: ClaudeHookEvent = .preToolUse,
+                sessionID: String, toolUseID: String, toolName: String,
                 transcriptPath: String? = nil,
                 cwd: String? = nil, command: String? = nil,
                 commandDescription: String? = nil, filePath: String? = nil,
                 url: String? = nil, query: String? = nil) {
+        self.event = event
         self.sessionID = sessionID
         self.toolUseID = toolUseID
         self.toolName = toolName
@@ -69,21 +82,39 @@ public struct ClaudeHookRequest: Equatable, Sendable {
     }
 
     public static func decode(_ object: [String: Any]) -> ClaudeHookRequest? {
+        // Only PreToolUse and PermissionRequest ask a question. Any other event
+        // reaching the socket is a misconfiguration, and answering it with a
+        // permission decision would be nonsense. No event name is the original
+        // app-owned PreToolUse hook.
+        let event: ClaudeHookEvent
+        if let name = nonEmpty(object["hook_event_name"]) {
+            guard let known = ClaudeHookEvent(rawValue: name) else { return nil }
+            event = known
+        } else {
+            event = .preToolUse
+        }
         guard let sessionID = nonEmpty(object["session_id"])
                 ?? nonEmpty(object["sessionId"])
                 ?? nonEmpty(object["thread_id"])
                 ?? nonEmpty(object["threadId"]),
-              let toolUseID = nonEmpty(object["tool_use_id"])
-                ?? nonEmpty(object["toolUseId"]),
               let toolName = nonEmpty(object["tool_name"])
         else { return nil }
-        // Only PreToolUse asks a question. Any other event reaching the socket is
-        // a misconfiguration, and answering it with a permission decision would
-        // be nonsense.
-        if let event = nonEmpty(object["hook_event_name"]), event != "PreToolUse" { return nil }
+        // A PreToolUse decision is routed back on the tool call's id, so one
+        // without it cannot be answered. A PermissionRequest is answered on its
+        // own connection and does not always carry the id: give it a unique one
+        // so the queue (which dedupes on id) keeps every prompt.
+        let toolUseID: String
+        if let id = nonEmpty(object["tool_use_id"]) ?? nonEmpty(object["toolUseId"]) {
+            toolUseID = id
+        } else if event == .permissionRequest {
+            toolUseID = "permission-\(UUID().uuidString)"
+        } else {
+            return nil
+        }
 
         let input = object["tool_input"] as? [String: Any] ?? [:]
         return ClaudeHookRequest(
+            event: event,
             sessionID: sessionID,
             toolUseID: toolUseID,
             toolName: toolName,
@@ -133,6 +164,15 @@ public struct ClaudeHookRequest: Equatable, Sendable {
         }
         if let url, !url.isEmpty { return "Fetch \(url)" }
         if let query, !query.isEmpty { return "Search \(query)" }
+        // MCP tools arrive as `mcp__<server>__<tool>`; say which server is
+        // asking and for what, e.g. "computer-use: left click".
+        if toolName.hasPrefix("mcp__") {
+            let parts = toolName.dropFirst(5).components(separatedBy: "__")
+            if parts.count >= 2, !parts[0].isEmpty {
+                let tool = parts.dropFirst().joined(separator: "__").replacingOccurrences(of: "_", with: " ")
+                return "\(parts[0]): \(tool)"
+            }
+        }
         return "Run \(toolName)"
     }
 
@@ -201,5 +241,24 @@ public enum ClaudeHookResponse {
         line(decision, reason: decision == .allow
              ? "Approved by the user in NotchFlow."
              : "Denied by the user in NotchFlow.")
+    }
+
+    /// The answer in the shape the asking hook expects. `PermissionRequest`
+    /// answers the dialog Claude Code was about to show:
+    /// `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}`
+    /// — a deny carries a message the model sees.
+    public static func line(for decision: ClaudeHookDecision, event: ClaudeHookEvent) -> String {
+        guard event == .permissionRequest else { return line(for: decision) }
+        var verdict: [String: Any] = ["behavior": decision.rawValue]
+        if decision == .deny { verdict["message"] = "Denied by the user in NotchFlow." }
+        let payload: [String: Any] = [
+            "hookSpecificOutput": [
+                "hookEventName": "PermissionRequest",
+                "decision": verdict
+            ]
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return "" }
+        return json
     }
 }

@@ -46,7 +46,10 @@ final class CodexTerminalHookBridge: ObservableObject {
 
     private static var currentClaudeHookScriptPath: String? {
         AppSupportPaths.appDirectory?
-            .appendingPathComponent("ClaudeHook/claude-hook.py").path
+            // The script `ClaudeHookBridge` actually writes. This used to name
+            // `claude-hook.py`, a file nothing generates any more — so "Repair"
+            // would have pointed a stale entry at a script that does not exist.
+            .appendingPathComponent("ClaudeHook/notchflow-approval-hook.py").path
     }
 
     private static var globalHookConfigurationURLs: [URL] {

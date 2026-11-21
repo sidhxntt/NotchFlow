@@ -9,6 +9,6 @@ set -euo pipefail
 # The two display cards must still map to distinct panel sets and rebuild live.
 rg -F 'case .all:     return NSScreen.screens' NotchFlow/Sources/AppDelegate.swift >/dev/null
 rg -F 'case .builtIn: return preferredScreen().map { [$0] } ?? []' NotchFlow/Sources/AppDelegate.swift >/dev/null
-rg -F 'DisplayPlacement.current = newValue' NotchFlow/Sources/InlineSettingsView.swift >/dev/null
+rg -F 'DisplayPlacement.current = newValue' NotchFlow/Sources/Settings >/dev/null
 rg -F 'NotificationCenter.default.post(name: .displayPlacementChanged' \
-  NotchFlow/Sources/InlineSettingsView.swift >/dev/null
+  NotchFlow/Sources/Settings >/dev/null

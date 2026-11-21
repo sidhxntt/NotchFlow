@@ -64,6 +64,8 @@ final class ClaudeHookBridge: ObservableObject {
     private var queue = AgentApprovalQueue()
     /// The open hook connection waiting on each approval's decision.
     private var connections: [String: HookConnection] = [:]
+    /// Which hook asked for each pending approval — the answer's shape differs.
+    private var events: [String: ClaudeHookEvent] = [:]
     private var listenFD: Int32 = -1
     private var listenerThread: Thread?
 
@@ -131,6 +133,7 @@ final class ClaudeHookBridge: ObservableObject {
                                                     withIntermediateDirectories: true)
             try Self.writeScript(to: scriptURL, socketPath: socketURL.path)
             try Self.writeSettings(to: settingsURL, scriptPath: scriptURL.path)
+            Self.ensureGlobalPermissionHook(scriptPath: scriptURL.path)
             listenFD = try Self.bindListener(at: socketURL.path)
         } catch {
             lastError = error.localizedDescription
@@ -172,6 +175,7 @@ final class ClaudeHookBridge: ObservableObject {
         if let socketURL = Self.socketURL { unlink(socketURL.path) }
         connections.values.forEach { $0.close() }
         connections.removeAll()
+        events.removeAll()
         queue = AgentApprovalQueue()
         publishQueue()
         listenerThread = nil
@@ -193,6 +197,7 @@ final class ClaudeHookBridge: ObservableObject {
     /// Answer the head of one session's queue. Resolving here advances only that
     /// session; every other Claude session's queue is untouched.
     func decide(_ decision: Decision, for approval: AgentApproval) {
+        let event = events.removeValue(forKey: approval.id) ?? .preToolUse
         guard let connection = connections.removeValue(forKey: approval.id) else {
             // No live hook to answer (it timed out and failed open, or the run
             // was killed). Drop the card rather than leave a button that lies.
@@ -200,7 +205,7 @@ final class ClaudeHookBridge: ObservableObject {
             publishQueue()
             return
         }
-        let line = ClaudeHookResponse.line(for: decision == .approve ? .allow : .deny)
+        let line = ClaudeHookResponse.line(for: decision == .approve ? .allow : .deny, event: event)
         if !connection.send(line: line) {
             lastError = "Could not send the Claude decision"
         }
@@ -250,7 +255,10 @@ final class ClaudeHookBridge: ObservableObject {
         // `Read` reaching outside the project (a pasted image lands in a temp
         // directory, never the project) is worth a card; answer everything
         // else immediately, same as if the hook were not watching `Read` at all.
-        if request.toolName == "Read", Self.isWithinWorkingDirectory(request) {
+        // PreToolUse only: a PermissionRequest is Claude Code itself asking the
+        // user, so it is never answered on their behalf.
+        if request.event == .preToolUse,
+           request.toolName == "Read", Self.isWithinWorkingDirectory(request) {
             _ = connection.send(line: ClaudeHookResponse.line(for: .allow))
             return
         }
@@ -263,6 +271,7 @@ final class ClaudeHookBridge: ObservableObject {
         let approval = request.approval(idOverride: id)
         identity.approvalID = id
         connections[id] = connection
+        events[id] = request.event
         queue.enqueue(approval)
         AgentSessionActivityStore.shared.recordApproval(approval)
         publishQueue()
@@ -283,6 +292,7 @@ final class ClaudeHookBridge: ObservableObject {
               connections.removeValue(forKey: id) != nil else {
             return   // already decided — the normal path
         }
+        events.removeValue(forKey: id)
         queue.resolve(id: id)
         AgentSessionActivityStore.shared.record(marker: .transportEnded(for: approval))
         publishQueue()
@@ -429,6 +439,84 @@ final class ClaudeHookBridge: ObservableObject {
             withJSONObject: settings,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         try data.write(to: url, options: .atomic)
+    }
+
+    /// Routes permission prompts from **every** Claude Code session — including
+    /// one started by hand in Terminal — to the notch.
+    ///
+    /// The app-owned `--settings` file only reaches runs NotchFlow launches, and
+    /// its `PreToolUse` gate covers a fixed tool list; anything else (an MCP
+    /// tool asking to drive the computer, a session started in a terminal)
+    /// still prompted in the terminal. Claude Code's `PermissionRequest` hook
+    /// fires exactly when it is about to show its own dialog, for any tool, so
+    /// one entry in the user's `~/.claude/settings.json` covers all of it —
+    /// the same wiring `CodexTerminalHookBridge` keeps in `~/.codex/hooks.json`.
+    ///
+    /// Additive and careful with a file the user owns:
+    ///  - every other key, event and hook is kept as it is;
+    ///  - nothing is written when the entry is already there, when Claude Code
+    ///    is not installed (`~/.claude` absent), or when the existing file does
+    ///    not parse — a settings file we cannot read is never replaced;
+    ///  - the first modification keeps a copy beside it
+    ///    (`settings.notchflow-backup.json`);
+    ///  - an older NotchFlow `PermissionRequest` entry (a moved script path) is
+    ///    replaced rather than left to fail.
+    /// Fail-open still holds: with NotchFlow quit or Agentic mode off, the
+    /// socket is gone, the script prints nothing, and Claude shows its own prompt.
+    private static func ensureGlobalPermissionHook(scriptPath: String) {
+        let fileManager = FileManager.default
+        let claudeDirectory = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: claudeDirectory.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return }
+        // Follow a dotfiles symlink so the atomic write replaces the real file.
+        let url = claudeDirectory.appendingPathComponent("settings.json").resolvingSymlinksInPath()
+
+        var configuration: [String: Any] = [:]
+        var original: Data?
+        if fileManager.fileExists(atPath: url.path) {
+            guard let data = try? Data(contentsOf: url),
+                  let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return }
+            configuration = parsed
+            original = data
+        }
+
+        let command = "/usr/bin/python3 \(shellSingleQuoted(scriptPath)) permission"
+        var hooks = configuration["hooks"] as? [String: Any] ?? [:]
+        var groups = hooks["PermissionRequest"] as? [Any] ?? []
+        func commands(_ group: Any) -> [String] {
+            ((group as? [String: Any])?["hooks"] as? [Any] ?? [])
+                .compactMap { ($0 as? [String: Any])?["command"] as? String }
+        }
+        if groups.contains(where: { commands($0).contains(command) }) { return }
+        // Our own entry from a previous script location — superseded, not kept.
+        groups.removeAll { group in
+            commands(group).contains { $0.contains("NotchFlow/ClaudeHook/") && $0.hasSuffix(" permission") }
+        }
+        groups.append([
+            "matcher": "*",
+            "hooks": [[
+                "type": "command",
+                "command": command,
+                "timeout": Int(decisionTimeout) + 10
+            ]]
+        ])
+        hooks["PermissionRequest"] = groups
+        configuration["hooks"] = hooks
+
+        guard JSONSerialization.isValidJSONObject(configuration),
+              let data = try? JSONSerialization.data(
+                withJSONObject: configuration,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        else { return }
+        if let original {
+            let backup = url.deletingLastPathComponent().appendingPathComponent("settings.notchflow-backup.json")
+            if !fileManager.fileExists(atPath: backup.path) {
+                try? original.write(to: backup, options: .atomic)
+            }
+        }
+        try? data.write(to: url, options: .atomic)
     }
 
     /// A Python string literal. JSON string syntax is a subset of Python's, so
