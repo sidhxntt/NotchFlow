@@ -1,5 +1,8 @@
 # Features
 
+For the source-level implementation, authority boundaries, and verification for
+every feature group, see the [Engineering implementation guide](implementation-guide.md).
+
 ## Smart capture and assistant
 
 - Automatic intent suggestions for Ask, Note, Reminder, and Agent tasks
