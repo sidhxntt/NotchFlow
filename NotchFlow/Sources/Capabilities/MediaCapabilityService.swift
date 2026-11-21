@@ -207,6 +207,13 @@ public struct MediaRemotePayload: Codable, Sendable {
     public let bundleIdentifier: String?
     public let parentApplicationBundleIdentifier: String?
     public let playing: Bool?
+    /// From the now-playing info itself. Kept as a second opinion on `playing`:
+    /// that flag is a separate "is the now-playing *app* playing" query, which
+    /// can report false while a video plays in a helper process.
+    public let playbackRate: Double?
+
+    /// Playing by either measure.
+    var isPlaying: Bool { playing == true || (playbackRate ?? 0) > 0 }
 
     public func mediaState(previous: MediaState) -> MediaState {
         guard let title, !title.isEmpty else { return .inactive }
@@ -215,14 +222,14 @@ public struct MediaRemotePayload: Codable, Sendable {
             title: title,
             artist: artist ?? "",
             album: album ?? "",
-            isPlaying: playing ?? false,
+            isPlaying: isPlaying,
             position: (elapsedTimeNow ?? elapsedTime
                        ?? elapsedTimeNowMicros.map { $0 / 1_000_000 }
                        ?? elapsedTimeMicros.map { $0 / 1_000_000 } ?? 0),
             duration: duration ?? durationMicros.map { $0 / 1_000_000 } ?? 0,
             volume: previous.volume,
             artworkData: artworkData.flatMap { Data(base64Encoded: $0) },
-            lastAudibleAt: playing == true ? .now : previous.lastAudibleAt,
+            lastAudibleAt: isPlaying ? .now : previous.lastAudibleAt,
             originatingApplicationBundleIdentifier: originatingBundleIdentifier
         )
     }
@@ -271,6 +278,7 @@ public final class MediaRemoteAdapterController: MediaControlling, MediaArtworkP
     /// False only while tearing down, so a helper exit can be told apart from a
     /// deliberate stop.
     private var wantsStreaming = true
+    private var terminationObserver: NSObjectProtocol?
 
     public init() {
         scriptURL = Bundle.main.url(forResource: "mediaremote-adapter", withExtension: "pl")
@@ -282,6 +290,17 @@ public final class MediaRemoteAdapterController: MediaControlling, MediaArtworkP
         // with.
         seedArtworkFromDisk()
         if scriptURL != nil, frameworkURL != nil { beginStreaming() }
+        // `deinit` never runs at quit — the controller lives as long as the
+        // app — so without this every quit left the helper running, reparented
+        // to launchd, and each relaunch added another.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.wantsStreaming = false
+                self?.process?.terminate()
+            }
+        }
     }
 
     deinit {
@@ -373,11 +392,16 @@ public final class MediaRemoteAdapterController: MediaControlling, MediaArtworkP
             // The adapter emits an empty payload when every now-playing session
             // has stopped. It is a state transition, not malformed data: keeping
             // the last populated card here made finished playback look eternal.
-            guard payloadState.hasTrack,
-                  let bundleIdentifier = payload.originatingBundleIdentifier else {
+            // A track is all it takes. The bundle id is NOT required: video
+            // players (the TV app among them) can publish from a helper process
+            // the adapter cannot name, and requiring one dropped those sessions
+            // entirely — the notch never showed media for them. The id is only
+            // needed to hand Music and Spotify to their own controllers below.
+            guard payloadState.hasTrack else {
                 state = .inactive
                 continue
             }
+            let bundleIdentifier = payload.originatingBundleIdentifier
             if let artwork = payloadState.artworkData, payloadState.hasTrack {
                 let source = payload.artworkSource
                 let known = artworkCache.artwork(for: source)

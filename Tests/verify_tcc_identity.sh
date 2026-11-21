@@ -5,4 +5,4 @@ set -euo pipefail
 # the app as a new TCC client and asks for Accessibility, Reminders, and
 # Notifications again even when the user already approved NotchFlow.
 ./scripts/build_and_run.sh --verify-tcc-identity
-codesign --verify --deep --strict build/Build/Products/Debug/NotchFlow.app
+codesign --verify --deep --strict build.noindex/Build/Products/Debug/NotchFlow.app

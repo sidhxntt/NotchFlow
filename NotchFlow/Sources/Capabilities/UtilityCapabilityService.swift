@@ -24,8 +24,20 @@ final class UtilityCapabilityService: ObservableObject {
     private static let weatherCacheKey = "notchflow.weather.snapshot.v1"
     private var weatherFetchInFlight = false
     private var authorizationWatch: AnyCancellable?
+    /// Calendar refresh triggers. The list used to be read once at launch, so a
+    /// notch left running over a weekend still showed Friday's events on Sunday.
+    private var calendarObservers: [NSObjectProtocol] = []
+    /// The write-only → full upgrade is asked once per launch. Asking can itself
+    /// post `EKEventStoreChanged`, which refreshes — and would ask again.
+    private var didRequestFullCalendarAccess = false
 
     init() {
+        let center = NotificationCenter.default
+        for name in [Notification.Name.EKEventStoreChanged, .NSCalendarDayChanged] {
+            calendarObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in await self?.refreshCalendar() }
+            })
+        }
         // The Location prompt is answered asynchronously, and by then the pane's
         // `.task` has long since finished. Without this the weather would only
         // appear the NEXT time you opened Utilities, which reads as the grant not
@@ -41,12 +53,27 @@ final class UtilityCapabilityService: ObservableObject {
     func refreshCalendar() async {
         let status = EKEventStore.authorizationStatus(for: .event)
         switch status {
-        case .fullAccess, .writeOnly:
+        case .fullAccess:
             calendarPermission = .authorized
-            let start = Date()
+            let now = Date()
+            // From the start of today, so a meeting already in progress is still
+            // listed; anything that has already ended is dropped below.
+            let start = Calendar.current.startOfDay(for: now)
             let end = Calendar.current.date(byAdding: .day, value: 7, to: start)!
             upcomingEvents = eventStore.events(matching: eventStore.predicateForEvents(withStart: start, end: end, calendars: nil))
+                .filter { $0.endDate > now }
                 .sorted { $0.startDate < $1.startDate }
+        case .writeOnly:
+            // Write-only access can add events but cannot read them: EventKit
+            // hands back redacted placeholders with no title, which is what drew
+            // a card of bare "3:00 PM" rows. Ask once to upgrade; until then the
+            // card says access is missing instead of showing ghosts.
+            upcomingEvents = []
+            guard !didRequestFullCalendarAccess else { calendarPermission = .denied; return }
+            didRequestFullCalendarAccess = true
+            let granted = (try? await eventStore.requestFullAccessToEvents()) ?? false
+            calendarPermission = granted ? .authorized : .denied
+            if granted { await refreshCalendar() }
         case .notDetermined:
             let granted = (try? await eventStore.requestFullAccessToEvents()) ?? false
             calendarPermission = granted ? .authorized : .denied

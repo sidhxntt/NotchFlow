@@ -8,7 +8,10 @@ struct NotchShelfView: View {
     @ObservedObject private var conversions = FileConversionService.shared
     @State private var isDropTargeted = false
     @State private var selectedItemIDs = Set<UUID>()
-    @State private var selectionAnchorID: UUID?
+    /// Where a ⇧-click range starts: the row most recently toggled on.
+    @State private var selectionAnchor: UUID?
+    /// The row the keyboard is on: the moving end of a ⇧-arrow range.
+    @State private var selectionCursor: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -23,11 +26,17 @@ struct NotchShelfView: View {
                         .font(.sf(11, weight: .regular)).foregroundStyle(Tokens.text3)
                 } else {
                     if capabilities.shelfItems.count > NotchUtilitiesLayout.maximumVisibleRows {
-                        ScrollView {
-                            shelfRows
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                shelfRows
+                            }
+                            .frame(height: 122)
+                            .scrollIndicators(.hidden)
+                            // Keep the keyboard's row on screen as arrows walk it.
+                            .onChange(of: selectionCursor) { _, cursor in
+                                if let cursor { proxy.scrollTo(cursor) }
+                            }
                         }
-                        .frame(height: 122)
-                        .scrollIndicators(.hidden)
                     } else {
                         shelfRows
                     }
@@ -35,6 +44,10 @@ struct NotchShelfView: View {
                 }
             }
         .padding(10)
+        // Arrow keys walk the tray once a row is selected; ⇧ extends the range
+        // and ⌘A takes every row. With nothing selected the keys fall through
+        // to the prompt as before.
+        .background(KeyEventCatcher { event in handleKey(event) })
         // Width as well as height: without `maxWidth`, the background hugged this
         // card's content instead of filling its column, so the File tray drew
         // narrower than the Calendar beside it and the gap between them stopped
@@ -79,24 +92,14 @@ struct NotchShelfView: View {
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .background(selectedItemIDs.contains(item.id) ? Color.white.opacity(0.10) : .clear,
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                // One AppKit layer for both gestures. SwiftUI's `onDrag` can
+                // hand over a single item only, so a multi-selection could never
+                // leave the tray together; and the click needs its modifier keys
+                // to tell a ⇧-range from a toggle.
                 .overlay {
-                    ShelfTrayRowInteractionBridge(
-                        isSelected: selectedItemIDs.contains(item.id),
-                        prepareDragPayloads: { isShiftPressed, wasSelected in
-                            dragPayloadsForMouseDown(
-                                on: item.id,
-                                isShiftPressed: isShiftPressed,
-                                wasSelected: wasSelected
-                            )
-                        },
-                        completeClick: { isShiftPressed, wasSelected in
-                            completeClick(
-                                on: item.id,
-                                isShiftPressed: isShiftPressed,
-                                wasSelected: wasSelected
-                            )
-                        }
-                    )
+                    ShelfRowInteraction(
+                        onClick: { modifiers in click(item.id, modifiers: modifiers) },
+                        dragPayloads: { dragPayloads(startingAt: item) })
                 }
             }
         }
@@ -105,8 +108,14 @@ struct NotchShelfView: View {
     @ViewBuilder private var shelfActions: some View {
         if !selectedItems.isEmpty {
             let urls = selectedItems.compactMap(\.url)
-            if selectedItems.count == 1, let item = selectedItems.first, let url = item.url {
-                conversionMenu(for: item, url: url)
+            // One menu for any selection of same-type files: the action runs on
+            // every one of them. A mixed selection has no action in common, so
+            // it gets the dimmed wand rather than a menu that would half-apply.
+            if let batch = ShelfTraySelection.sameTypeFiles(selectedItems) {
+                conversionMenu(for: batch)
+            } else if selectedItems.contains(where: { $0.url?.isFileURL == true }) {
+                ShelfActionButton(symbol: "wand.and.rays", label: "Select files of one type to convert") {}
+                    .disabled(true).opacity(0.35)
             }
             if !urls.isEmpty {
                 ShelfActionButton(symbol: "eye", label: "Quick Look") {
@@ -122,8 +131,7 @@ struct NotchShelfView: View {
                 }
             }
             ShelfActionButton(symbol: "xmark", label: "Remove", isDestructive: true) {
-                selectedItemIDs.forEach { capabilities.removeShelfItem(id: $0) }
-                selectedItemIDs.removeAll()
+                removeSelection()
             }
         } else {
             ShelfActionButton(symbol: "wand.and.rays", label: "Convert or process") {}
@@ -141,41 +149,76 @@ struct NotchShelfView: View {
         ShelfTraySelection.items(in: capabilities.shelfItems, selectedIDs: selectedItemIDs)
     }
 
-    private func dragPayloadsForMouseDown(
-        on id: UUID,
-        isShiftPressed: Bool,
-        wasSelected: Bool
-    ) -> [any NSPasteboardWriting] {
-        if isShiftPressed || !wasSelected {
-            updateSelection(on: id, isShiftPressed: isShiftPressed)
-        }
-        return dragPayloads(for: selectedItems)
+    private func click(_ id: UUID, modifiers: NSEvent.ModifierFlags) {
+        let next = ShelfTraySelection.selection(afterClicking: id,
+                                                extendingRange: modifiers.contains(.shift),
+                                                in: capabilities.shelfItems,
+                                                current: selectedItemIDs,
+                                                anchor: selectionAnchor)
+        selectedItemIDs = next.selection
+        selectionAnchor = next.anchor
+        selectionCursor = next.selection.contains(id) ? id : next.anchor
     }
 
-    private func completeClick(on id: UUID, isShiftPressed: Bool, wasSelected: Bool) {
-        guard !isShiftPressed, wasSelected else { return }
-        selectedItemIDs.remove(id)
-        if selectionAnchorID == id {
-            selectionAnchorID = selectedItems.last?.id
-        }
+    /// Takes the selected rows out of the tray. The files themselves stay
+    /// where they are on disk.
+    private func removeSelection() {
+        selectedItemIDs.forEach { capabilities.removeShelfItem(id: $0) }
+        selectedItemIDs.removeAll()
+        selectionAnchor = nil
+        selectionCursor = nil
     }
 
-    private func updateSelection(on id: UUID, isShiftPressed: Bool) {
-        selectedItemIDs = ShelfTraySelection.selectedIDsAfterClick(
-            in: capabilities.shelfItems,
-            selectedIDs: selectedItemIDs,
-            anchorID: selectionAnchorID,
-            clickedID: id,
-            isShiftPressed: isShiftPressed
-        )
-        selectionAnchorID = id
+    private func handleKey(_ event: NSEvent) -> Bool {
+        guard !selectedItemIDs.isEmpty else { return false }
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // While a text field holds the caret, Space, ⌘A and ⌘⌫ are editing
+        // keys and stay with it. Clicking a row clears the caret.
+        let editingText = event.window?.firstResponder is NSTextView
+        // keyCode 49 is Space: Quick Look, as in Finder.
+        if event.keyCode == 49, modifiers.isEmpty, !editingText {
+            let urls = selectedItems.compactMap(\.url)
+            guard !urls.isEmpty else { return false }
+            ShelfPreviewer.shared.toggle(urls)
+            return true
+        }
+        // keyCode 51 is ⌫: ⌘⌫ removes, as it moves to Trash in Finder.
+        if event.keyCode == 51, modifiers == .command, !editingText {
+            removeSelection()
+            return true
+        }
+        // keyCode 0 is A.
+        if event.keyCode == 0, modifiers == .command, !editingText {
+            selectedItemIDs = Set(capabilities.shelfItems.map(\.id))
+            return true
+        }
+        // keyCode 126 is ↑, 125 is ↓. Arrow keys carry .function and
+        // .numericPad, so test for ⇧ rather than comparing the whole set.
+        let step: Int
+        switch event.keyCode {
+        case 126: step = -1
+        case 125: step = 1
+        default: return false
+        }
+        guard modifiers.isDisjoint(with: [.command, .option, .control]),
+              let next = ShelfTraySelection.selection(afterMoving: step,
+                                                      extendingRange: modifiers.contains(.shift),
+                                                      in: capabilities.shelfItems,
+                                                      current: selectedItemIDs,
+                                                      anchor: selectionAnchor,
+                                                      cursor: selectionCursor) else { return false }
+        selectedItemIDs = next.selection
+        selectionAnchor = next.anchor
+        selectionCursor = next.cursor
+        return true
     }
 
-    private func dragPayloads(for items: [NotchShelfItem]) -> [any NSPasteboardWriting] {
-        items.map { item in
-            if let url = item.url { return url as NSURL }
-            return item.displayName as NSString
-        }
+    /// Dragging a selected row carries the whole selection, in tray order —
+    /// what Finder does. Dragging an unselected row carries just that row and
+    /// leaves the selection alone.
+    private func dragPayloads(startingAt item: NotchShelfItem) -> [ShelfDragPayload] {
+        let items = selectedItemIDs.contains(item.id) ? selectedItems : [item]
+        return items.compactMap(ShelfDragPayload.init)
     }
 
     @ViewBuilder private func shelfIcon(for item: NotchShelfItem) -> some View {
@@ -249,19 +292,25 @@ struct NotchShelfView: View {
     /// once `auto` has resolved — a row with nothing to offer, or an unresolved
     /// binary, gets no affordance at all rather than a dropdown that opens onto
     /// an apology.
-    @ViewBuilder private func conversionMenu(for item: NotchShelfItem, url: URL) -> some View {
-        if url.isFileURL, conversions.resolvedBinary != nil {
-            let actions = FileConversionCatalog.actions(for: url)
+    @ViewBuilder private func conversionMenu(for batch: [(item: NotchShelfItem, url: URL)]) -> some View {
+        if conversions.resolvedBinary != nil, let first = batch.first {
+            // Same extension throughout, so the first file's actions are every
+            // file's actions.
+            let actions = FileConversionCatalog.actions(for: first.url)
             if !actions.isEmpty {
                 ShelfConversionMenu(
                     actions: actions,
-                    isBusy: conversions.isRunning(key: item.id.uuidString)
+                    isBusy: batch.contains { conversions.isRunning(key: $0.item.id.uuidString) }
                 ) { action in
-                    conversions.run(action, on: url, key: item.id.uuidString) { outputs in
-                        // The results join the tray, so the next thing you do
-                        // with them (Quick Look, drag out, convert again) is one
-                        // click away. `addShelfItems` dedupes on path.
-                        capabilities.ingest(outputs.map { NotchShelfItem.file(url: $0) })
+                    // Each file is its own job under its own key, so every row
+                    // reports its own progress and outcome on its type line.
+                    for (item, url) in batch {
+                        conversions.run(action, on: url, key: item.id.uuidString) { outputs in
+                            // The results join the tray, so the next thing you do
+                            // with them (Quick Look, drag out, convert again) is one
+                            // click away. `addShelfItems` dedupes on path.
+                            capabilities.ingest(outputs.map { NotchShelfItem.file(url: $0) })
+                        }
                     }
                 }
             }
@@ -284,92 +333,6 @@ struct NotchShelfView: View {
             guard let url = item.url, url.isFileURL else { return false }
             return !FileConversionCatalog.actions(for: url).isEmpty
         }
-    }
-}
-
-/// SwiftUI's `onDrag` creates one item provider per source view, while Finder
-/// and other macOS destinations need a single `NSDraggingSession` to receive a
-/// group of files. This transparent bridge owns only that AppKit edge; SwiftUI
-/// remains the source of truth for which tray rows are selected.
-private struct ShelfTrayRowInteractionBridge: NSViewRepresentable {
-    let isSelected: Bool
-    let prepareDragPayloads: (_ isShiftPressed: Bool, _ wasSelected: Bool) -> [any NSPasteboardWriting]
-    let completeClick: (_ isShiftPressed: Bool, _ wasSelected: Bool) -> Void
-
-    func makeNSView(context: Context) -> ShelfTrayRowInteractionView {
-        ShelfTrayRowInteractionView(
-            isSelected: isSelected,
-            prepareDragPayloads: prepareDragPayloads,
-            completeClick: completeClick
-        )
-    }
-
-    func updateNSView(_ nsView: ShelfTrayRowInteractionView, context: Context) {
-        nsView.isSelected = isSelected
-        nsView.prepareDragPayloads = prepareDragPayloads
-        nsView.completeClick = completeClick
-    }
-}
-
-private final class ShelfTrayRowInteractionView: NSView, NSDraggingSource {
-    var isSelected: Bool
-    var prepareDragPayloads: (_ isShiftPressed: Bool, _ wasSelected: Bool) -> [any NSPasteboardWriting]
-    var completeClick: (_ isShiftPressed: Bool, _ wasSelected: Bool) -> Void
-    private var dragPayloads: [any NSPasteboardWriting] = []
-    private var dragStartEvent: NSEvent?
-    private var hasStartedDragging = false
-    private var wasSelectedAtMouseDown = false
-    private var wasShiftPressedAtMouseDown = false
-
-    init(
-        isSelected: Bool,
-        prepareDragPayloads: @escaping (_ isShiftPressed: Bool, _ wasSelected: Bool) -> [any NSPasteboardWriting],
-        completeClick: @escaping (_ isShiftPressed: Bool, _ wasSelected: Bool) -> Void
-    ) {
-        self.isSelected = isSelected
-        self.prepareDragPayloads = prepareDragPayloads
-        self.completeClick = completeClick
-        super.init(frame: .zero)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        wasSelectedAtMouseDown = isSelected
-        wasShiftPressedAtMouseDown = event.modifierFlags.contains(.shift)
-        dragPayloads = prepareDragPayloads(wasShiftPressedAtMouseDown, wasSelectedAtMouseDown)
-        dragStartEvent = event
-        hasStartedDragging = false
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        guard !hasStartedDragging else { return }
-        completeClick(wasShiftPressedAtMouseDown, wasSelectedAtMouseDown)
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard !hasStartedDragging, let dragStartEvent, !dragPayloads.isEmpty else { return }
-        hasStartedDragging = true
-
-        let image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Files")
-            ?? NSImage(size: NSSize(width: 32, height: 32))
-        let draggingItems = dragPayloads.enumerated().map { index, payload in
-            let item = NSDraggingItem(pasteboardWriter: payload)
-            let offset = CGFloat(index) * 4
-            item.setDraggingFrame(
-                NSRect(x: bounds.midX - 16 + offset, y: bounds.midY - 16 - offset, width: 32, height: 32),
-                contents: image
-            )
-            return item
-        }
-        beginDraggingSession(with: draggingItems, event: dragStartEvent, source: self)
-    }
-
-    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        .copy
     }
 }
 
@@ -519,6 +482,15 @@ private final class ShelfPreviewer: NSObject, QLPreviewPanelDataSource {
     static let shared = ShelfPreviewer()
     private var urls: [URL] = []
 
+    /// Space's Finder behaviour: open the preview, or close it if it's up.
+    func toggle(_ urls: [URL]) {
+        if QLPreviewPanel.sharedPreviewPanelExists(), let panel = QLPreviewPanel.shared(), panel.isVisible {
+            panel.orderOut(nil)
+        } else {
+            preview(urls)
+        }
+    }
+
     func preview(_ urls: [URL]) {
         self.urls = urls
         guard let panel = QLPreviewPanel.shared() else { return }
@@ -541,5 +513,113 @@ private final class ShelfSharePresenter: NSObject {
             of: anchorView,
             preferredEdge: .minY
         )
+    }
+}
+
+// MARK: - Row click + drag source
+
+/// What one tray row puts on the drag pasteboard, and the picture it drags.
+struct ShelfDragPayload {
+    let writer: NSPasteboardWriting
+    let image: NSImage
+
+    init?(_ item: NotchShelfItem) {
+        switch item.kind {
+        case .file:
+            guard let url = item.url else { return nil }
+            writer = url as NSURL
+            image = NSWorkspace.shared.icon(forFile: url.path)
+        case let .link(url):
+            writer = url as NSURL
+            image = NSImage(systemSymbolName: "link", accessibilityDescription: nil) ?? NSImage()
+        case let .text(value):
+            // The full text, not `displayName` — that is trimmed to 48 characters
+            // for the row and would silently truncate what lands in the target.
+            writer = value as NSString
+            image = NSImage(systemSymbolName: "text.alignleft", accessibilityDescription: nil) ?? NSImage()
+        }
+    }
+}
+
+/// Click and drag handling for a File tray row, in AppKit.
+///
+/// `NSView.beginDraggingSession(with:)` takes any number of dragging items,
+/// which is the only way to carry a multi-selection out of the tray as separate
+/// files; SwiftUI's `onDrag` is limited to one `NSItemProvider`. Owning the
+/// mouse here also gives the click its modifier flags for ⇧-range selection.
+struct ShelfRowInteraction: NSViewRepresentable {
+    let onClick: (NSEvent.ModifierFlags) -> Void
+    let dragPayloads: () -> [ShelfDragPayload]
+
+    func makeNSView(context: Context) -> ShelfRowInteractionView {
+        let view = ShelfRowInteractionView()
+        view.onClick = onClick
+        view.dragPayloads = dragPayloads
+        return view
+    }
+
+    func updateNSView(_ view: ShelfRowInteractionView, context: Context) {
+        view.onClick = onClick
+        view.dragPayloads = dragPayloads
+    }
+}
+
+final class ShelfRowInteractionView: NSView, NSDraggingSource {
+    var onClick: (NSEvent.ModifierFlags) -> Void = { _ in }
+    var dragPayloads: () -> [ShelfDragPayload] = { [] }
+
+    private var mouseDownEvent: NSEvent?
+    private var didStartDrag = false
+    /// Below this, a slightly unsteady click is still a click.
+    private let dragThreshold: CGFloat = 4
+
+    // The notch panel is rarely key; the first click must still land.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseDownEvent = event
+        didStartDrag = false
+        // Picking a row takes the caret out of the prompt, so the tray's
+        // keys (Space, ⌘A, ⌘⌫) act on the files instead of on typed text.
+        window?.makeFirstResponder(nil)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !didStartDrag, let down = mouseDownEvent else { return }
+        let dx = event.locationInWindow.x - down.locationInWindow.x
+        let dy = event.locationInWindow.y - down.locationInWindow.y
+        guard hypot(dx, dy) >= dragThreshold else { return }
+        didStartDrag = true
+
+        let payloads = dragPayloads()
+        guard !payloads.isEmpty else { return }
+        let origin = convert(down.locationInWindow, from: nil)
+        let side: CGFloat = 32
+        let items = payloads.enumerated().map { index, payload -> NSDraggingItem in
+            let item = NSDraggingItem(pasteboardWriter: payload.writer)
+            // A small fan, so a multi-file drag visibly carries several things.
+            let offset = CGFloat(min(index, 4)) * 5
+            item.setDraggingFrame(NSRect(x: origin.x - side / 2 + offset,
+                                         y: origin.y - side / 2 - offset,
+                                         width: side, height: side),
+                                  contents: payload.image)
+            return item
+        }
+        let session = beginDraggingSession(with: items, event: down, source: self)
+        session.animatesToStartingPositionsOnCancelOrFail = true
+        session.draggingFormation = .pile
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { mouseDownEvent = nil }
+        guard !didStartDrag else { return }
+        onClick(event.modifierFlags)
+    }
+
+    /// Copy only outside the app. `.generic` lets Finder treat a same-volume drop
+    /// as a move, which would pull the user's original file out of its folder.
+    func draggingSession(_ session: NSDraggingSession,
+                         sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .outsideApplication ? .copy : [.copy, .generic]
     }
 }

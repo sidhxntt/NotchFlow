@@ -14,9 +14,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The live panels, keyed by `CGDirectDisplayID` so screen plug/unplug and
     /// layout changes diff cleanly against `NSScreen.screens`.
     private var panels: [CGDirectDisplayID: NotchPanel] = [:]
+    /// True while a macOS secure prompt (Touch ID, password, purchase) is on
+    /// screen — the panels are ordered out for its duration. See `SecurePromptGuard`.
+    private var panelsHiddenForSecurePrompt = false
+    /// Opens the island ahead of an incoming file drag (see the type's docs).
+    private var fileDragMonitor: FileDragProximityMonitor?
     /// The screen geometry each live panel's tree was built against, so a
     /// screen-parameters notification can tell a real change from a no-op.
     private var panelMetrics: [CGDirectDisplayID: NotchMetrics] = [:]
+    /// Pending shrink of a panel's window to its closed island, debounced so the
+    /// collapse spring finishes before the window is cut down.
+    private var panelShrinks: [CGDirectDisplayID: DispatchWorkItem] = [:]
     /// Shared by the notch and the Settings scene so a preference updates the
     /// running overlay immediately rather than configuring a second app state.
     private(set) lazy var model = NotchModel(ai: AppDelegate.makeService())
@@ -265,6 +273,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         applyAgenticMode(capabilities.agenticModeEnabled)
 
+        // Step aside for Touch ID / password / purchase prompts: the notch's
+        // canvas sits over the top of the screen and must not be on screen while
+        // the system is asking the user to authenticate.
+        SecurePromptGuard.shared.start { [weak self] visible in
+            self?.setPanelsHiddenForSecurePrompt(visible)
+        }
+
+        startFileDragMonitor()
+
         // Agent app by default: no Dock icon, no app menu — it's a pure overlay.
         // The user can opt into a Dock icon (Settings → General), which flips this
         // to `.regular`; `applyDockIconVisibility` reads the persisted choice.
@@ -382,6 +399,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await RemoteModelManifest.refreshIfDue()
         }
 
+        model.onIslandFrameChange = { [weak self] id, island in
+            self?.fitPanel(id, island: island)
+        }
         rebuildPanels()
 
         // The one and only first run: the screen goes black, the mark becomes a
@@ -438,6 +458,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] isOpen, active in
                 guard let self else { return }
                 if isOpen {
+                    // Uncover the whole canvas before the open spring's first
+                    // frame, so nothing it draws lands outside the window.
+                    for (id, panel) in self.panels where self.model.isOpen(on: id) {
+                        self.panelShrinks[id]?.cancel()
+                        panel.setVisibleHeight(self.canvasHeight)
+                    }
                     // Read the outside selection HERE, on the synchronous open
                     // edge — before the activation below makes NotchFlow's own
                     // prompt the focused element and the app that owned the
@@ -1569,6 +1595,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Display setting flips. Surviving panels are only repositioned — never
     /// torn down — so flipping the setting from inside the open settings panel
     /// doesn't slam that panel shut.
+    private func startFileDragMonitor() {
+        guard fileDragMonitor == nil else { return }
+        let monitor = FileDragProximityMonitor(
+            zones: { [weak self] in
+                guard let self, !self.panelsHiddenForSecurePrompt else { return [] }
+                return self.panels.map { FileDragProximityMonitor.zone(for: $0.value.frame, display: $0.key) }
+            },
+            onApproach: { [weak self] display in
+                guard let self else { return false }
+                // Same as the island's own drop target does on contact: unfurl
+                // and bring the File tray forward, just earlier.
+                let opening = !self.model.isOpen(on: display)
+                if opening { self.model.openPanel(on: display) }
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
+                    self.capabilities.beginIncomingFileDrag()
+                }
+                return opening
+            },
+            onDragEnded: { [weak self] display in
+                // Released somewhere else: fold back, as a hover that left would.
+                // A beat later than the drop itself, so a drop onto the island
+                // has landed and the pointer check sees where it ended up.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    guard let self,
+                          self.model.isOpen(on: display),
+                          self.model.pointerInsideIsland(on: display, slop: 8) == false else { return }
+                    self.model.collapseOnLeave(from: display)
+                }
+            },
+            onRelease: { [weak self] in
+                withAnimation(.easeOut(duration: 0.18)) {
+                    self?.capabilities.endIncomingFileDrag()
+                }
+            })
+        monitor.start()
+        fileDragMonitor = monitor
+    }
+
+    private func setPanelsHiddenForSecurePrompt(_ hidden: Bool) {
+        guard hidden != panelsHiddenForSecurePrompt else { return }
+        panelsHiddenForSecurePrompt = hidden
+        for panel in panels.values {
+            if hidden {
+                panel.orderOut(nil)
+            } else {
+                panel.orderFrontRegardless()
+            }
+        }
+    }
+
     private func rebuildPanels() {
         guard productServicesStarted else { return }
         var live: Set<CGDirectDisplayID> = []
@@ -1587,7 +1663,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let fresh = Self.metrics(for: screen, id: id, canvasWidth: canvasWidth)
                 if panelMetrics[id] != fresh {
                     panelMetrics[id] = fresh
-                    (existing.contentView as? FirstMouseHostingView<AnyView>)?
+                    (existing.canvasView as? FirstMouseHostingView<AnyView>)?
                         .rootView = makeRoot(metrics: fresh)
                 }
                 position(existing, on: screen, id: id)
@@ -1596,6 +1672,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         for (id, panel) in panels where !live.contains(id) {
+            panelShrinks.removeValue(forKey: id)?.cancel()
             panel.close()
             panels.removeValue(forKey: id)
             // Drop the remembered geometry with the panel, so a display that
@@ -1622,13 +1699,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let hosting = FirstMouseHostingView(rootView: makeRoot(metrics: metrics))
         hosting.frame = rect
+        // Fixed at the canvas size: the window may be cut to a band (see
+        // `fitPanel`), and the tree must not relayout or constrain the window.
+        hosting.sizingOptions = []
         // Let clicks pass through the transparent canvas to apps underneath;
         // only the glass form itself is interactive.
-        panel.contentView = hosting
+        panel.installCanvas(hosting)
 
         position(panel, on: screen, id: id)
-        panel.orderFrontRegardless()
+        // A display added while a secure prompt is up joins the others offscreen.
+        if !panelsHiddenForSecurePrompt { panel.orderFrontRegardless() }
         return panel
+    }
+
+    /// Cut a panel's window down to the band its island draws in while closed,
+    /// and give it the whole canvas back the moment the island needs more.
+    /// Growing is immediate; shrinking waits for the island to settle.
+    private func fitPanel(_ id: CGDirectDisplayID, island: CGRect) {
+        guard let panel = panels[id] else { return }
+        let needed = neededPanelHeight(id, island: island)
+        panelShrinks[id]?.cancel()
+        if needed >= panel.visibleHeight {
+            panel.setVisibleHeight(needed)
+            return
+        }
+        let shrink = DispatchWorkItem { [weak self] in
+            guard let self, let panel = self.panels[id],
+                  let island = self.model.islandFrames[id] else { return }
+            panel.setVisibleHeight(self.neededPanelHeight(id, island: island))
+        }
+        panelShrinks[id] = shrink
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: shrink)
+    }
+
+    /// The whole canvas while open; otherwise the island's bottom edge plus
+    /// room for its glow and the hover peek.
+    private func neededPanelHeight(_ id: CGDirectDisplayID, island: CGRect) -> CGFloat {
+        if model.isOpen(on: id) { return canvasHeight }
+        return min(canvasHeight, ceil(island.maxY) + 24)
     }
 
     /// The panel's SwiftUI root, as `AnyView` so the hosting view has a concrete
@@ -1692,7 +1800,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // with the screen's top edge.
         let y = full.maxY - canvasHeight
         let frame = NSRect(x: x, y: y, width: canvasWidth, height: canvasHeight)
-        panel.setFrame(frame, display: true)
+        (panel as? NotchPanel)?.setCanvasFrame(frame) ?? panel.setFrame(frame, display: true)
         // Tell the model where this canvas sits on screen and how tall its
         // resting notch is — the ground-truth pointer test that filters
         // synthetic hover enter/exit events needs both (see

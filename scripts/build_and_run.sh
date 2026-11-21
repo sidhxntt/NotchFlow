@@ -8,7 +8,9 @@ SCHEME_NAME="NotchFlow"
 BUILD_CONFIGURATION="Debug"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="$ROOT_DIR/build"
+# `.noindex` keeps Spotlight out: an indexed build product shows up as a
+# second NotchFlow beside the installed one in ~/Applications.
+BUILD_DIR="$ROOT_DIR/build.noindex"
 APP_BUNDLE="$BUILD_DIR/Build/Products/$BUILD_CONFIGURATION/$APP_NAME.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 # `/Applications` can be protected by macOS even for a bundle whose Unix owner
@@ -20,6 +22,9 @@ INSTALLED_APP_BUNDLE="$DEVELOPMENT_APPLICATIONS_DIR/$APP_NAME.app"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+# A killed app never reaches `applicationWillTerminate`, so its now-playing
+# helper would outlive it; take the helper down with it.
+pkill -f "$APP_NAME.app/Contents/Resources/mediaremote-adapter.pl" >/dev/null 2>&1 || true
 
 cd "$ROOT_DIR"
 xcodebuild \
@@ -86,6 +91,9 @@ install_app() {
   # An app may not be registered yet on its first development launch.
   "$LSREGISTER" -u "$INSTALLED_APP_BUNDLE" >/dev/null 2>&1 || true
   "$LSREGISTER" -f "$INSTALLED_APP_BUNDLE"
+  # Xcode registers its build product too; leave the installed copy the only
+  # NotchFlow that Launchpad and "Open With" know about.
+  "$LSREGISTER" -u "$APP_BUNDLE" >/dev/null 2>&1 || true
 }
 
 open_app() {

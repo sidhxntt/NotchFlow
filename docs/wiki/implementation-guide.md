@@ -9,11 +9,11 @@ notch, the macOS/CLI/provider boundary, safety behavior, and verification.
 | Capability | Implementation owner | Notch route / verification |
 | --- | --- | --- |
 | App shell and display lifecycle | `AppDelegate.swift`, `NotchPanel.swift`, `NotchFlowApp.swift` | `ContentView.swift`, display-placement tests |
-| Interaction and visual system | `ContentView.swift`, `NotchBody.swift`, `DesignSystem.swift`, `GlassBackground.swift` | `Components.swift`, mouse/force-click policies |
-| Prompt, intent, history | `NotchModel.swift`, `IntentEngine.swift`, `IntentExamples.swift` | Notch and detached session views; intent evaluation |
+| Interaction and visual system | `ContentView.swift`, `NotchBody/`, `DesignSystem.swift`, `GlassBackground.swift` | `Components/`, mouse/force-click policies |
+| Prompt, intent, history | `NotchModel/`, `IntentEngine.swift`, `IntentExamples.swift` | Notch and detached session views; intent evaluation |
 | Ask and AI tools | `AIService.swift`, `APIKeyStore.swift`, `AgentHarness.swift`, `AgentTools.swift` | model picker, streamed answer components, Keychain |
 | Notes and reminders | `NotesService.swift`, `FileNotesService.swift`, `RemindersService.swift` | quick-capture overlays and permission recovery |
-| Local coding tasks | `AgentTaskService.swift`, `AgentHarness.swift`, `*CLIService.swift` | task trail, Recent history, detached task view |
+| Local coding tasks | `AgentTasks/`, `AgentHarness.swift`, `*CLIService.swift` | task trail, Recent history, detached task view |
 | Codex/Claude external activity | `CodexAppServerBridge.swift`, `CodexTerminalHookBridge.swift`, `ClaudeHookBridge.swift`, `Capabilities/Agent*.swift` | AI activity and approval queue tests |
 | Media | `MediaCapabilityService.swift`, `NotchCapabilityStore.swift` | `NotchNowPlayingView.swift`, media tests |
 | Shelf and clipboard | `Capabilities/Shelf*.swift`, `ClipboardHistoryService.swift` | shelf/clipboard views and store tests |
@@ -124,7 +124,7 @@ write implementation.
 
 ## Agent tasks: process ownership and engine-specific contracts
 
-`AgentTaskManager` in `AgentTaskService.swift` owns task records, `RunState`,
+`AgentTaskManager` in `AgentTasks/` owns task records, `RunState`,
 processes, parsed logs, diffs/todos, session IDs, follow-ups, cancellation, and
 recovery. Every initial/resumed round receives a new `RunState`, so parallel
 tasks cannot collide on parser offsets, temporary images, or a process handle.

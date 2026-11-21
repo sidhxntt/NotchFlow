@@ -554,6 +554,21 @@ public final class NotchCapabilityStore: ObservableObject {
         fileTrayRevealRequest &+= 1
     }
 
+    /// True from the moment a file drag nears the notch until it is released, so
+    /// the open island can show one large drop target below the screen's top
+    /// edge. A drag held at that edge is macOS's own gesture for Mission
+    /// Control, and the notch sits right on it.
+    @Published public private(set) var incomingFileDrag = false
+
+    public func beginIncomingFileDrag() {
+        incomingFileDrag = true
+        prepareForIncomingFileDrop()
+    }
+
+    public func endIncomingFileDrag() {
+        incomingFileDrag = false
+    }
+
     /// A file is hovering the notch. Select its destination before the user
     /// releases, so the open animation reveals the File Tray rather than the
     /// last workspace they happened to use.

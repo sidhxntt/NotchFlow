@@ -5,8 +5,18 @@ struct NotchUtilitiesView: View {
     @ObservedObject var utilities: UtilityCapabilityService
 
     private var visibleDayEvents: [EKEvent] {
-        guard let first = utilities.upcomingEvents.first else { return [] }
-        return utilities.upcomingEvents.filter { Calendar.current.isDate($0.startDate, inSameDayAs: first.startDate) }
+        // Re-filtered on every render as well as on refresh: an event that ended
+        // while the pane sat open must not linger at the top of the list.
+        let now = Date()
+        let upcoming = utilities.upcomingEvents.filter { $0.endDate > now }
+        guard let first = upcoming.first else { return [] }
+        return upcoming.filter { Calendar.current.isDate($0.startDate, inSameDayAs: first.startDate) }
+    }
+
+    private func dayLabel(for date: Date) -> String {
+        Calendar.current.isDateInTomorrow(date)
+            ? "Tomorrow"
+            : date.formatted(.dateTime.weekday(.wide).month().day())
     }
 
     var body: some View {
@@ -17,7 +27,7 @@ struct NotchUtilitiesView: View {
                 // Only when the list is NOT today's — the header already names
                 // today, and repeating it above the rows read as a duplicate.
                 if !Calendar.current.isDateInToday(first.startDate) {
-                    Text(first.startDate.formatted(.dateTime.weekday(.wide).month().day()))
+                    Text(dayLabel(for: first.startDate))
                         .font(.sf(10.5, weight: .medium)).foregroundStyle(Tokens.text3)
                 }
                 if visibleDayEvents.count > NotchUtilitiesLayout.maximumVisibleRows {
@@ -30,7 +40,7 @@ struct NotchUtilitiesView: View {
                     eventRows
                 }
             } else {
-                Text("No upcoming events").font(.sf(11, weight: .regular)).foregroundStyle(Tokens.text3)
+                emptyState
             }
         }
         .padding(10)
@@ -43,6 +53,27 @@ struct NotchUtilitiesView: View {
         // network request nobody asked for. The service itself no-ops when the
         // reading is still fresh, so reopening the pane costs nothing.
         .task { await utilities.refreshWeather() }
+        // The calendar too: the pane is where the list is looked at, so it is
+        // re-read each time the pane appears rather than trusted from launch.
+        .task { await utilities.refreshCalendar() }
+    }
+
+    /// One calm line under the header — never a stale or half-empty list. The
+    /// header above already carries today's date and the time, so the card still
+    /// reads as a calendar on an empty day.
+    @ViewBuilder private var emptyState: some View {
+        HStack(spacing: 6) {
+            Image(systemName: utilities.calendarPermission == .authorized ? "calendar" : "calendar.badge.exclamationmark")
+                .font(.system(size: 11, weight: .medium))
+            Text(utilities.calendarPermission == .authorized
+                 ? "Nothing scheduled this week"
+                 : "Allow full Calendar access to see events")
+                .font(.sf(11, weight: .regular))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(Tokens.text3)
+        .padding(.top, 2)
     }
 
     /// Today's date and the wall clock, beside the section's name — so the panel
@@ -137,12 +168,17 @@ struct NotchUtilitiesView: View {
 
     private var eventRows: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(visibleDayEvents, id: \.eventIdentifier) { event in
+            // Not `eventIdentifier`: every occurrence of a recurring event shares
+            // it, and duplicate ids make SwiftUI drop or repeat rows.
+            ForEach(visibleDayEvents, id: \.self) { event in
                 HStack(spacing: 7) {
                     Circle().fill(Tokens.text3).frame(width: 5, height: 5)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(event.title).font(.sf(11.5, weight: .semibold)).lineLimit(1)
-                        Text(event.startDate.formatted(date: .omitted, time: .shortened)).font(.sf(9.5, weight: .regular)).foregroundStyle(Tokens.text3)
+                        // A shared calendar's private event arrives with no title.
+                        Text(event.title?.isEmpty == false ? event.title! : "Busy")
+                            .font(.sf(11.5, weight: .semibold)).lineLimit(1)
+                        Text(event.isAllDay ? "All day" : event.startDate.formatted(date: .omitted, time: .shortened))
+                            .font(.sf(9.5, weight: .regular)).foregroundStyle(Tokens.text3)
                     }
                     Spacer()
                 }

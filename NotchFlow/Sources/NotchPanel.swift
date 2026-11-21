@@ -70,12 +70,67 @@ final class NotchPanel: NSPanel {
         appearance = NSAppearance(named: .darkAqua)
 
         // Show on top of full-screen apps and follow the user across Spaces.
+        //
+        // `.stationary`: the island stays put through Mission Control and Show
+        // Desktop. A drag up to the notch reaches the top edge of the screen,
+        // which macOS can read as "enter Mission Control"; a `.transient` island
+        // vanished at that moment, taking the drop target with it. Drops are
+        // instead kept away from the edge by opening the island early — see
+        // `FileDragProximityMonitor`.
         collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
             .stationary,
             .ignoresCycle,
         ]
+    }
+
+    // MARK: - Visible band
+
+    /// The full canvas rect in screen coordinates — what the SwiftUI tree is
+    /// laid out against. The window itself may show only the top of it.
+    private(set) var canvasFrame: NSRect = .zero
+    /// How much of the canvas, from its top edge, the window currently covers.
+    /// Zero until the first fit, meaning "all of it".
+    private(set) var visibleHeight: CGFloat = 0
+    /// The hosting view, pinned to the top of the window at full canvas size so
+    /// the SwiftUI layout never changes when the window is cut down.
+    private(set) var canvasView: NSView?
+
+    /// Install the canvas inside a plain container. The container follows the
+    /// window's size; the canvas keeps its own and stays flush with the top,
+    /// so shrinking the window clips the bottom instead of relaying out.
+    func installCanvas(_ view: NSView) {
+        let container = NSView(frame: view.frame)
+        view.autoresizingMask = [.minYMargin]
+        container.addSubview(view)
+        contentView = container
+        canvasView = view
+    }
+
+    func setCanvasFrame(_ frame: NSRect) {
+        canvasFrame = frame
+        applyVisibleBand()
+    }
+
+    /// Show only the top `height` points of the canvas. A transparent window is
+    /// still a window: macOS's secure UI (the App Store's Touch ID purchase
+    /// sheet) blanks itself when another process's window overlaps it, and the
+    /// full 640pt canvas covered the top of any sheet opened in the middle of
+    /// the screen. Kept to the band the island actually draws in, it doesn't.
+    func setVisibleHeight(_ height: CGFloat) {
+        let clamped = min(max(height, 1), canvasFrame.height)
+        guard clamped != visibleHeight else { return }
+        visibleHeight = clamped
+        applyVisibleBand()
+    }
+
+    private func applyVisibleBand() {
+        guard canvasFrame.height > 0 else { return }
+        let height = visibleHeight > 0 ? visibleHeight : canvasFrame.height
+        setFrame(NSRect(x: canvasFrame.minX, y: canvasFrame.maxY - height,
+                        width: canvasFrame.width, height: height),
+                 display: true)
     }
 
     // A borderless panel returns false by default; allow it so the prompt field

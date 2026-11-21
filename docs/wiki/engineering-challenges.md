@@ -257,7 +257,7 @@ Users receive a verified new build or keep their working old build. A failed or 
 ## Where to look in the code
 
 - [`NotesService.swift`](../../NotchFlow/Sources/NotesService.swift) — Apple Notes queue and permission-deadlock handling
-- [`AgentTaskService.swift`](../../NotchFlow/Sources/AgentTaskService.swift) — local task lifetime, streaming, and recovery
+- [`AgentTasks/`](../../NotchFlow/Sources/AgentTasks/) — local task lifetime, streaming, and recovery
 - [`AgentApprovalQueue.swift`](../../NotchFlow/Sources/Capabilities/AgentApprovalQueue.swift) — approval ownership and safety
 - [`MediaCapabilityService.swift`](../../NotchFlow/Sources/Capabilities/MediaCapabilityService.swift) — media source selection and MediaRemote adapter
 - [`NotchPanel.swift`](../../NotchFlow/Sources/NotchPanel.swift) — panel level, Spaces, and text-composition handling

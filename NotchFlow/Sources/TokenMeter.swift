@@ -182,24 +182,17 @@ final class TokenMeter: @unchecked Sendable {
         return Reading(total: total, since: since, sinceVersion: sinceVersion)
     }
 
-    /// Real local consumption for a provider and period. Five-hour windows are
-    /// aligned to local 00:00/05:00/10:00/15:00/20:00 boundaries; the weekly
-    /// window follows the user's calendar. These are not vendor quota resets.
+    /// Real local consumption for a provider over the trailing five hours or
+    /// seven days. Rolling, not bucketed: the vendors' own limit windows start
+    /// from activity this app can't see, so a fixed bucket's "resets at" would
+    /// be a number that only looked like theirs.
     func usage(provider: String, window: LocalWindow, now: Date = Date(), project: String? = nil) -> UsageWindow {
-        let calendar = Calendar.autoupdatingCurrent
-        let bounds: (Date, Date)
+        let span: TimeInterval
         switch window {
-        case .fiveHours:
-            let hour = calendar.component(.hour, from: now)
-            let startHour = hour - (hour % 5)
-            let day = calendar.startOfDay(for: now)
-            let start = calendar.date(byAdding: .hour, value: startHour, to: day) ?? day
-            bounds = (start, calendar.date(byAdding: .hour, value: 5, to: start) ?? now)
-        case .week:
-            let start = calendar.dateInterval(of: .weekOfYear, for: now)?.start
-                ?? calendar.startOfDay(for: now)
-            bounds = (start, calendar.date(byAdding: .day, value: 7, to: start) ?? now)
+        case .fiveHours: span = 5 * 60 * 60
+        case .week: span = 7 * 24 * 60 * 60
         }
+        let bounds = (now.addingTimeInterval(-span), now.addingTimeInterval(1))
         lock.lock(); defer { lock.unlock() }
         let source = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let matching = events.filter { event in
