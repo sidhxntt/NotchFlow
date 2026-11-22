@@ -65,7 +65,17 @@ struct NativeSettingsView: View {
         // default before it was ever shown.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { synchronizePage() }
-        .onChange(of: page) { model.settingsSection = page.rawValue }
+        .onChange(of: page) {
+            // A pushed detail page (Licenses) belongs to About; selecting About
+            // again must not wipe it, and nothing else maps to it.
+            if Self.page(for: model.settingsSection) != page {
+                model.settingsSection = page.rawValue
+            }
+        }
+        // Anything that aims Settings at a section from outside — the menu bar's
+        // Model item, a pending model setup, a deep link from the notch — goes
+        // through the same clamp as opening the window.
+        .onChange(of: model.settingsSection) { _, _ in synchronizePage() }
         .onChange(of: license.committedState) { _, _ in synchronizePage() }
         .onChange(of: capabilities.agenticModeEnabled) { _, _ in
             if !pages.contains(page) { page = .media }
@@ -80,17 +90,20 @@ struct NativeSettingsView: View {
         case "Model", "Capture": return .chat
         case "Shortcuts": return .agent
         case "General": return .global
+        case "Licenses": return .about
         default: return Page(rawValue: section) ?? .chat
         }
     }
 
+    /// Selects the page for `model.settingsSection`, but only one the sidebar
+    /// shows: About while the license is blocked, and no Chat, Agent or Stats in
+    /// Generic mode. A section that points elsewhere is rewritten, so the pane
+    /// and the sidebar can never disagree.
     private func synchronizePage() {
-        if license.state.shouldRestrictSettingsToAbout {
-            model.settingsSection = Page.about.rawValue
-            page = .about
-        } else {
-            page = Self.page(for: model.settingsSection)
-        }
+        let wanted = Self.page(for: model.settingsSection)
+        let target: Page = pages.contains(wanted) ? wanted : (pages.contains(.media) ? .media : .about)
+        if wanted != target { model.settingsSection = target.rawValue }
+        if page != target { page = target }
     }
 }
 

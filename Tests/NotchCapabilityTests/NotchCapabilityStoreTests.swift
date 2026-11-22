@@ -506,7 +506,8 @@ final class NotchCapabilityStoreTests: XCTestCase {
 
     func testQuickUtilityActionsProvideTheRequestedShortcuts() {
         XCTAssertEqual(QuickUtilityAction.allCases.map(\.title),
-                       ["Pomodoro", "Quick note", "Reminder", "Power", "Devices", "Clipboard", "Shortcuts"])
+                       ["Pomodoro", "Quick note", "Reminder", "Calculator", "Converter",
+                        "Power", "Devices", "Clipboard", "Shortcuts"])
     }
 
     func testWorkspaceTabsIncludeAnIndependentAgentWorkspace() {

@@ -385,33 +385,31 @@ extension InlineSettingsView {
     /// resolves to a concrete backend, and only that backend's key row shows below.
     var searchBackendRow: some View {
         settingRow(label: L("search.backend")) {
-            GlassMenu(title: searchBackendLabel(selectedBackend)) {
+            GlassMenu(title: searchBackendLabel(searchBackend)) {
+                // nil is the provider's own web search: what runs when no
+                // search service is picked, so it has to be pickable too.
+                Button { selectSearchBackend(nil) } label: {
+                    menuOption(searchBackendLabel(nil), selected: searchBackend == nil)
+                }
                 ForEach(APIKeyStore.SearchBackend.allCases) { b in
                     Button { selectSearchBackend(b) } label: {
-                        menuOption(searchBackendLabel(b), selected: b == selectedBackend)
+                        menuOption(searchBackendLabel(b), selected: b == searchBackend)
                     }
                 }
             }
         }
     }
 
-    /// The concrete backend the picker shows — the stored pick, or the first case
-    /// when nothing has been chosen yet (there's no "none" state in the UI).
-    var selectedBackend: APIKeyStore.SearchBackend {
-        searchBackend ?? APIKeyStore.SearchBackend.allCases[0]
-    }
-
-    private func searchBackendLabel(_ b: APIKeyStore.SearchBackend) -> String {
+    private func searchBackendLabel(_ b: APIKeyStore.SearchBackend?) -> String {
         switch b {
+        case nil:       return L("search.backend.native")
         case .keenable: return L("search.backend.keenable")
         case .exa:      return L("search.backend.exa")
         case .anysearch: return L("search.backend.anysearch")
         }
     }
 
-    func selectSearchBackend(_ newValue: APIKeyStore.SearchBackend) {
-        // Compare against the stored pick (not the display default) so the first
-        // commit from a `nil` state still persists even when it equals the default.
+    func selectSearchBackend(_ newValue: APIKeyStore.SearchBackend?) {
         guard newValue != searchBackend else { return }
         searchBackend = newValue
         APIKeyStore.preferredSearchBackend = newValue
@@ -433,7 +431,10 @@ extension InlineSettingsView {
                         SettingInfo(keenableHintText)
                     }
                 }
-                .frame(width: 100, alignment: .leading)
+                // Its own width, at least the column's: a fixed 100pt cut
+                // "Keenable key" to "Keenable…" once the ⓘ sat beside it.
+                .fixedSize()
+                .frame(minWidth: 100, alignment: .leading)
 
                 ZStack(alignment: .leading) {
                     if editingKeenableKey {
@@ -525,7 +526,10 @@ extension InlineSettingsView {
                         SettingInfo(exaHintText)
                     }
                 }
-                .frame(width: 100, alignment: .leading)
+                // Its own width, at least the column's: a fixed 100pt cut
+                // "Keenable key" to "Keenable…" once the ⓘ sat beside it.
+                .fixedSize()
+                .frame(minWidth: 100, alignment: .leading)
 
                 ZStack(alignment: .leading) {
                     if editingExaKey {
@@ -617,7 +621,10 @@ extension InlineSettingsView {
                         SettingInfo(anySearchHintText)
                     }
                 }
-                .frame(width: 100, alignment: .leading)
+                // Its own width, at least the column's: a fixed 100pt cut
+                // "Keenable key" to "Keenable…" once the ⓘ sat beside it.
+                .fixedSize()
+                .frame(minWidth: 100, alignment: .leading)
 
                 ZStack(alignment: .leading) {
                     if editingAnySearchKey {

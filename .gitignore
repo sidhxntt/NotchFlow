@@ -84,3 +84,11 @@ scripts/seed-history.py
 !default.mode2v3
 *.perspectivev3
 !default.perspectivev3
+
+# Local Netlify folder
+.netlify
+
+# Local secrets (e.g. the Dodo Payments API key). The app never needs them:
+# license checks use Dodo's public endpoints.
+.env
+.env.*

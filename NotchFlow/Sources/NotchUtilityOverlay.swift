@@ -18,6 +18,10 @@ struct NotchUtilityOverlay: View {
                 QuickNoteOverlayView(store: quickNote, close: close)
             case .reminder:
                 QuickReminderOverlayView(store: quickReminder, close: close)
+            case .calculator:
+                CalculatorOverlayView(close: close)
+            case .converter:
+                ConverterOverlayView(close: close)
             case .power:
                 PowerUtilityOverlayView(system: system, close: close)
             case .devices:

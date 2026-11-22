@@ -117,6 +117,28 @@ extension InlineSettingsView {
         .animation(.easeOut(duration: Tokens.rowFade), value: statsHover)
     }
 
+    /// The window's own sidebar has no way back from a pushed page (Licenses),
+    /// and no line to name the Stats square under the pointer, so it keeps
+    /// just those two pieces of the header above. Empty otherwise.
+    @ViewBuilder
+    var windowHeader: some View {
+        // Shown on Stats even before a hover, so naming a day never shifts the pane.
+        if section.isDetail || section == .stats {
+            HStack(spacing: 10) {
+                if let parent = section.parent {
+                    PanelBackPill(title: section.title, help: L("navigation.backTo", parent.title)) {
+                        withAnimation(.easeOut(duration: 0.16)) { section = parent }
+                    }
+                }
+                Spacer()
+                statsReadout
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .animation(.easeOut(duration: Tokens.rowFade), value: statsHover)
+        }
+    }
+
     /// "Aug 5 · 21 chats · 2 agent runs" — the date, and what actually went
     /// through the notch that day, bucket by bucket. It used to read "23 items",
     /// which left the reader working out what an item was; each figure now

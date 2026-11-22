@@ -78,7 +78,7 @@
         <li>Settings, prompt shortcuts and Pomodoro history.</li>
         <li>A small diagnostics log with the provider name, time, HTTP status and error category. It can also record the process name of an unrecognised system window that appears over the notch (see below). It is designed not to contain prompts, responses, clipboard content, window contents or API keys.</li>
       </ul>
-      <p>Provider API keys, the trial start, your Lemon Squeezy license key and activation state, and an opaque per-install identifier are stored in the macOS <strong>Keychain</strong>. Keychain data can survive an app reinstall. NotchFlow does not collect a hardware fingerprint for licensing.</p>
+      <p>Provider API keys, the trial start, your Dodo Payments license key and activation state, and an opaque per-install identifier are stored in the macOS <strong>Keychain</strong>. Keychain data can survive an app reinstall. NotchFlow does not collect a hardware fingerprint for licensing.</p>
 
       <h2 id="read">Data the app reads but does not keep</h2>
       <p>Some features read information on your Mac to show it in the notch. None of it is sent anywhere unless a row below says so.</p>
@@ -122,19 +122,19 @@
             <tr><td>A web-search service (Exa, Keenable, AnySearch) or your provider's built-in search</td><td>The search query</td><td>When an answer needs a web search you have set up</td></tr>
             <tr><td>Open-Meteo</td><td>Your approximate location, rounded to about 1 km</td><td>When the Utilities tab shows weather and you allowed Location</td></tr>
             <tr><td>GitHub</td><td>A request for the latest release, and the update download</td><td>When NotchFlow checks for or installs an update</td></tr>
-            <tr><td>Lemon Squeezy</td><td>Your license key, an activation email if you supply one, and an opaque install name</td><td>When you buy, activate, validate or deactivate a license</td></tr>
+            <tr><td>Dodo Payments</td><td>Your license key and an opaque install name. It returns the purchase email, which NotchFlow compares on your Mac with the one you typed; the email you type is not sent</td><td>When you buy, activate, validate or deactivate a license</td></tr>
             <tr><td>Apple apps and services</td><td>The note, reminder, calendar, camera or location request</td><td>When you use those features, under Apple's policies and your settings</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Each provider's own terms and privacy policy apply to what it receives. Lemon Squeezy, not NotchFlow, collects payment details. NotchFlow may also open links you choose, such as support, release notes or a provider sign-in page.</p>
+      <p>Each provider's own terms and privacy policy apply to what it receives. Dodo Payments, the merchant of record, collects payment details, not NotchFlow. NotchFlow may also open links you choose, such as support, release notes or a provider sign-in page.</p>
 
       <h2 id="license">Trial and license</h2>
       <p>The seven-day trial starts on the first successful launch and is measured as seven 24-hour periods. When it expires, NotchFlow blocks product functionality until a valid paid license is activated. A valid paid license is perpetual and includes future NotchFlow updates. An already activated license may remain available while offline; validation is retried when a network connection is available so a refunded, disabled or deactivated license can be reflected.</p>
 
       <h2 id="deletion">Retention and deletion</h2>
       <p>Local history is kept until you delete individual items or use the app's Clear History controls; deleting history also removes its images. Removing a File tray item deletes any copy NotchFlow made of it. You can remove provider credentials in Settings and deactivate a licensed Mac in the License section of Settings → About.</p>
-      <p>Removing the app does not necessarily remove Keychain items, Application Support files, the CLI hook entries described above, content already saved to Apple Notes or Reminders, or data held by a provider, CLI, Apple app or Lemon Squeezy. To remove what remains, use the in-app deletion controls first, then move <code>NotchFlow.app</code> to the Trash and delete its Application Support folder, Keychain entries and hook entries if you no longer want them. Data held by another service must be deleted through that service.</p>
+      <p>Removing the app does not necessarily remove Keychain items, Application Support files, the CLI hook entries described above, content already saved to Apple Notes or Reminders, or data held by a provider, CLI, Apple app or Dodo Payments. To remove what remains, use the in-app deletion controls first, then move <code>NotchFlow.app</code> to the Trash and delete its Application Support folder, Keychain entries and hook entries if you no longer want them. Data held by another service must be deleted through that service.</p>
 
       <h2 id="support">Support and changes</h2>
       <p>For a privacy question or help with deletion, open a support request at <a href="https://github.com/sidhxntt/NotchFlow/issues">github.com/sidhxntt/NotchFlow/issues</a>. Do not post API keys, license keys, payment details or private prompt content in a public issue.</p>

@@ -1962,7 +1962,7 @@ struct NotchIsland: View {
 /// The force-click setting hand-off is isolated from `NotchIsland`'s large
 /// modifier stack so that the dialog remains a normal, independently-sized
 /// overlay rather than contributing to the compiler's generic expression.
-private struct ForceClickLookupGate: ViewModifier {
+struct ForceClickLookupGate: ViewModifier {
     @ObservedObject var model: NotchModel
     let isOpen: Bool
 

@@ -14,11 +14,11 @@ public struct AboutContentConfiguration: Codable, Equatable, Sendable {
     public static let `default` = AboutContentConfiguration(
         name: "NotchFlow",
         tagline: "Your menu-bar AI workspace",
-        website: "https://www.notch.website",
-        aboutMeURL: "",
-        xURL: "https://x.com/cyrusss_7",
+        website: "https://notchflow.netlify.app/",
+        aboutMeURL: "https://sidhxntt.dev/",
+        xURL: "https://x.com/sidhxntt",
         privacyURL: "https://sidhxntt.github.io/NotchFlow/privacy/",
-        feedbackURL: ""
+        feedbackURL: "mailto:siddhantg2002@gmail.com"
     )
 
     public init(name: String, tagline: String, website: String, aboutMeURL: String,
@@ -64,13 +64,21 @@ public struct AboutContentConfiguration: Codable, Equatable, Sendable {
         try validateURL(aboutMeURL, field: "aboutMeURL", required: false)
         try validateURL(xURL, field: "xURL", required: false)
         try validateURL(privacyURL, field: "privacyURL", required: false)
-        try validateURL(feedbackURL, field: "feedbackURL", required: false)
+        try validateURL(feedbackURL, field: "feedbackURL", required: false, allowsMail: true)
     }
 
-    private func validateURL(_ string: String, field: String, required: Bool) throws {
+    /// Web links only, except where `allowsMail` lets a field be a `mailto:`
+    /// address instead (Feedback can open a new email).
+    private func validateURL(_ string: String, field: String, required: Bool, allowsMail: Bool = false) throws {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             if required { throw AboutContentConfigurationError.missingURL(field) }
+            return
+        }
+        if allowsMail, let url = URL(string: trimmed), url.scheme?.lowercased() == "mailto" {
+            guard url.absoluteString.dropFirst("mailto:".count).contains("@") else {
+                throw AboutContentConfigurationError.invalidURL(field)
+            }
             return
         }
         guard let url = URL(string: trimmed),

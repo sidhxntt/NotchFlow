@@ -30,6 +30,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         var openModelSettings: () -> Void
         var openWhatsNew: () -> Void
         var checkForUpdates: () -> Void
+        /// Generic mode has no chat, so the Model picker has nothing to set.
+        var isAgenticModeEnabled: () -> Bool
     }
 
     private var statusItem: NSStatusItem?
@@ -129,12 +131,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         // The one setting worth reaching without opening Settings — Notch's
         // equivalent of a recorder's input-device picker.
-        let modelItem = NSMenuItem(title: L("menuBar.model"), action: nil, keyEquivalent: "")
-        modelItem.image = NSImage(
-            systemSymbolName: "cpu",
-            accessibilityDescription: L("menuBar.model"))
-        modelItem.submenu = buildModelMenu()
-        menu.addItem(modelItem)
+        if actions.isAgenticModeEnabled() {
+            let modelItem = NSMenuItem(title: L("menuBar.model"), action: nil, keyEquivalent: "")
+            modelItem.image = NSImage(
+                systemSymbolName: "cpu",
+                accessibilityDescription: L("menuBar.model"))
+            modelItem.submenu = buildModelMenu()
+            menu.addItem(modelItem)
+        }
 
         let settings = item(L("menuBar.settings"), #selector(openSettings))
         settings.keyEquivalent = ","

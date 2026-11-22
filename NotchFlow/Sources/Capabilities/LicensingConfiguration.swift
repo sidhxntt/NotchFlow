@@ -1,16 +1,28 @@
 import Foundation
 
 public struct LicensingConfiguration: Equatable, Sendable {
-    public let checkoutURL: URL
-    public let storeID: Int
-    public let productID: Int
-    public let variantID: Int
+    /// Which Dodo Payments mode the product lives in. Test and live have their
+    /// own hosts, products and keys; nothing crosses between them.
+    public enum Environment: String, Decodable, Equatable, Sendable {
+        case test
+        case live
 
-    public init(checkoutURL: URL, storeID: Int, productID: Int, variantID: Int) {
+        public var apiBaseURL: URL {
+            switch self {
+            case .test: URL(string: "https://test.dodopayments.com/")!
+            case .live: URL(string: "https://live.dodopayments.com/")!
+            }
+        }
+    }
+
+    public let checkoutURL: URL
+    public let productID: String
+    public let environment: Environment
+
+    public init(checkoutURL: URL, productID: String, environment: Environment) {
         self.checkoutURL = checkoutURL
-        self.storeID = storeID
         self.productID = productID
-        self.variantID = variantID
+        self.environment = environment
     }
 
     public static func load(from data: Data) throws -> Self {
@@ -20,21 +32,11 @@ public struct LicensingConfiguration: Equatable, Sendable {
               url.host?.isEmpty == false else {
             throw LicensingConfigurationError.invalidCheckoutURL
         }
-        guard input.licensing.storeID > 0 else {
-            throw LicensingConfigurationError.missingIdentifier("storeID")
+        let productID = input.licensing.productID.trimmingCharacters(in: .whitespaces)
+        guard productID.hasPrefix("pdt_"), productID.count > 4 else {
+            throw LicensingConfigurationError.invalidProductID
         }
-        guard input.licensing.productID > 0 else {
-            throw LicensingConfigurationError.missingIdentifier("productID")
-        }
-        guard input.licensing.variantID > 0 else {
-            throw LicensingConfigurationError.missingIdentifier("variantID")
-        }
-        return Self(
-            checkoutURL: url,
-            storeID: input.licensing.storeID,
-            productID: input.licensing.productID,
-            variantID: input.licensing.variantID
-        )
+        return Self(checkoutURL: url, productID: productID, environment: input.licensing.environment)
     }
 
     public static func bundled(in bundle: Bundle = .main) throws -> Self {
@@ -44,10 +46,8 @@ public struct LicensingConfiguration: Equatable, Sendable {
         return try load(from: Data(contentsOf: url))
     }
 
-    public func accepts(_ identity: LemonLicenseIdentity) -> Bool {
-        identity.storeID == storeID
-            && identity.productID == productID
-            && identity.variantID == variantID
+    public func accepts(_ identity: LicenseIdentity) -> Bool {
+        identity.productID == productID
     }
 
     private struct Input: Decodable {
@@ -55,9 +55,8 @@ public struct LicensingConfiguration: Equatable, Sendable {
 
         struct Licensing: Decodable {
             let checkoutURL: String
-            let storeID: Int
-            let productID: Int
-            let variantID: Int
+            let productID: String
+            let environment: Environment
         }
     }
 }
@@ -65,16 +64,16 @@ public struct LicensingConfiguration: Equatable, Sendable {
 public enum LicensingConfigurationError: LocalizedError, Equatable {
     case missingResource
     case invalidCheckoutURL
-    case missingIdentifier(String)
+    case invalidProductID
 
     public var errorDescription: String? {
         switch self {
         case .missingResource:
             return "The bundled licensing configuration is missing."
         case .invalidCheckoutURL:
-            return "The Lemon Squeezy checkout URL must be a valid HTTPS URL."
-        case .missingIdentifier(let name):
-            return "The Lemon Squeezy \(name) must be greater than zero."
+            return "The Dodo Payments checkout URL must be a valid HTTPS URL."
+        case .invalidProductID:
+            return "The Dodo Payments product ID must start with pdt_."
         }
     }
 }

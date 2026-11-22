@@ -5,7 +5,8 @@ MODE="${1:-run}"
 APP_NAME="NotchFlow"
 PROJECT_NAME="NotchFlow.xcodeproj"
 SCHEME_NAME="NotchFlow"
-BUILD_CONFIGURATION="Debug"
+# Release builds the product users get; `make install-release` uses it.
+BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-Debug}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # `.noindex` keeps Spotlight out: an indexed build product shows up as a
@@ -32,6 +33,8 @@ xcodebuild \
   -scheme "$SCHEME_NAME" \
   -configuration "$BUILD_CONFIGURATION" \
   -derivedDataPath "$BUILD_DIR" \
+  ${MARKETING_VERSION:+MARKETING_VERSION="$MARKETING_VERSION" CURRENT_PROJECT_VERSION="$MARKETING_VERSION"} \
+  ${EXTRA_SWIFT_FLAGS:+OTHER_SWIFT_FLAGS="\$(inherited) $EXTRA_SWIFT_FLAGS"} \
   build
 
 # Xcode's "Sign to Run Locally" fallback is an ad-hoc signature whose
@@ -87,6 +90,10 @@ install_app() {
   # from an earlier build invalidate the bundle's signature and can leave the
   # launched app out of sync with the verified build product.
   mkdir -p "$DEVELOPMENT_APPLICATIONS_DIR"
+  # A release the in-app updater installed is a notarized, downloaded bundle,
+  # and App Management protection refuses writes into it ("Operation not
+  # permitted"). Removing it is still allowed, so replace instead of merging.
+  /bin/rm -rf "$INSTALLED_APP_BUNDLE"
   /usr/bin/rsync -a --delete "$APP_BUNDLE/" "$INSTALLED_APP_BUNDLE/"
   # An app may not be registered yet on its first development launch.
   "$LSREGISTER" -u "$INSTALLED_APP_BUNDLE" >/dev/null 2>&1 || true
