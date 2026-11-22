@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import './App.css'
+import Tidal from './components/Tidal.jsx'
 
 const baseAsset = (path) => `${import.meta.env.BASE_URL}${path}`
 // Absolute, from the site's base path: a relative `privacy/` stacked up
@@ -7,21 +8,21 @@ const baseAsset = (path) => `${import.meta.env.BASE_URL}${path}`
 const privacyHref = baseAsset('privacy/')
 const REPO = 'https://github.com/sidhxntt/notchflow'
 const RELEASES = `${REPO}/releases/latest`
-const navItems = [['Features', '#features'], ['Agents', '#agents'], ['Install', '#install'], ['FAQ', '#faq']]
 
 const faqs = [
-  ['Does NotchFlow need a hardware notch?', 'No. On Macs without a notch and on external displays, NotchFlow draws a virtual notch and works the same way.'],
-  ['Do I need an account or an API key?', 'There is no NotchFlow account. Add a provider API key, use a supported sign-in, or connect a CLI you already use, such as Codex or Claude Code. Notes, reminders, the File tray and media need no key at all.'],
-  ['What happens after the seven-day trial?', 'NotchFlow asks for a license key before it opens the notch again. Your notes, history, files and settings stay on your Mac. A license is a one-time purchase and includes future updates.'],
-  ['Where does my data go?', 'Your prompts, history, files, notes and agent records stay on your Mac. Requests go straight to the provider, CLI or search service you choose. NotchFlow has no server in between.'],
-  ['Can I use local models?', 'Yes. Add any OpenAI-compatible endpoint in Settings: Ollama, LM Studio, vLLM, your own gateway, or a provider NotchFlow does not list. A key is optional for custom endpoints.'],
-  ['What do file conversions need?', 'The free Media Automations CLI (npm i -g my_media_automations). NotchFlow finds it on its own; without it, the convert menu stays hidden.'],
-  ['Which agents show up in the Agent tab?', 'Codex and Claude Code sessions on your Mac appear on their own, including ones you started in Terminal. Tasks you start from the notch can also run on Grok, Command Code or PI.'],
-  ['Will an agent ever act without me?', 'No. When an agent asks permission, you choose Approve or Deny in the notch. If NotchFlow is closed, the agent asks in its own terminal as usual.'],
-  ['What is the difference between Generic and Agentic mode?', 'Generic mode has media, files, notes, reminders and the utilities. Agentic mode adds chat, agent tasks, approvals and AI activity. Switching keeps everything you saved.'],
-  ['Why does NotchFlow ask for permissions?', 'Only when a feature needs one: Automation for Apple Notes and Reminders, Calendar for your events, notifications for alerts. Settings → General shows each one, and Notes can save to Markdown files instead.'],
-  ['Is it on the Mac App Store?', 'No. NotchFlow is a direct download: a Developer ID-signed, Apple-notarized DMG, with a ZIP as a fallback. It updates itself.'],
-  ['How do I uninstall it?', 'Drag NotchFlow.app from Applications to the Trash.'],
+  ['Does NotchFlow need a hardware notch?', 'No. On Macs without one, and on external displays, it draws its own.'],
+  ['Do I need an account or an API key?', 'No account. Bring an API key, a local model or a CLI you already use. Notes, files and media need no key.'],
+  ['What happens after the seven-day trial?', 'It asks for a license key. Your notes, history and settings stay put. One payment, updates included.'],
+  ['Where does my data go?', 'Nowhere but your Mac. Requests go straight to the provider you choose; there’s no NotchFlow server.'],
+  ['Can I use local models?', 'Yes. Any OpenAI-compatible endpoint works: Ollama, LM Studio, vLLM or your own.'],
+  ['Which utilities are built in?', 'Pomodoro, Quick note, Reminder, Calculator, Converter, Power, Devices, Clipboard and Shortcuts. Hide any you don’t use in Settings.'],
+  ['What do file conversions need?', 'The free Media Automations CLI (npm i -g my_media_automations). Without it, the convert menu stays hidden.'],
+  ['Which agents show up in the Agent tab?', 'Codex and Claude Code sessions appear on their own, even ones started in Terminal. Tasks can also run on Grok, Command Code or PI.'],
+  ['Will an agent ever act without me?', 'No. Every permission request waits for your Approve or Deny.'],
+  ['What is the difference between Generic and Agentic mode?', 'Generic is media, files, notes and utilities, with no AI. Agentic adds chat and agents. Switching keeps everything.'],
+  ['Why does NotchFlow ask for permissions?', 'Only when a feature needs one, like Calendar for events or Automation for Notes and Reminders.'],
+  ['Is it on the Mac App Store?', 'No. It’s a signed, notarized direct download that updates itself.'],
+  ['How do I uninstall it?', 'Drag it from Applications to the Trash.'],
 ]
 
 function Arrow() { return <svg aria-hidden="true" className="arrow" viewBox="0 0 20 20" fill="none"><path d="M3.5 10h12M11 5.5 15.5 10 11 14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg> }
@@ -77,63 +78,33 @@ function onTabKey(event, index, count, select) {
   event.currentTarget.parentElement.children[next]?.focus()
 }
 
-function Header() {
-  const [open, setOpen] = useState(false)
-  const close = () => setOpen(false)
-  useEffect(() => {
-    if (!open) return undefined
-    const onKey = (e) => { if (e.key === 'Escape') close() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open])
-  return <header className="site-header">
-    <a className="brand" href="#top" onClick={close} aria-label="NotchFlow home"><Mark /><span>NotchFlow</span></a>
-    <nav className="nav-links" aria-label="Primary navigation">{navItems.map(([label, href]) => <a key={href} href={href}>{label}</a>)}</nav>
-    <div className="nav-actions"><a className="text-link" href={REPO} target="_blank" rel="noreferrer">GitHub</a><DownloadButton label="Download" className="button--small" /></div>
-    <button className="menu-button" type="button" aria-expanded={open} aria-controls="mobile-menu" onClick={() => setOpen(!open)}><span /><span /><span className="sr-only">{open ? 'Close navigation' : 'Open navigation'}</span></button>
-    <div id="mobile-menu" className={`mobile-menu ${open ? 'mobile-menu--open' : ''}`}>{navItems.map(([label, href]) => <a key={href} href={href} onClick={close}>{label}</a>)}<a href={REPO} target="_blank" rel="noreferrer" onClick={close}>GitHub <Arrow /></a></div>
-  </header>
-}
-
-const heroScenes = [
-  { tab: 'Ask', prompt: '18% tip on 284.60 split 3 ways', answer: 'Tip 51.23, total 335.83. That’s 111.94 each.', input: 'Ask anything' },
-  { tab: 'Note', prompt: 'Idea: a weekly digest of agent runs', answer: 'Saved to Apple Notes. Open it any time from your history.', input: 'Save a thought' },
-  { tab: 'Remind', prompt: 'Call the dentist tomorrow at 10', answer: 'Added to Apple Reminders · Tomorrow, 10:00 AM.', input: 'Set a reminder' },
-  { tab: 'Agent', prompt: 'Fix the flaky login test', answer: 'Codex is working in ~/code/app. Close the notch; it keeps going.', input: 'Describe a task' },
-]
-
 const reducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
-function Hero() {
-  const [scene, setScene] = useState(0)
-  const [paused, setPaused] = useState(false)
+// The first screen. On a Mac the button downloads the newest DMG; on a phone,
+// where there is nothing to install, it sends the link on to the Mac instead.
+function SiteHero() {
+  const href = useLatestDmg()
+  const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 620px)').matches)
+  const [copied, setCopied] = useState(false)
   useEffect(() => {
-    if (paused || reducedMotion()) return undefined
-    const timer = setInterval(() => setScene((s) => (s + 1) % heroScenes.length), 4200)
-    return () => clearInterval(timer)
-  }, [paused])
-  const current = heroScenes[scene]
-  const pick = (index) => { setScene(index); setPaused(true) }
-  return <section className="hero" id="top">
-    <div className="orb orb--hero-a" /><div className="orb orb--hero-b" /><div className="orb orb--hero-c" />
-    <div className="hero-copy">
-      <h1>Type into your notch.</h1>
-      <p className="hero-text">NotchFlow answers, saves a note, sets a reminder or hands the job to Codex or Claude Code, from the notch at the top of your screen. It also keeps your files, music and agent sessions one hover away.</p>
-      <div className="hero-actions"><DownloadButton /><a className="button button--outline" href="#features">See what it does <Arrow /></a></div>
-      <p className="hero-meta">7-day free trial · macOS 14+ · Apple silicon</p>
-    </div>
-    <div className="hero-stage" aria-label="NotchFlow app preview" onMouseEnter={() => setPaused(true)}>
-      <div className="notch-shell">
-        <div className="notch-bar"><span /><span /><span /></div><div className="notch-glow" />
-        <div className="notch-content">
-          <div className="demo-tabs" role="tablist" aria-label="Preview a destination">{heroScenes.map((s, index) => <button type="button" role="tab" id={`hero-tab-${index}`} aria-controls="hero-panel" aria-selected={index === scene} tabIndex={index === scene ? 0 : -1} key={s.tab} className={`demo-tab ${index === scene ? 'demo-tab--active' : ''}`} onClick={() => pick(index)} onKeyDown={(e) => onTabKey(e, index, heroScenes.length, pick)}>{s.tab}</button>)}</div>
-          <div className="demo-swap" key={scene} id="hero-panel" role="tabpanel" aria-labelledby={`hero-tab-${scene}`}><p className="demo-prompt">{current.prompt}</p><div className="demo-answer"><span className="answer-dot" /><p>{current.answer}</p></div></div>
-          <div className="demo-input"><span>{current.input}</span><b>↵</b></div>
-        </div>
-      </div>
-      <p className="stage-caption">Pick a tab to see where each kind of line goes.</p>
-    </div>
-  </section>
+    const query = window.matchMedia('(max-width: 620px)')
+    const update = () => setNarrow(query.matches)
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+  const sendLink = async () => {
+    const url = window.location.href.split('#')[0]
+    try {
+      if (navigator.share) await navigator.share({ title: 'NotchFlow for macOS', url })
+      else { await navigator.clipboard.writeText(url); setCopied(true) }
+    } catch { /* share sheet dismissed */ }
+  }
+  return <Tidal
+    logo={baseAsset('icon.png')}
+    aside={['GitHub', REPO]}
+    cta={narrow ? (copied ? 'Link copied' : 'Send the link to your Mac') : 'Download for macOS'}
+    onCta={narrow ? sendLink : () => { window.location.href = href }}
+  />
 }
 
 // ——— Main features ———
@@ -178,14 +149,14 @@ function TrayMock() {
 // that stands in for the app's on-device model.
 const intentLabels = { ask: 'Ask', note: 'Note', remind: 'Remind', agent: 'Agent' }
 const intentOutcomes = {
-  ask: 'Sent to the model you chose. The answer streams in right here.',
-  note: 'Saved to Apple Notes, or to a Markdown file if you prefer.',
-  remind: 'Added to Apple Reminders, with the time you wrote.',
-  agent: 'Ready for Codex, Claude Code or another agent, in the project folder you pick.',
+  ask: 'Answered by your model, right here.',
+  note: 'Saved to Apple Notes or Markdown.',
+  remind: 'Added to Apple Reminders.',
+  agent: 'Handed to Codex, Claude Code or another agent.',
 }
 const chatExamples = [
   { label: 'Ask', text: 'What’s the difference between a mutex and a semaphore?', intent: 'ask', result: 'A mutex lets one thread in at a time; a semaphore lets in up to N.' },
-  { label: 'Web search', text: 'What’s new in the latest macOS release?', intent: 'ask', result: 'Searched the web with your own key, then answered with the source cited.' },
+  { label: 'Web search', text: 'What’s new in the latest macOS release?', intent: 'ask', result: 'Searched the web, answered with sources.' },
   { label: 'Exact math', text: '18% tip on 284.60 split 3 ways', intent: 'ask', result: 'Tip 51.23, total 335.83 — 111.94 each.' },
   { label: 'Note', text: 'The spare key is in the blue box by the door', intent: 'note', result: 'Saved to Apple Notes.' },
   { label: 'Reminder', text: 'Remind me to send the invoice Friday at 4pm', intent: 'remind', result: 'Reminder set · Friday, 4:00 PM.' },
@@ -234,7 +205,7 @@ function ChatDemo() {
     </div>
     <label className="chat-demo-label" htmlFor="intent-try">Or type your own</label>
     <input id="intent-try" className="demo-field" value={custom} placeholder="e.g. Book flights to Goa next week" onChange={(e) => setCustom(e.target.value)} />
-    <p className="demo-note">This page uses a simple keyword guess. In the app, NotchFlow reads each line on your Mac with an on-device language model, and you can change the destination before you press Return.</p>
+    <p className="demo-note">This page guesses from keywords. The app uses an on-device model.</p>
   </div>
 }
 
@@ -285,26 +256,39 @@ function NowPlayingMock() {
 const showcase = [
   {
     id: 'file-tray', title: 'File tray', visual: <TrayMock />,
-    text: 'Drop files, folders, links or text on the notch and they stay there until you need them. Shift-click or Shift and the arrow keys select several, Space opens Quick Look, and dragging one selected file takes the whole selection with it. Dropping into Finder copies, so your originals stay where they were.',
-    sub: { title: 'Convert without opening another app', text: 'Select files of one type and convert them together: HEIC, PNG and other images to PNG, JPEG, WebP or SVG; video to GIF or MP3; CSV, JSON, YAML and Excel into each other; Markdown, Word and HTML to PDF. Compress images and video, or remove a photo’s background. Conversions run on your Mac through the free Media Automations CLI.' },
+    text: 'Drop files, links or text on the notch. They wait there until you need them.',
+    sub: { title: 'Convert in place', text: 'Images, video, data and documents convert on your Mac. Compress, or remove a background.' },
   },
   {
     id: 'chat', title: 'Chat and notes', visual: <ChatDemo />,
-    text: 'Ask a question and the answer streams in under the prompt, with follow-ups in the same thread. It can search the web with your own key, calculate exactly, and read a chart or screenshot you copied. A line that reads like a note goes to Apple Notes or a Markdown file; one with a time becomes an Apple Reminder.',
+    text: 'Ask, and the answer streams in under the prompt. Notes go to Apple Notes; anything with a time becomes a reminder.',
   },
   {
     id: 'activity', title: 'AI activity and Activity Monitor', visual: <ActivityMock />,
-    text: 'The AI tab adds up the tokens your Codex, Claude Code and chat sessions reported, per project, over the last 5 hours and 7 days, and shows how full each session’s context window is. Activity Monitor shows live CPU and memory pressure with the numbers underneath, and opens the full app in one click.',
+    text: 'Token use per project for Codex, Claude Code and chat, plus live CPU and memory.',
   },
   {
     id: 'now-playing', title: 'Now Playing', visual: <NowPlayingMock />,
-    text: 'Whatever macOS lists in Now Playing shows up in the notch: Apple Music, Spotify, Apple TV, YouTube Music or a browser tab. You get the artwork, play and pause, skip, and seeking where the app allows it.',
+    text: 'Music, Apple TV, YouTube Music or a browser tab, with artwork and controls.',
   },
 ]
 
+const principles = [
+  ['No bigger than it has to be', 'At rest it’s just your notch. It only grows while something matters.'],
+  ['Opens when you reach for it', 'Hover, press a shortcut or drag a file to it. Move away and it folds back.'],
+  ['Everything in one place', 'Chat, agents, notes, files, media and utilities in one small panel.'],
+]
+
+function Principle() {
+  return <section className="section trust-section principle-section" id="why">
+    <div className="trust-intro"><h2>Small by design</h2><p>Screen space is precious. NotchFlow takes no more of it than the notch, and still does the most.</p><DownloadButton label="Try it free for 7 days" /></div>
+    <div className="trust-grid">{principles.map(([title, text]) => <article key={title}><h3>{title}</h3><p>{text}</p></article>)}</div>
+  </section>
+}
+
 function Features() {
   return <section className="section showcase-section" id="features">
-    <div className="section-intro"><h2>What you’ll use every day</h2><p>Hover the notch, or press your shortcut, and these are a click away. Agents get their own section below.</p></div>
+    <div className="section-intro"><h2>What you’ll use every day</h2><p>Hover the notch or press your shortcut.</p></div>
     <div className="showcase">{showcase.map((item, index) => <article className={`showcase-item ${index % 2 ? 'showcase-item--flip' : ''}`} id={item.id} key={item.id}>
       <div className="showcase-copy"><h3>{item.title}</h3><p>{item.text}</p>{item.sub && <><h4>{item.sub.title}</h4><p>{item.sub.text}</p></>}</div>
       <div className="showcase-visual">{item.visual}</div>
@@ -331,10 +315,10 @@ function AgentMock() {
 }
 
 const agentSteps = [
-  ['Start a task from the notch', 'Drop a project folder on the notch or pick one, then choose Codex, Claude Code, Grok, Command Code or PI: whichever CLI you already use.'],
-  ['See every session in one list', 'Codex and Claude Code sessions on your Mac appear on their own, including ones started in Terminal, with what each is doing and how full its context is.'],
-  ['Approve or deny in the notch', 'Permission requests show up as a card with Approve and Deny. NotchFlow never answers for you; if it’s closed, the agent asks in its own terminal.'],
-  ['Follow up or resume', 'Send the next instruction in the same thread, resume after an interruption, or open the run in its own window.'],
+  ['Start a task', 'Pick a project and your CLI: Codex, Claude Code, Grok, Command Code or PI.'],
+  ['See every session', 'Even ones started in Terminal, with how full each context is.'],
+  ['Approve or deny', 'Requests land in the notch. Nothing is approved for you.'],
+  ['Follow up', 'Continue, resume, or pop the run into its own window.'],
 ]
 
 function AgentSection() {
@@ -342,7 +326,7 @@ function AgentSection() {
     <div className="agents-orb" />
     <div className="agents-copy">
       <h2>Your coding agents, in the notch</h2>
-      <p>The Agent tab lists every Codex and Claude Code session running on your Mac. When one needs a decision, it shows up here, so you can answer without finding the right terminal.</p>
+      <p>Every Codex and Claude Code session on your Mac, in one list. When one needs you, it shows up here.</p>
       <ol className="agent-steps">{agentSteps.map(([title, text]) => <li key={title}><h3>{title}</h3><p>{text}</p></li>)}</ol>
     </div>
     <AgentMock />
@@ -364,32 +348,54 @@ const benefitIcons = {
   forceClick: <><rect x="3" y="5" width="18" height="14" rx="3" /><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="4.2" opacity=".55" /></>,
   tearOff: <><rect x="3" y="8" width="11" height="12" rx="2.5" /><path d="M10 4.5h7.5a2.5 2.5 0 0 1 2.5 2.5V14" /><path d="M14 10l6-6M15.5 4H20v4.5" /></>,
   pen: <><path d="M4 20c2.5-1.5 4-3.5 5.5-3.5S11 19 13 19s3-2 4.5-2 2 1 2.5 1.5" /><path d="M13.5 4.5 17 8l-7 7H6.5v-3.5l7-7Z" /></>,
+  calculator: <><rect x="5" y="2.5" width="14" height="19" rx="3" /><rect x="8" y="5.5" width="8" height="3.5" rx="1" /><path d="M8.5 13h.01M12 13h.01M15.5 13h.01M8.5 16.5h.01M12 16.5h.01M15.5 16.5h.01" strokeWidth="2.4" /></>,
+  converter: <><path d="M4 8h14M14.5 4.5 18 8l-3.5 3.5" /><path d="M20 16H6M9.5 12.5 6 16l3.5 3.5" /></>,
 }
 
 const benefits = [
   { group: 'Everyday', items: [
-    ['Calendar & meetings', 'Your next events beside the date, time and weather, with a Join button for Zoom, Meet, Teams, Webex or FaceTime.', 'calendar'],
-    ['Pomodoro', 'A focus timer that traces its lap around the notch’s edge and counts the days in a row you finished a session.', 'timer'],
-    ['Copy to file', 'Copy something worth keeping and the notch offers to file it. Press ⌘C again to accept; ignore it and it goes away.', 'copyFile'],
-    ['Notifications', 'New notifications show beside the notch with the app’s icon and its unread count.', 'bell'],
-    ['AirPods & devices', 'A notice when your AirPods connect, and battery levels for what’s paired.', 'airpods'],
-    ['Power', 'Keep the Mac awake, sleep the display or start the screensaver.', 'power'],
-    ['Mirror', 'A webcam preview before a call. The camera turns on only when you open it.', 'camera'],
-    ['Any display', 'No notch? NotchFlow draws one on Macs without a notch and on external displays.', 'display'],
+    ['Calendar & meetings', 'Next events, with one-click Join for calls.', 'calendar'],
+    ['Pomodoro', 'A focus timer that runs around the notch’s edge.', 'timer'],
+    ['Copy to file', 'Copy something worth keeping, press ⌘C again to save it.', 'copyFile'],
+    ['Notifications', 'New alerts beside the notch, with unread counts.', 'bell'],
+    ['AirPods & devices', 'Connection notices and battery levels.', 'airpods'],
+    ['Calculator', 'Live answers as you type, and a tape to reuse them.', 'calculator'],
+    ['Converter', 'Currency at daily ECB rates, plus everyday units.', 'converter'],
+    ['Power', 'Keep awake, sleep the display or start the screensaver.', 'power'],
+    ['Mirror', 'A quick camera check before a call.', 'camera'],
+    ['Any display', 'No notch? NotchFlow draws one.', 'display'],
   ] },
   { group: 'When you ask', items: [
-    ['Plain-language settings', '“Turn off live activity” or “save my notes as Markdown”: one Confirm and the setting changes.', 'sliders'],
-    ['Prompt shortcuts and /', 'Bind a saved instruction to a key and run it on text selected in any app. Type / to switch destination or run a shortcut.', 'slashKey'],
-    ['Force Click to compose', 'Optional: press firmly on the trackpad anywhere and the composer opens from the press.', 'forceClick'],
-    ['Tear it off', 'Pull a conversation or a running agent task out of the notch into its own window.', 'tearOff'],
-    ['Handwritten answers', 'Answers can look written by hand. Switch it on in Settings.', 'pen'],
+    ['Plain-language settings', 'Say “save my notes as Markdown” and it’s done.', 'sliders'],
+    ['Prompt shortcuts and /', 'Run a saved instruction on text selected anywhere.', 'slashKey'],
+    ['Force Click to compose', 'Press firmly on the trackpad to start typing.', 'forceClick'],
+    ['Tear it off', 'Pop a chat or agent run into its own window.', 'tearOff'],
+    ['Handwritten answers', 'Answers that look written by hand.', 'pen'],
   ] },
 ]
 
+// Each tile takes a colour from the hero's cold-to-warm ramp, in order, so a
+// group reads as one sweep from blue to coral.
+const toneStops = [[41, 150, 196], [96, 214, 208], [236, 226, 170], [255, 160, 110], [255, 102, 84]]
+function tone(index, count) {
+  const x = (count > 1 ? index / (count - 1) : 0) * (toneStops.length - 1)
+  const i = Math.min(toneStops.length - 2, Math.floor(x))
+  const k = x - i
+  const [r, g, b] = toneStops[i].map((c, j) => Math.round(c + (toneStops[i + 1][j] - c) * k))
+  return `rgb(${r}, ${g}, ${b})`
+}
+
 function Benefits() {
   return <section className="section benefits-section" id="more">
-    <div className="section-intro"><h2>Also in NotchFlow</h2></div>
-    <div className="benefits">{benefits.map((g) => <div key={g.group}><h3 className="benefits-group">{g.group}</h3><dl>{g.items.map(([title, text, icon]) => <div className="benefit" key={title}><dt><span className="benefit-icon"><Icon d={benefitIcons[icon]} className="benefit-glyph" /></span>{title}</dt><dd>{text}</dd></div>)}</dl></div>)}</div>
+    <div className="section-intro"><h2>Also in NotchFlow</h2><p>Small tools, one hover away.</p></div>
+    <div className="perks">{benefits.map((g) => <div className="perk-group" key={g.group}>
+      <h3 className="perk-label">{g.group}<span>{g.items.length}</span></h3>
+      <ul className="perk-grid">{g.items.map(([title, text, icon], index) => <li className="perk" key={title} style={{ '--tone': tone(index, g.items.length) }}>
+        <span className="perk-icon"><Icon d={benefitIcons[icon]} className="benefit-glyph" /></span>
+        <h4>{title}</h4>
+        <p>{text}</p>
+      </li>)}</ul>
+    </div>)}</div>
   </section>
 }
 
@@ -404,7 +410,7 @@ const modeRows = [
 
 function Modes() {
   return <section className="section modes-section" id="modes">
-    <div className="section-intro"><h2>Generic mode or Agentic mode</h2><p>Generic mode is media, files, notes and the utilities, with no AI. Agentic mode adds chat, agent tasks, approvals and AI activity. Switching keeps everything you saved.</p></div>
+    <div className="section-intro"><h2>Generic mode or Agentic mode</h2><p>Generic is everything without AI. Agentic adds chat and agents. Switch any time.</p></div>
     <div className="modes-table" role="table" aria-label="Generic mode compared with Agentic mode">
       <div className="modes-row modes-row--head" role="row"><span role="columnheader">Included</span><span role="columnheader">Generic</span><span role="columnheader">Agentic</span></div>
       {modeRows.map(([label, generic, agentic]) => <div className="modes-row" role="row" key={label}><span role="cell">{label}</span><span role="cell" className={generic ? 'mode-yes' : 'mode-no'} aria-label={generic ? 'Included' : 'Not included'}>{generic ? '✓' : '–'}</span><span role="cell" className={agentic ? 'mode-yes' : 'mode-no'} aria-label={agentic ? 'Included' : 'Not included'}>{agentic ? '✓' : '–'}</span></div>)}
@@ -413,26 +419,26 @@ function Modes() {
 }
 
 const byok = [
-  { title: 'AI providers', note: 'Your own key. Prompts go straight to the provider.', items: ['OpenRouter', 'Vercel AI Gateway', 'OpenAI', 'Anthropic', 'Google Gemini', 'DeepSeek', 'Qwen', 'Kimi', 'GLM', 'MiniMax', 'MiMo'] },
-  { title: 'Local & self-hosted', note: 'Any OpenAI-compatible endpoint. A key is optional.', items: ['Ollama', 'LM Studio', 'vLLM', 'Your own gateway'] },
-  { title: 'CLIs you’re signed in to', note: 'NotchFlow runs the CLI you installed; its sign-in stays with it.', items: ['Codex', 'Claude Code', 'Grok', 'Command Code', 'PI'] },
-  { title: 'Web search', note: 'Optional, with your own key.', items: ['Exa', 'Keenable', 'AnySearch'] },
+  { title: 'AI providers', note: 'Prompts go straight to the provider.', items: ['OpenRouter', 'Vercel AI Gateway', 'OpenAI', 'Anthropic', 'Google Gemini', 'DeepSeek', 'Qwen', 'Kimi', 'GLM', 'MiniMax', 'MiMo'] },
+  { title: 'Local & self-hosted', note: 'Any OpenAI-compatible endpoint.', items: ['Ollama', 'LM Studio', 'vLLM', 'Your own gateway'] },
+  { title: 'CLIs you’re signed in to', note: 'Uses the sign-in you already have.', items: ['Codex', 'Claude Code', 'Grok', 'Command Code', 'PI'] },
+  { title: 'Web search', note: 'Optional, with your key.', items: ['Exa', 'Keenable', 'AnySearch'] },
 ]
 
 function Models() {
   return <section className="section models-section" id="models">
-    <div className="section-heading section-heading--center"><h2>Bring your own key, local model or CLI</h2><p className="section-sub">There’s no NotchFlow account. Connect a provider, point it at a local model, or use a CLI you already use.</p></div>
+    <div className="section-heading section-heading--center"><h2>Bring your own key, local model or CLI</h2><p className="section-sub">No account. Use a provider, a local model or a CLI.</p></div>
     <div className="models-grid">{byok.map((group) => <article className="models-card" key={group.title}><h3>{group.title}</h3><p>{group.note}</p><div className="chip-row">{group.items.map((item) => <span className="chip" key={item}>{item}</span>)}</div></article>)}</div>
   </section>
 }
 
 function TrustSection() {
   return <section className="section trust-section" id="privacy">
-    <div className="trust-intro"><h2>Your data stays on your Mac</h2><p>NotchFlow has no account and no server of its own. Your prompts, history, notes, files and agent records stay on your Mac. Requests go directly to the provider, CLI or search service you choose.</p><a className="inline-link" href={privacyHref}>Read the privacy policy <Arrow /></a></div>
+    <div className="trust-intro"><h2>Your data stays on your Mac</h2><p>No account, no NotchFlow server. Everything stays on your Mac.</p><a className="inline-link" href={privacyHref}>Read the privacy policy <Arrow /></a></div>
     <div className="trust-grid">
-      <article><h3>No NotchFlow server</h3><p>Nothing you type passes through us. Use a provider, a local endpoint or a CLI that’s already signed in.</p></article>
-      <article><h3>You see what you send</h3><p>Attachments and selected text are shown in the prompt before anything goes out.</p></article>
-      <article><h3>No auto-approve</h3><p>An agent’s permission request waits for your Approve or Deny.</p></article>
+      <article><h3>No NotchFlow server</h3><p>Requests go straight to the service you choose.</p></article>
+      <article><h3>You see what you send</h3><p>Attachments show in the prompt before anything goes out.</p></article>
+      <article><h3>No auto-approve</h3><p>Agents wait for your Approve or Deny.</p></article>
     </div>
   </section>
 }
@@ -452,13 +458,13 @@ function CopyButton({ text }) {
 
 function Install() {
   return <section className="section install-section" id="install">
-    <div className="install-copy"><h2>Install</h2><p>Download the DMG, drag NotchFlow to Applications and open it. The seven-day trial starts on first launch; no account or payment needed.</p>
-      <ul className="install-reqs"><li>macOS 14 Sonoma or later</li><li>Apple-silicon Mac</li><li>A hardware notch is optional</li><li>Developer ID-signed and notarized by Apple</li></ul>
+    <div className="install-copy"><h2>Install</h2><p>Drag it to Applications and open it. The trial starts right away, no account needed.</p>
+      <ul className="install-reqs"><li>macOS 14 Sonoma or later</li><li>Apple-silicon Mac</li><li>A hardware notch is optional</li><li>Signed and notarized by Apple</li></ul>
     </div>
     <div className="install-steps">
-      <article className="install-card"><h3>Download the DMG</h3><p>The usual install. A matching ZIP is on the release page for Macs that can’t mount a disk image.</p><DownloadButton label="Download the DMG" className="button--small" /></article>
-      <article className="install-card"><h3>Or use Terminal</h3><p>A one-line installer that downloads, verifies and installs the latest release.</p><div className="code-line"><code>{installCommand}</code><CopyButton text={installCommand} /></div></article>
-      <article className="install-card"><h3>Or ask your agent</h3><p>Paste this into Claude Code or Codex and let it do the install.</p><div className="code-line code-line--prompt"><code>Please install NotchFlow for macOS for me…</code><CopyButton text={agentInstallPrompt} /></div></article>
+      <article className="install-card"><h3>Download the DMG</h3><p>The usual way. A ZIP is on the release page too.</p><DownloadButton label="Download the DMG" className="button--small" /></article>
+      <article className="install-card"><h3>Or use Terminal</h3><p>One line that downloads, verifies and installs.</p><div className="code-line"><code>{installCommand}</code><CopyButton text={installCommand} /></div></article>
+      <article className="install-card"><h3>Or ask your agent</h3><p>Paste this into Claude Code or Codex.</p><div className="code-line code-line--prompt"><code>Please install NotchFlow for macOS for me…</code><CopyButton text={agentInstallPrompt} /></div></article>
     </div>
   </section>
 }
@@ -466,7 +472,7 @@ function Install() {
 function LicenseSection() {
   return <section className="section license-section" id="license">
     <div className="license-orb license-orb--one" /><div className="license-orb license-orb--two" />
-    <div className="license-copy"><h2>Seven days free, then a one-time license</h2><p>Every new install gets the full app for seven days. After that, NotchFlow asks for a license key before it opens the notch again; your notes, history and settings stay on your Mac. A license is a single purchase, not a subscription, and includes future updates.</p><DownloadButton label="Start the free trial" /></div>
+    <div className="license-copy"><h2>Seven days free, then a one-time license</h2><p>The full app for a week. Then one payment, not a subscription, with updates included.</p><DownloadButton label="Start the free trial" /></div>
     <div className="license-points"><div><strong>7</strong><span>days with every feature</span></div><div><strong>1</strong><span>payment, updates included</span></div><p>Direct download. No NotchFlow account.</p></div>
   </section>
 }
@@ -474,7 +480,7 @@ function LicenseSection() {
 function FAQ() {
   const [active, setActive] = useState(0)
   return <section className="section faq-section" id="faq">
-    <div className="faq-heading"><h2>FAQ</h2><p>Didn’t find your answer? Open an issue on GitHub.</p><a className="inline-link" href={`${REPO}/issues`} target="_blank" rel="noreferrer">Ask on GitHub <Arrow /></a></div>
+    <div className="faq-heading"><h2>FAQ</h2><p>Something else? Ask on GitHub.</p><a className="inline-link" href={`${REPO}/issues`} target="_blank" rel="noreferrer">Ask on GitHub <Arrow /></a></div>
     <div className="faq-list">{faqs.map(([question, answer], index) => <article className="faq-item" key={question}><button type="button" aria-expanded={active === index} onClick={() => setActive(active === index ? -1 : index)}><span>{question}</span><span className="faq-plus" aria-hidden="true">{active === index ? '−' : '+'}</span></button><div className={`faq-answer ${active === index ? 'faq-answer--open' : ''}`}><p>{answer}</p></div></article>)}</div>
   </section>
 }
@@ -493,5 +499,5 @@ function Footer() {
   </footer>
 }
 
-function App() { return <><Header /><main><Hero /><Features /><AgentSection /><Benefits /><Modes /><Models /><TrustSection /><Install /><LicenseSection /><FAQ /></main><Footer /></> }
+function App() { return <><main><SiteHero /><Principle /><Features /><AgentSection /><Benefits /><Modes /><Models /><TrustSection /><Install /><LicenseSection /><FAQ /></main><Footer /></> }
 export default App
