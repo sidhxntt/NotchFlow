@@ -24,3 +24,26 @@ code { background: #eeece9; border-radius: 4px; color: #292524; font-family: ui-
 main a { color: #292524; text-decoration: underline; text-underline-offset: 3px; }
 footer { border-top: 1px solid #e7e5e4; color: #777169; font-size: 12px; margin: 0 auto; padding: 26px 0; width: min(1120px, calc(100% - 48px)); }
 @media (max-width: 600px) { .header, main, footer { width: calc(100% - 32px); }.header { min-height: 64px; }.brand img { width: 36px; height: 36px; }.back { font-size: 12px; } main { padding: 64px 0 80px; } h2 { font-size: 31px; margin-top: 47px; } p, li { font-size: 15px; } }
+
+/* At a glance: the same icon tile as the site's "Also in NotchFlow" rows. */
+.lede { color: #292524; font-size: 18px; line-height: 1.6; margin-bottom: 40px; }
+.glance { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 0 0 56px; }
+.glance article { background: #fff; border: 1px solid #e7e5e4; border-radius: 16px; padding: 20px; }
+.glance .tile { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: #f5f5f4; border: 1px solid #e7e5e4; color: #292524; margin-bottom: 16px; }
+.glance svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.glance h2 { font-family: Inter, Arial, sans-serif; font-size: 15px; font-weight: 500; letter-spacing: -.1px; line-height: 1.35; margin: 0 0 6px; color: #0c0a09; }
+.glance p { font-size: 14px; line-height: 1.55; margin: 0; }
+.toc { border-top: 1px solid #e7e5e4; border-bottom: 1px solid #e7e5e4; padding: 24px 0 18px; margin-bottom: 12px; }
+.toc .label { margin-bottom: 12px; }
+.toc ol { columns: 2; column-gap: 32px; margin: 0; padding-left: 20px; }
+.toc li { font-size: 15px; margin-bottom: 8px; break-inside: avoid; }
+.toc a { text-decoration: none; color: #292524; }
+.toc a:hover { text-decoration: underline; }
+h2[id] { scroll-margin-top: 24px; }
+.table-wrap { overflow-x: auto; margin: 6px 0 20px; border: 1px solid #e7e5e4; border-radius: 14px; background: #fff; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.5; }
+th, td { text-align: left; vertical-align: top; padding: 13px 16px; border-top: 1px solid #e7e5e4; color: #4e4e4e; }
+thead th { border-top: 0; background: #fafafa; color: #777169; font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+td:first-child { color: #0c0a09; font-weight: 500; width: 30%; }
+@media (max-width: 760px) { .glance { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .lede { font-size: 16px; } .glance { grid-template-columns: 1fr; } .toc ol { columns: 1; } table { font-size: 13px; } th, td { padding: 11px 12px; } }
