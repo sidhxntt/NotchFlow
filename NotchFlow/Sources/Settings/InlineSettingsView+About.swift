@@ -152,6 +152,9 @@ extension InlineSettingsView {
     }
 
     private var updateSlot: UpdateSlot {
+        // A retry started from the failed slot shows its own spinner; `.failed`
+        // would otherwise hold the slot until the check came back.
+        if updater.manualCheck == .checking, updater.phase != .updating { return .checking }
         switch updater.phase {
         case .available(let v): return .available(v)
         case .updating:         return .updating
@@ -180,10 +183,8 @@ extension InlineSettingsView {
                     .foregroundStyle(Tokens.text2)
             }
         case .failed:
+            HStack(spacing: 10) {
             Button {
-                // The update API has no verified repository source in this
-                // build. Keep the recovery action on the maintained release
-                // notes site rather than constructing a GitHub URL that can 404.
                 NSWorkspace.shared.open(UpdaterService.releaseNotesPage)
             } label: {
                 HStack(spacing: 7) {
@@ -202,6 +203,12 @@ extension InlineSettingsView {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open release notes")
+            // A background check that failed once (offline, a GitHub hiccup)
+            // must not take the way to check again with it.
+            aboutLink(L("about.updateRetry")) {
+                updater.checkManually()
+            }
+            }
         case .checking:
             HStack(spacing: 7) {
                 ProgressView()

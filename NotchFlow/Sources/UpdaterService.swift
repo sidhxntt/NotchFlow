@@ -38,8 +38,13 @@ final class UpdaterService: ObservableObject {
 
     @Published private(set) var manualCheck: ManualCheck = .idle
 
-    /// The canonical, complete release-note history on the NotchFlow website.
-    static let releaseNotesPage = URL(string: "https://www.notch.website/releases")!
+    /// Every published release with its notes and downloads: the GitHub
+    /// releases page of the configured repository. Builds without one (local
+    /// development) fall back to the project's own repository.
+    static var releaseNotesPage: URL {
+        repositoryPage?.appendingPathComponent("releases")
+            ?? URL(string: "https://github.com/sidhxntt/NotchFlow/releases")!
+    }
 
     /// A release build may supply its verified GitHub owner/repository through
     /// Info.plist. There is intentionally no guessed fallback: an incorrect

@@ -47,9 +47,9 @@ Or hand it to **Claude Code / Codex**:
 
 Every new installation begins with a full **seven-day trial** (seven consecutive 24-hour periods from its first successful launch). When the trial ends, NotchFlow blocks every product feature until a valid license is activated.
 
-Choose **Buy License** in the blocked screen or the License section of Settings → About to purchase through Lemon Squeezy. Lemon Squeezy emails your license key after payment succeeds; enter that key in NotchFlow to activate this Mac. You can enter the same key again to restore a purchase on another permitted personal Mac.
+Choose **Buy License** in the blocked screen or the License section of Settings → About to purchase through Dodo Payments. Dodo Payments emails your license key after payment succeeds; enter that key in NotchFlow to activate this Mac. You can enter the same key again to restore a purchase on another permitted personal Mac.
 
-A valid paid NotchFlow license is **perpetual**: it keeps the product available forever and includes all future NotchFlow updates. It is not a subscription. NotchFlow has no separate product account; Lemon Squeezy processes the purchase and license-key delivery.
+A valid paid NotchFlow license is **perpetual**: it keeps the product available forever and includes all future NotchFlow updates. It is not a subscription. NotchFlow has no separate product account; Dodo Payments, as merchant of record, processes the purchase and delivers the license key. Each license activates on up to two Macs.
 
 ## Automatic intent detection
 
@@ -103,7 +103,7 @@ NotchFlow is drawn in macOS Liquid Glass — including the edge glow and physica
 
 NotchFlow has no separate product account. Prompts, chats, notes, reminders, agent sessions, clipboard, and history stay on your Mac, or go directly to the AI provider you configured. NotchFlow does not relay request content.
 
-Read the tracked [Privacy Policy](PRIVACY.md) for permissions, local storage, provider/network use, Lemon Squeezy licensing, retention, and deletion. The same policy is published at the configured in-app [privacy URL](https://sidhxntt.github.io/NotchFlow/privacy/).
+Read the tracked [Privacy Policy](PRIVACY.md) for permissions, local storage, provider/network use, Dodo Payments licensing, retention, and deletion. The same policy is published at the configured in-app [privacy URL](https://sidhxntt.github.io/NotchFlow/privacy/).
 
 ## Questions
 
@@ -117,7 +117,7 @@ NotchFlow itself has no account. For hosted AI, connect a provider with its API 
 
 **What happens after the seven-day trial?**
 
-NotchFlow blocks every product feature until you activate a valid paid license. Select Buy License to purchase through Lemon Squeezy; it emails a license key that you enter in the app. The paid license is perpetual and covers future updates.
+NotchFlow blocks every product feature until you activate a valid paid license. Select Buy License to purchase through Dodo Payments; it emails a license key that you enter in the app. The paid license is perpetual and covers future updates.
 
 **Will I get future updates?**
 
@@ -153,4 +153,4 @@ Open `NotchFlow.xcodeproj` (Xcode 16+), or run `./scripts/reinstall.sh`.
 
 ## Product license
 
-The downloadable NotchFlow product requires a valid Lemon Squeezy license after its seven-day trial. A paid license is perpetual and includes all future NotchFlow updates. NotchFlow's source and product are proprietary; applicable third-party and Notchi-derived notices are available in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and in the app.
+The downloadable NotchFlow product requires a valid Dodo Payments license after its seven-day trial. A paid license is perpetual and includes all future NotchFlow updates. NotchFlow's source and product are proprietary; applicable third-party and Notchi-derived notices are available in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and in the app.

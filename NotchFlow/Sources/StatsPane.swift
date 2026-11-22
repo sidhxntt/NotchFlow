@@ -296,7 +296,8 @@ struct StatsPane: View {
     private var privacyHint: AttributedString {
         var text = AttributedString(L("stats.privacy.info"))
         if let range = text.range(of: L("stats.privacy.info.link")) {
-            text[range].link = URL(string: "https://sidhxntt.github.io/NotchFlow/privacy/")
+            // From the bundled About content, so it moves with the policy.
+            text[range].link = URL(string: AboutContentConfiguration.bundled().privacyURL)
             text[range].foregroundColor = Tokens.text1
             text[range].underlineStyle = .single
         }

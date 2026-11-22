@@ -65,11 +65,12 @@ extension NotchBody {
     /// a carried selection: there's a switch for this. It takes the same footnote
     /// voice as the note-save cue and retires itself after a few seconds — and it
     /// is a button, because a hint that names Settings and then makes you go find
-    /// them yourself is half a hint. Tapping it lands on General, where the row is.
+    /// them yourself is half a hint. Tapping it lands on Chat → Capture, where
+    /// the row is.
     var selectionContextHintLine: some View {
         Button {
             model.retireSelectionContextHint()
-            model.settingsSection = "General"
+            model.settingsSection = InlineSettingsView.Section.chat.rawValue
             withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) {
                 model.openSettings()
             }

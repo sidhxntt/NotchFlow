@@ -1,5 +1,7 @@
 import Combine
+import CryptoKit
 import Foundation
+import IOKit
 
 public enum LicenseBlockedReason: String, Equatable, Sendable {
     case trialExpired
@@ -30,16 +32,13 @@ public enum LicenseState: Equatable, Sendable {
         return false
     }
 
-    /// During the free trial users can use NotchFlow, but Settings remains an
-    /// intentional upgrade surface. An activated lifetime license unlocks its
-    /// configuration categories; an expired trial remains on About to recover.
+    /// The trial is the full app, Settings included: a trial user has to be
+    /// able to add a key, grant permissions and set the app up to judge it. Only
+    /// an expired trial or an invalid license narrows Settings to About, where
+    /// the license card and updates live.
     public var shouldRestrictSettingsToAbout: Bool {
-        switch self {
-        case .trial, .blocked:
-            true
-        case .checking, .licensed:
-            false
-        }
+        if case .blocked = self { return true }
+        return false
     }
 
     /// The menu uses this to offer a quiet, non-interactive trial reminder
@@ -104,183 +103,144 @@ public enum LicenseStorageKey: String, CaseIterable, Sendable {
     case lastValidation = "license.last-validation"
 }
 
-public struct LemonLicense: Equatable, Sendable {
-    public let status: String
-    public let expiresAt: String?
-
-    public init(status: String, expiresAt: String?) {
-        self.status = status
-        self.expiresAt = expiresAt
-    }
-
-    public var isActivePerpetual: Bool { status == "active" && expiresAt == nil }
-}
-
-public struct LemonLicenseIdentity: Equatable, Sendable {
-    public let storeID: Int
-    public let productID: Int
-    public let variantID: Int
+/// Who a license key belongs to, as the payment provider reports it when the
+/// key is activated.
+public struct LicenseIdentity: Equatable, Sendable {
+    public let productID: String
     public let customerEmail: String
 
-    public init(storeID: Int, productID: Int, variantID: Int, customerEmail: String) {
-        self.storeID = storeID
+    public init(productID: String, customerEmail: String) {
         self.productID = productID
-        self.variantID = variantID
         self.customerEmail = customerEmail
     }
 }
 
-public enum LemonActivationResult: Equatable, Sendable {
-    case success(instanceID: String, license: LemonLicense, identity: LemonLicenseIdentity)
+public enum LicenseActivationResult: Equatable, Sendable {
+    case success(instanceID: String, identity: LicenseIdentity)
     case rejected(error: String)
 }
 
-public enum LemonValidationResult: Equatable, Sendable {
-    case valid(license: LemonLicense, identity: LemonLicenseIdentity)
+public enum LicenseValidationResult: Equatable, Sendable {
+    case valid
     case invalid(error: String)
 }
 
-public enum LemonDeactivationResult: Equatable, Sendable {
-    case success(identity: LemonLicenseIdentity)
+public enum LicenseDeactivationResult: Equatable, Sendable {
+    case success
     case rejected(error: String)
 }
 
-public protocol LemonLicenseClient: Sendable {
-    func activate(key: String, instanceName: String) async throws -> LemonActivationResult
-    func validate(key: String, instanceID: String) async throws -> LemonValidationResult
-    func deactivate(key: String, instanceID: String) async throws -> LemonDeactivationResult
+public protocol LicenseClient: Sendable {
+    func activate(key: String, instanceName: String) async throws -> LicenseActivationResult
+    func validate(key: String, instanceID: String) async throws -> LicenseValidationResult
+    func deactivate(key: String, instanceID: String) async throws -> LicenseDeactivationResult
 }
 
-public enum LemonLicenseClientError: LocalizedError {
+/// Thrown, rather than returned as a rejection, when Dodo could not give an
+/// answer. Callers keep a previously valid license in that case instead of
+/// locking a paying customer out over an outage or a rate limit.
+public enum LicenseClientError: LocalizedError {
     case invalidResponse
     case serverUnavailable(Int)
 
     public var errorDescription: String? {
         switch self {
-        case .invalidResponse: "Lemon Squeezy returned an unreadable response."
-        case .serverUnavailable(let status): "Lemon Squeezy is temporarily unavailable (HTTP \(status))."
+        case .invalidResponse: "Dodo Payments returned an unreadable response."
+        case .serverUnavailable(let status): "Dodo Payments is temporarily unavailable (HTTP \(status))."
         }
     }
 }
 
-/// Public License API client. It intentionally has no merchant API token: these
-/// three form-encoded endpoints are designed for customer license keys.
-public struct LemonSqueezyLicenseClient: LemonLicenseClient, Sendable {
+/// Dodo Payments' public license endpoints. They take no API key by design, so
+/// the app ships no merchant credential: activation only needs the customer's
+/// own key.
+public struct DodoLicenseClient: LicenseClient, Sendable {
     private let session: URLSession
-    private let baseURL = URL(string: "https://api.lemonsqueezy.com/v1/licenses/")!
+    private let baseURL: URL
 
-    public init(session: URLSession = .shared) {
+    public init(baseURL: URL, session: URLSession = .shared) {
+        self.baseURL = baseURL
         self.session = session
     }
 
-    public func activate(key: String, instanceName: String) async throws -> LemonActivationResult {
-        let response: Response = try await post(
-            endpoint: "activate",
-            fields: ["license_key": key, "instance_name": instanceName]
-        )
-        guard response.activated == true,
-              let license = response.license,
-              let instanceID = response.instance?.id,
-              let identity = response.meta else {
-            return .rejected(error: response.error ?? "The license could not be activated.")
+    public func activate(key: String, instanceName: String) async throws -> LicenseActivationResult {
+        let (status, data) = try await post("licenses/activate", ["license_key": key, "name": instanceName])
+        switch status {
+        case 200...299:
+            guard let response = try? JSONDecoder().decode(Activation.self, from: data) else {
+                throw LicenseClientError.invalidResponse
+            }
+            return .success(
+                instanceID: response.id,
+                identity: LicenseIdentity(productID: response.product?.productID ?? "",
+                                          customerEmail: response.customer.email)
+            )
+        case 403: return .rejected(error: "This license key is not active.")
+        case 404: return .rejected(error: "That license key does not exist.")
+        case 422: return .rejected(error: "This license is already in use on as many Macs as it allows. Deactivate it on one of them first.")
+        default: return .rejected(error: Self.message(in: data) ?? "The license could not be activated.")
         }
-        return .success(instanceID: instanceID, license: license.value, identity: identity.value)
     }
 
-    public func validate(key: String, instanceID: String) async throws -> LemonValidationResult {
-        let response: Response = try await post(
-            endpoint: "validate",
-            fields: ["license_key": key, "instance_id": instanceID]
-        )
-        guard response.valid == true,
-              let license = response.license,
-              let identity = response.meta else {
-            return .invalid(error: response.error ?? "The license is no longer valid.")
+    public func validate(key: String, instanceID: String) async throws -> LicenseValidationResult {
+        let (status, data) = try await post(
+            "licenses/validate", ["license_key": key, "license_key_instance_id": instanceID])
+        guard (200...299).contains(status) else {
+            return .invalid(error: Self.message(in: data) ?? "The license is no longer valid.")
         }
-        return .valid(license: license.value, identity: identity.value)
+        guard let response = try? JSONDecoder().decode(Validation.self, from: data) else {
+            throw LicenseClientError.invalidResponse
+        }
+        return response.valid ? .valid : .invalid(error: "The license is no longer valid.")
     }
 
-    public func deactivate(key: String, instanceID: String) async throws -> LemonDeactivationResult {
-        let response: Response = try await post(
-            endpoint: "deactivate",
-            fields: ["license_key": key, "instance_id": instanceID]
-        )
-        guard response.deactivated == true, let identity = response.meta else {
-            return .rejected(error: response.error ?? "This Mac could not be deactivated.")
+    public func deactivate(key: String, instanceID: String) async throws -> LicenseDeactivationResult {
+        let (status, data) = try await post(
+            "licenses/deactivate", ["license_key": key, "license_key_instance_id": instanceID])
+        guard (200...299).contains(status) else {
+            return .rejected(error: Self.message(in: data) ?? "This Mac could not be deactivated.")
         }
-        return .success(identity: identity.value)
+        return .success
     }
 
-    private func post<Value: Decodable>(endpoint: String, fields: [String: String]) async throws -> Value {
+    /// The HTTP status and body. 5xx and 429 are thrown: they say nothing
+    /// about the key itself.
+    private func post(_ endpoint: String, _ body: [String: String]) async throws -> (Int, Data) {
         var request = URLRequest(url: baseURL.appending(path: endpoint))
         request.httpMethod = "POST"
         request.timeoutInterval = 10
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        var components = URLComponents()
-        components.queryItems = fields
-            .sorted { $0.key < $1.key }
-            .map { URLQueryItem(name: $0.key, value: $0.value) }
-        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
 
         let (data, rawResponse) = try await session.data(for: request)
         guard let response = rawResponse as? HTTPURLResponse else {
-            throw LemonLicenseClientError.invalidResponse
+            throw LicenseClientError.invalidResponse
         }
-        if response.statusCode >= 500 {
-            throw LemonLicenseClientError.serverUnavailable(response.statusCode)
+        if response.statusCode >= 500 || response.statusCode == 429 {
+            throw LicenseClientError.serverUnavailable(response.statusCode)
         }
-        do {
-            return try JSONDecoder().decode(Value.self, from: data)
-        } catch {
-            throw LemonLicenseClientError.invalidResponse
-        }
+        return (response.statusCode, data)
     }
 
-    private struct Response: Decodable {
-        let activated: Bool?
-        let valid: Bool?
-        let deactivated: Bool?
-        let error: String?
-        let license: LicensePayload?
-        let instance: Instance?
-        let meta: Meta?
-
-        enum CodingKeys: String, CodingKey {
-            case activated, valid, deactivated, error, instance, meta
-            case license = "license_key"
-        }
+    private static func message(in data: Data) -> String? {
+        (try? JSONDecoder().decode(ErrorBody.self, from: data))?.message
     }
 
-    private struct LicensePayload: Decodable {
-        let status: String
-        let expiresAt: String?
-        enum CodingKeys: String, CodingKey { case status; case expiresAt = "expires_at" }
-        var value: LemonLicense { LemonLicense(status: status, expiresAt: expiresAt) }
+    private struct Activation: Decodable {
+        let id: String
+        let product: Product?
+        let customer: Customer
+
+        struct Product: Decodable {
+            let productID: String
+            enum CodingKeys: String, CodingKey { case productID = "product_id" }
+        }
+        struct Customer: Decodable { let email: String }
     }
 
-    private struct Instance: Decodable { let id: String }
-
-    private struct Meta: Decodable {
-        let storeID: Int
-        let productID: Int
-        let variantID: Int
-        let customerEmail: String
-        enum CodingKeys: String, CodingKey {
-            case storeID = "store_id"
-            case productID = "product_id"
-            case variantID = "variant_id"
-            case customerEmail = "customer_email"
-        }
-        var value: LemonLicenseIdentity {
-            LemonLicenseIdentity(
-                storeID: storeID,
-                productID: productID,
-                variantID: variantID,
-                customerEmail: customerEmail
-            )
-        }
-    }
+    private struct Validation: Decodable { let valid: Bool }
+    private struct ErrorBody: Decodable { let message: String? }
 }
 
 public enum LicenseServiceError: LocalizedError, Equatable {
@@ -290,7 +250,6 @@ public enum LicenseServiceError: LocalizedError, Equatable {
     case deactivationRejected(String)
     case wrongProduct
     case emailMismatch
-    case nonPerpetualLicense
     case noActivatedLicense
     case secureStorage
 
@@ -302,7 +261,6 @@ public enum LicenseServiceError: LocalizedError, Equatable {
         case .deactivationRejected(let message): message
         case .wrongProduct: "That key is not a NotchFlow license."
         case .emailMismatch: "The email does not match the license purchase."
-        case .nonPerpetualLicense: "This is not a valid perpetual NotchFlow license."
         case .noActivatedLicense: "No license is active on this Mac."
         case .secureStorage: "NotchFlow could not securely save the license."
         }
@@ -313,7 +271,7 @@ public enum LicenseServiceError: LocalizedError, Equatable {
 public final class LicenseService: ObservableObject {
     public nonisolated static let trialDuration: TimeInterval = 7 * 24 * 60 * 60
 
-    /// Developer builds must remain usable before the live Lemon Squeezy
+    /// Developer builds must remain usable before the live Dodo Payments
     /// product exists. This is a compile-time boundary: `DEBUG` is absent from
     /// Release builds, so a distributed app cannot receive this entitlement.
     public nonisolated static var hasLocalDevelopmentEntitlement: Bool {
@@ -324,9 +282,46 @@ public final class LicenseService: ObservableObject {
         #endif
     }
 
+    /// The developer's own Macs are licensed in every build, Release included,
+    /// so the app they ship never locks them out. Each entry is the SHA-256 of
+    /// `ownerSalt` plus the Mac's IOPlatformUUID; the hardware ID itself is not
+    /// in the source. Add a Mac with:
+    /// `printf 'NotchFlow.owner.v1:%s' "$(ioreg -rd1 -c IOPlatformExpertDevice | awk -F'"' '/IOPlatformUUID/{print toupper($4)}')" | shasum -a 256`
+    public nonisolated static let ownerMachineDigests: Set<String> = [
+        "7d7f0dc74b2df3b4213b31865b7cbb42946b97a1b55405e25495f3d03d551945",
+    ]
+    private nonisolated static let ownerSalt = "NotchFlow.owner.v1:"
+
+    public nonisolated static func ownerDigest(forPlatformUUID uuid: String) -> String {
+        SHA256.hash(data: Data((ownerSalt + uuid.uppercased()).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+    }
+
+    public nonisolated static func isOwnerMachine(platformUUID: String?,
+                                                  ownerDigests: Set<String> = ownerMachineDigests) -> Bool {
+        guard let platformUUID, !platformUUID.isEmpty else { return false }
+        return ownerDigests.contains(ownerDigest(forPlatformUUID: platformUUID))
+    }
+
+    /// Whether this Mac is one of the developer's. Read once: the hardware ID
+    /// can't change while the app runs.
+    public nonisolated static let isOwnerMachine: Bool = isOwnerMachine(platformUUID: platformUUID())
+
+    private nonisolated static func platformUUID() -> String? {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
+        guard service != 0 else { return nil }
+        defer { IOObjectRelease(service) }
+        return IORegistryEntryCreateCFProperty(service, "IOPlatformUUID" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? String
+    }
+
     public static let shared: LicenseService = {
         do {
+            #if NOTCHFLOW_CUSTOMER_SIMULATION
+            return CustomerSimulation.service(configuration: try .bundled())
+            #else
             return LicenseService(configuration: try .bundled(), schedulesRefresh: true)
+            #endif
         } catch {
             return LicenseService(configurationError: error.localizedDescription)
         }
@@ -342,7 +337,7 @@ public final class LicenseService: ObservableObject {
     private let configuration: LicensingConfiguration?
     private let configurationError: String?
     private let store: SecureValueStoring
-    private let client: LemonLicenseClient
+    private let client: LicenseClient
     private let now: @Sendable () -> Date
     private let makeInstallID: @Sendable () -> UUID
     private let schedulesRefresh: Bool
@@ -352,16 +347,17 @@ public final class LicenseService: ObservableObject {
     public init(
         configuration: LicensingConfiguration,
         store: SecureValueStoring = KeychainStore.shared,
-        client: LemonLicenseClient = LemonSqueezyLicenseClient(),
+        client: LicenseClient? = nil,
         now: @escaping @Sendable () -> Date = { .now },
         makeInstallID: @escaping @Sendable () -> UUID = { UUID() },
         schedulesRefresh: Bool = false,
         hasLocalDevelopmentEntitlement: Bool = LicenseService.hasLocalDevelopmentEntitlement
+            || LicenseService.isOwnerMachine
     ) {
         self.configuration = configuration
         self.configurationError = nil
         self.store = store
-        self.client = client
+        self.client = client ?? DodoLicenseClient(baseURL: configuration.environment.apiBaseURL)
         self.now = now
         self.makeInstallID = makeInstallID
         self.schedulesRefresh = schedulesRefresh
@@ -372,11 +368,11 @@ public final class LicenseService: ObservableObject {
         self.configuration = nil
         self.configurationError = configurationError
         self.store = KeychainStore.shared
-        self.client = LemonSqueezyLicenseClient()
+        self.client = DodoLicenseClient(baseURL: LicensingConfiguration.Environment.live.apiBaseURL)
         self.now = { .now }
         self.makeInstallID = { UUID() }
         self.schedulesRefresh = true
-        self.hasLocalDevelopmentEntitlement = Self.hasLocalDevelopmentEntitlement
+        self.hasLocalDevelopmentEntitlement = Self.hasLocalDevelopmentEntitlement || Self.isOwnerMachine
     }
 
     deinit { scheduledTask?.cancel() }
@@ -421,7 +417,7 @@ public final class LicenseService: ObservableObject {
         switch result {
         case .rejected(let error):
             throw LicenseServiceError.activationRejected(error)
-        case .success(let instanceID, let license, let identity):
+        case .success(let instanceID, let identity):
             guard configuration.accepts(identity) else {
                 _ = try? await client.deactivate(key: key, instanceID: instanceID)
                 throw LicenseServiceError.wrongProduct
@@ -429,10 +425,6 @@ public final class LicenseService: ObservableObject {
             guard identity.customerEmail.compare(email, options: [.caseInsensitive]) == .orderedSame else {
                 _ = try? await client.deactivate(key: key, instanceID: instanceID)
                 throw LicenseServiceError.emailMismatch
-            }
-            guard license.isActivePerpetual else {
-                _ = try? await client.deactivate(key: key, instanceID: instanceID)
-                throw LicenseServiceError.nonPerpetualLicense
             }
             do {
                 try storeString(instanceID, for: .instanceID)
@@ -448,8 +440,17 @@ public final class LicenseService: ObservableObject {
         }
     }
 
+    /// Whether this Mac holds an activated license key, as opposed to being
+    /// licensed by the developer or owner entitlement, which has nothing to
+    /// deactivate.
+    public var hasActivatedLicense: Bool {
+        guard let key = try? storedString(for: .licenseKey),
+              let instance = try? storedString(for: .instanceID) else { return false }
+        return !key.isEmpty && !instance.isEmpty
+    }
+
     public func deactivateCurrentMac() async throws {
-        guard let configuration else {
+        guard configuration != nil else {
             throw LicenseServiceError.deactivationRejected(
                 configurationError ?? "Licensing is not configured.")
         }
@@ -462,8 +463,7 @@ public final class LicenseService: ObservableObject {
         switch result {
         case .rejected(let error):
             throw LicenseServiceError.deactivationRejected(error)
-        case .success(let identity):
-            guard configuration.accepts(identity) else { throw LicenseServiceError.wrongProduct }
+        case .success:
             do {
                 try store.removeValue(forKey: LicenseStorageKey.licenseKey.rawValue)
                 try store.removeValue(forKey: LicenseStorageKey.instanceID.rawValue)
@@ -558,13 +558,9 @@ public final class LicenseService: ObservableObject {
                 try? storeString("invalid", for: .validationResult)
                 try? storeDate(now(), for: .lastValidation)
                 setState(.blocked(reason: .licenseInvalid))
-            case .valid(let license, let identity):
-                guard configuration?.accepts(identity) == true, license.isActivePerpetual else {
-                    try? storeString("invalid", for: .validationResult)
-                    try? storeDate(now(), for: .lastValidation)
-                    setState(.blocked(reason: .licenseInvalid))
-                    return
-                }
+            case .valid:
+                // Dodo validates the key and this Mac's activation together;
+                // the product and email were checked when it was activated.
                 try? storeString("valid", for: .validationResult)
                 try? storeDate(now(), for: .lastValidation)
                 setState(.licensed)
@@ -687,3 +683,45 @@ public final class LicenseService: ObservableObject {
         try store.set(JSONEncoder().encode(value), forKey: key.rawValue)
     }
 }
+
+#if NOTCHFLOW_CUSTOMER_SIMULATION
+/// `make install-release-customer`: the Release app as a customer would run it,
+/// on the developer's own Mac. Only that target sets this compile flag, so no
+/// shipped build contains any of it.
+///
+/// - The owner unlock is off.
+/// - Trial records live under their own Keychain service, so the real ones are
+///   never touched and the simulation can be reset by deleting that service.
+/// - `defaults write com.notchflow.app simulation.trialDaysElapsed -float 8`
+///   moves the license clock forward to test the end of the trial.
+/// - Every state it reaches is appended to `license-simulation.log` in
+///   NotchFlow's Application Support folder, so a run can be checked without
+///   reading the UI.
+@MainActor
+enum CustomerSimulation {
+    private static var stateLog: AnyCancellable?
+
+    static func service(configuration: LicensingConfiguration) -> LicenseService {
+        let days = UserDefaults.standard.double(forKey: "simulation.trialDaysElapsed")
+        let service = LicenseService(
+            configuration: configuration,
+            store: KeychainStore(service: "com.notchflow.app.secure.simulation"),
+            now: { Date().addingTimeInterval(days * 86_400) },
+            schedulesRefresh: true,
+            hasLocalDevelopmentEntitlement: false
+        )
+        stateLog = service.$committedState.sink { state in
+            guard let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+                .appendingPathComponent("NotchFlow", isDirectory: true) else { return }
+            let url = dir.appendingPathComponent("license-simulation.log")
+            let line = "\(Date()) days+\(days) \(state)\n"
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close()
+            } else {
+                try? Data(line.utf8).write(to: url)
+            }
+        }
+        return service
+    }
+}
+#endif

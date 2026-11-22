@@ -108,9 +108,10 @@ zip_package_line="$(line_number 'bash scripts/create-zip.sh "$APP" "$ZIP_NAME"')
 [ "$app_staple_line" -lt "$zip_package_line" ] \
   || fail 'the app must be stapled before it is copied into the ZIP fallback'
 
-# A release build must contain the real public Lemon configuration. Placeholders
-# leave the app blocked by design, so publishing them would create a product no
-# customer can activate. These values are public identifiers, never credentials.
+# A release build must contain the real, live Dodo Payments configuration. A
+# test-mode product would let anyone "buy" with a test card and receive a working
+# license, and a placeholder leaves the app impossible to activate. These values
+# are public identifiers, never credentials.
 node --input-type=module <<'NODE'
 import { readFileSync } from 'node:fs';
 
@@ -119,16 +120,18 @@ const licensing = input.licensing;
 if (!licensing || typeof licensing !== 'object') {
   throw new Error('missing licensing configuration in NotchFlow/Resources/input.json');
 }
-for (const key of ['storeID', 'productID', 'variantID']) {
-  if (!Number.isInteger(licensing[key]) || licensing[key] <= 0) {
-    throw new Error(`licensing.${key} must be a non-zero integer for a release`);
-  }
+if (licensing.environment !== 'live') {
+  throw new Error('licensing.environment must be "live" for a release (test-mode licenses are free to obtain)');
+}
+if (typeof licensing.productID !== 'string' || !/^pdt_[A-Za-z0-9]+$/.test(licensing.productID)) {
+  throw new Error('licensing.productID must be a Dodo Payments product ID (pdt_…) for a release');
 }
 let checkout;
 try { checkout = new URL(licensing.checkoutURL); }
 catch { throw new Error('licensing.checkoutURL must be a valid HTTPS URL for a release'); }
-if (checkout.protocol !== 'https:' || !checkout.hostname) {
-  throw new Error('licensing.checkoutURL must be a valid HTTPS URL for a release');
+if (checkout.protocol !== 'https:' || checkout.hostname !== 'checkout.dodopayments.com'
+    || !checkout.pathname.includes(licensing.productID)) {
+  throw new Error('licensing.checkoutURL must be the live Dodo checkout link for licensing.productID');
 }
 NODE
 
@@ -185,7 +188,7 @@ require_text 'ZIP fallback' README.md
 # deliberately a release prerequisite, not something this repository claims to
 # have deployed.
 require_text 'Deployment requirement' PRIVACY.md
-require_text 'Lemon Squeezy' PRIVACY.md
+require_text 'Dodo Payments' PRIVACY.md
 require_text 'Keychain' PRIVACY.md
 require_text 'Retention and deletion' PRIVACY.md
 

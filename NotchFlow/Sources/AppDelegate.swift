@@ -1549,6 +1549,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             checkForUpdates: { [weak self] in
                 self?.checkForUpdatesFromMenu()
+            },
+            isAgenticModeEnabled: { [weak self] in
+                self?.capabilities.agenticModeEnabled ?? true
             }
         ))
         menuBar?.apply()

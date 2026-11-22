@@ -123,9 +123,11 @@ extension InlineSettingsView {
     /// stays — it carries the persisted value and the activation-policy mapping,
     /// which a raw Bool would throw away.
     var dockIconRow: some View {
+        // Not `aligned`: the shared label column was measured without this
+        // row's ⓘ, which then sat on top of the switch. Launch at login and the
+        // menu-bar row use the same plain inline layout.
         settingRow(label: L("general.dockIcon.toggle"),
-                   info: L("general.dockIcon.footer"),
-                   aligned: true) {
+                   info: L("general.dockIcon.footer")) {
             Toggle("", isOn: Binding(
                 get: { dockIconVisibility == .shown },
                 set: { Haptics.levelChange(); selectDockIconVisibility($0 ? .shown : .hidden) }
@@ -142,9 +144,7 @@ extension InlineSettingsView {
     /// summon shortcut has been forgotten. The choice applies immediately
     /// (AppDelegate adds/removes the status item).
     var menuBarIconRow: some View {
-        settingRow(label: L("general.menuBarIcon.toggle"),
-                   aligned: true,
-                   forceStacked: true) {
+        settingRow(label: L("general.menuBarIcon.toggle")) {
             Toggle("", isOn: Binding(
                 get: { menuBarIconVisibility == .shown },
                 set: { Haptics.levelChange(); selectMenuBarIconVisibility($0 ? .shown : .hidden) }

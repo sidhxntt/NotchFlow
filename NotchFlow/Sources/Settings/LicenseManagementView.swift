@@ -47,11 +47,13 @@ struct LicenseManagementView: View {
                 ProgressView(L("license.checking"))
                     .controlSize(.small)
             case .licensed:
-                Button(isWorking ? L("license.deactivating") : L("license.deactivate"),
-                       role: .destructive) {
-                    deactivate()
+                if service.hasActivatedLicense {
+                    Button(isWorking ? L("license.deactivating") : L("license.deactivate"),
+                           role: .destructive) {
+                        deactivate()
+                    }
+                    .disabled(isWorking)
                 }
-                .disabled(isWorking)
             case .trial, .blocked:
                 activationControls
             }

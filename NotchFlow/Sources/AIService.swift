@@ -2337,6 +2337,13 @@ enum ModelRatings {
         if provider == .piCode, id != PiCLIService.defaultSentinel {
             return PiCLIService.shortDisplayName(forID: id)
         }
+        // The Codex CLI's catalog carries its own display names ("GPT-5.6-Luna");
+        // the generic first-letter rule turned the id into "Gpt-5.6-luna" here
+        // while the Agent tab, reading the catalog, showed the real name.
+        if provider == .codex,
+           let listed = CodexCLIService.listedModels.first(where: { $0.id == id }) {
+            return listed.displayName
+        }
         guard provider == .claudeCode,
               let resolved = ClaudeCLIService.resolvedModels[id]
         else { return prettyName(for: id) }

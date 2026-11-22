@@ -98,7 +98,7 @@ final class WhatsNewService: ObservableObject {
             date: "2026-09-02",
             features: [
                 "Start with a full seven-day trial. When it ends, NotchFlow pauses every product feature until you activate a paid license.",
-                "Buy a NotchFlow license through Lemon Squeezy, then enter the license key emailed to you to unlock this Mac.",
+                "Buy a NotchFlow license through Dodo Payments, then enter the license key emailed to you to unlock this Mac.",
                 "A valid NotchFlow license is perpetual and includes future NotchFlow updates.",
             ],
             improvements: [

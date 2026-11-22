@@ -88,7 +88,7 @@ extension InlineSettingsView {
 
     /// The Utilities category was one switch, for a workspace that carries a
     /// clipboard, a focus timer, a File tray, a calendar with a weather line, and
-    /// a seven-chip action strip. These are the settings those surfaces actually
+    /// a nine-chip action strip. These are the settings those surfaces actually
     /// read — every one of them is stored state the running code consults, not a
     /// switch that only moves itself.
     var utilitiesSettingsSection: some View {
@@ -110,6 +110,18 @@ extension InlineSettingsView {
                 .captionLabel()
                 .padding(.top, 2)
             temperatureUnitRow
+            Text("Calculator")
+                .captionLabel()
+                .padding(.top, 2)
+            calculatorKeypadRow
+            calculatorTapeRow
+            calculatorPrecisionRow
+            Text("Converter")
+                .captionLabel()
+                .padding(.top, 2)
+            converterCategoriesRow
+            converterCategoryRow
+            currencyRatesRow
             Text("Quick actions")
                 .captionLabel()
                 .padding(.top, 2)
@@ -137,7 +149,8 @@ extension InlineSettingsView {
             .opacity(clipboardHistory.isEnabled ? 1 : 0.45)
 
             if !clipboardHistory.items.isEmpty {
-                SettingActionButton(title: "Clear \(clipboardHistory.items.count)") {
+                SettingActionButton(title: clipboardHistory.items.count == 1
+                    ? "Clear 1 item" : "Clear \(clipboardHistory.items.count) items") {
                     Haptics.levelChange()
                     clipboardHistory.clearHistory()
                 }
@@ -216,8 +229,153 @@ extension InlineSettingsView {
         }
     }
 
+    // MARK: Calculator
+
+    private var calculatorKeypadRow: some View {
+        SettingsLocalState(UserDefaults.standard.object(forKey: CalculatorPreferences.showsKeypadKey) as? Bool ?? true) { shows in
+            settingRow(label: "Keypad",
+                       info: "Show the tap keypad beside the display. With it off the Calculator is just the field: type a sum and press Return.") {
+                Toggle("", isOn: Binding(
+                    get: { shows.wrappedValue },
+                    set: {
+                        Haptics.levelChange()
+                        shows.wrappedValue = $0
+                        UserDefaults.standard.set($0, forKey: CalculatorPreferences.showsKeypadKey)
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .tint(Tokens.text2)
+            }
+        }
+    }
+
+    /// The tape of recent results lives only on this Mac; this is where it can be
+    /// switched off, seen, and emptied without opening the notch.
+    private var calculatorTapeRow: some View {
+        SettingsLocalState(CalculatorTapeSettingsState.current) { tape in
+            settingRow(label: "Keep a tape",
+                       info: "Return or = saves the last \(CalculatorHistory.limit) results on this Mac so you can tap one to reuse it.") {
+                Toggle("", isOn: Binding(
+                    get: { tape.wrappedValue.enabled },
+                    set: {
+                        Haptics.levelChange()
+                        tape.wrappedValue.enabled = $0
+                        UserDefaults.standard.set($0, forKey: CalculatorPreferences.keepsTapeKey)
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .tint(Tokens.text2)
+
+                if tape.wrappedValue.count > 0 {
+                    SettingActionButton(title: "Clear \(tape.wrappedValue.count)") {
+                        Haptics.levelChange()
+                        var history = CalculatorHistory.load()
+                        history.clear()
+                        history.save()
+                        tape.wrappedValue.count = 0
+                    }
+                }
+            }
+        }
+    }
+
+    private var calculatorPrecisionRow: some View {
+        SettingsLocalState(UserDefaults.standard.object(forKey: CalculatorPreferences.precisionKey) as? Int
+                           ?? CalculatorPreferences.automaticPrecision) { places in
+            settingRow(label: "Decimals",
+                       info: "Automatic shows as many digits as the answer needs. A fixed count always rounds to it, which suits money.",
+                       aligned: true) {
+                GlassMenu(title: CalculatorPreferences.precisionLabel(places.wrappedValue)) {
+                    ForEach(CalculatorPreferences.precisionChoices, id: \.self) { choice in
+                        Button {
+                            places.wrappedValue = choice
+                            UserDefaults.standard.set(choice, forKey: CalculatorPreferences.precisionKey)
+                        } label: {
+                            menuOption(CalculatorPreferences.precisionLabel(choice), selected: choice == places.wrappedValue)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Converter
+
+    /// Which unit families the Converter's strip shows — the same chip control as
+    /// the Utilities strip below, for the same reason: it edits a row of chips.
+    private var converterCategoriesRow: some View {
+        SettingsLocalState(UserDefaults.standard.string(forKey: ConverterCategoryVisibility.hiddenKey) ?? "") { hidden in
+            VStack(alignment: .leading, spacing: 8) {
+                settingLabel("Convert between",
+                             info: "Pick the kinds of units the Converter offers. Hide the ones you never use; at least one stays on.")
+                FlowLayout(hSpacing: 6, vSpacing: 6) {
+                    ForEach(ConversionCategory.allCases) { category in
+                        let shown = ConverterCategoryVisibility.visible(hiddenRaw: hidden.wrappedValue).contains(category)
+                        Button {
+                            Haptics.levelChange()
+                            guard let next = ConverterCategoryVisibility.setting(category, visible: !shown,
+                                                                                 in: hidden.wrappedValue) else { return }
+                            hidden.wrappedValue = next
+                            UserDefaults.standard.set(next, forKey: ConverterCategoryVisibility.hiddenKey)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: category.symbolName)
+                                    .font(.sf(10, weight: .semibold))
+                                Text(category.title)
+                                    .font(.sf(11.5, weight: .medium))
+                                    .lineLimit(1)
+                            }
+                            .foregroundStyle(shown ? Tokens.text1 : Tokens.text4)
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10)
+                            .background(Capsule().fill(.white.opacity(shown ? 0.10 : 0.03)))
+                            .overlay(Capsule().strokeBorder(.white.opacity(shown ? 0.16 : 0.07), lineWidth: 0.5))
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(category.title)
+                        .accessibilityAddTraits(shown ? .isSelected : [])
+                    }
+                }
+            }
+        }
+    }
+
+    /// The Converter reopens on whatever was used last; this picks the family it
+    /// starts in, resetting the pair to that family's everyday default.
+    private var converterCategoryRow: some View {
+        SettingsLocalState(ConverterSelection.load(visible: ConverterCategoryVisibility.visible()).category) { category in
+            settingRow(label: "Opens on",
+                       info: "The kind of units the Converter starts in. It also remembers the last pair you used.",
+                       aligned: true) {
+                GlassMenu(title: category.wrappedValue.title) {
+                    ForEach(ConverterCategoryVisibility.visible()) { choice in
+                        Button {
+                            category.wrappedValue = choice
+                            ConverterSelection(category: choice).save()
+                        } label: {
+                            menuOption(choice.title, selected: choice == category.wrappedValue)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var currencyRatesRow: some View {
+        settingRow(label: "Currency rates",
+                   info: "Daily reference rates from the European Central Bank, fetched without a key or account and kept on this Mac so currency works offline. Nothing about you is sent.",
+                   aligned: true) {
+            CurrencyRatesSettingStatus(store: CurrencyRateStore.shared)
+        }
+    }
+
     /// Which chips the Utilities strip offers. Rendered as a wrapping row of
-    /// selectable chips rather than seven switch rows: the strip itself is a row
+    /// selectable chips rather than nine switch rows: the strip itself is a row
     /// of chips, so the control reads as the thing it edits.
     private var quickActionsRow: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -260,5 +418,61 @@ extension InlineSettingsView {
         .buttonStyle(.plain)
         .accessibilityLabel(action.title)
         .accessibilityAddTraits(shown ? .isSelected : [])
+    }
+}
+
+/// Holds a little view-local state for a settings row whose value lives in
+/// UserDefaults rather than on `InlineSettingsView` itself — a stored property
+/// can't be added from an extension, and these two rows don't warrant one.
+private struct SettingsLocalState<Value, Content: View>: View {
+    @State private var value: Value
+    private let content: (Binding<Value>) -> Content
+
+    init(_ initial: Value, @ViewBuilder content: @escaping (Binding<Value>) -> Content) {
+        _value = State(initialValue: initial)
+        self.content = content
+    }
+
+    var body: some View { content($value) }
+}
+
+/// The tape row's two pieces of state, read together from UserDefaults.
+private struct CalculatorTapeSettingsState {
+    var enabled: Bool
+    var count: Int
+
+    static var current: CalculatorTapeSettingsState {
+        CalculatorTapeSettingsState(
+            enabled: UserDefaults.standard.object(forKey: CalculatorPreferences.keepsTapeKey) as? Bool ?? true,
+            count: CalculatorHistory.load().records.count)
+    }
+}
+
+/// Live status for the currency rates row: which day's rates are cached, and a
+/// Refresh that shows its own progress.
+private struct CurrencyRatesSettingStatus: View {
+    @ObservedObject var store: CurrencyRateStore
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(status)
+                .font(.sf(12.5))
+                .foregroundStyle(store.state == .failed && store.rates == nil ? Tokens.danger : Tokens.text2)
+            if store.state == .loading {
+                ProgressView().controlSize(.mini)
+            } else {
+                SettingActionButton(title: "Refresh") {
+                    Haptics.levelChange()
+                    Task { await store.refresh() }
+                }
+            }
+        }
+    }
+
+    private var status: String {
+        if let rates = store.rates {
+            return store.state == .failed ? "\(rates.publishedLabel) · couldn’t update" : "From \(rates.publishedLabel)"
+        }
+        return store.state == .failed ? "Couldn’t load" : "Not loaded yet"
     }
 }

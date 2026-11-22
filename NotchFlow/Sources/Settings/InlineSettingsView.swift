@@ -112,10 +112,9 @@ struct InlineSettingsView: View {
     /// True while `EXA_API_KEY` forces the Exa key — field is then informational.
     var exaEnvOverride: Bool { APIKeyStore.hasExaEnvOverride() }
 
-    /// The user's chosen search backend. Pick one and that's what
-    /// runs — like the model picker, one choice with no "Default" / native fallback.
-    /// `nil` only until the user (or the Search tab's first appearance) settles it on
-    /// a concrete backend; `selectedBackend` fills that gap for display.
+    /// The user's chosen search backend. Pick one and that's what runs, like the
+    /// model picker. `nil` is the provider's own web search, offered in the menu
+    /// as "Model's own search".
     @State var searchBackend: APIKeyStore.SearchBackend? = APIKeyStore.preferredSearchBackend
 
     /// Keenable search key state — a standalone search backend, keyed (its HTTP API
@@ -275,6 +274,27 @@ struct InlineSettingsView: View {
         nonmutating set { model.settingsSection = newValue.rawValue }
     }
 
+    /// Re-reads every value this view mirrors from its store. Key editing is
+    /// left alone while the key section is open, so a change elsewhere never
+    /// swaps the key someone is typing for another provider's.
+    func resyncMirrors() {
+        if pendingModel == nil {
+            provider = APIKeyStore.selectedProvider
+            modelID = APIKeyStore.storedModel(for: provider)
+        }
+        if !keySectionOpen, keyScope != provider {
+            keyScope = provider
+            apiKey = APIKeyStore.stored(for: provider)
+            editingKey = apiKey.isEmpty
+        }
+        placement = .current
+        dockIconVisibility = .current
+        menuBarIconVisibility = .current
+        launchAtLogin = LaunchAtLogin.isEnabled
+        noteDestination = .current
+        notesFolderDisplay = FileNotesService.folderDisplayPath
+    }
+
     /// Which screens carry an island — mirrors the persisted value; writes go
     /// through `selectPlacement` so `AppDelegate` rebuilds panels immediately.
     @State var placement: DisplayPlacement = .current
@@ -423,10 +443,17 @@ struct InlineSettingsView: View {
             if presentedInSettingsWindow {
                 // Keep every mature setting and its interaction intact while the
                 // desktop window supplies the native sidebar and title bar.
-                paneContent
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 14)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                VStack(alignment: .leading, spacing: 0) {
+                    windowHeader
+                    paneContent
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 14)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                // The Force Click pressure slider lives here, so the Look Up
+                // conflict it can raise has to be answered here too; on the
+                // island alone the slider just snapped back with no word why.
+                .modifier(ForceClickLookupGate(model: model, isOpen: true))
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     header
@@ -511,6 +538,17 @@ struct InlineSettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .appIconAppearanceChanged)) { _ in
             appIconAppearanceRevision &+= 1
+        }
+        // The values below are copied into view state when the pane opens. The
+        // menu bar's model picker and chat ("turn off live activity") can change
+        // them while Settings stays open, so re-read them whenever one of those
+        // announces a change, and whenever the window comes back to the front.
+        .onReceive(NotificationCenter.default.publisher(for: .aiBackendChanged)) { _ in resyncMirrors() }
+        .onReceive(NotificationCenter.default.publisher(for: .displayPlacementChanged)) { _ in resyncMirrors() }
+        .onReceive(NotificationCenter.default.publisher(for: .dockIconVisibilityChanged)) { _ in resyncMirrors() }
+        .onReceive(NotificationCenter.default.publisher(for: .menuBarIconVisibilityChanged)) { _ in resyncMirrors() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            if presentedInSettingsWindow { resyncMirrors() }
         }
         // Turning agentic mode off from the Global row retires Chat, Agent, and
         // Stats (see `sidebarSections`). Without this, a user who was reading one
@@ -668,17 +706,14 @@ struct InlineSettingsView: View {
                     .captionLabel()
                     .padding(.top, 2)
                 searchBackendRow
-                    // No stored pick yet → commit the shown default so the
-                    // UI and what actually runs never disagree.
-                    .onAppear {
-                        if searchBackend == nil { selectSearchBackend(selectedBackend) }
-                    }
                 // Only the picked backend's key row shows — like the model
-                // choice above, one pick, one field to fill.
-                switch selectedBackend {
-                case .keenable: keenableKeyRow
-                case .exa:      exaKeyRow
-                case .anysearch: anySearchKeyRow
+                // choice above, one pick, one field to fill. The provider's own
+                // search needs none.
+                switch searchBackend {
+                case nil:        EmptyView()
+                case .keenable?: keenableKeyRow
+                case .exa?:      exaKeyRow
+                case .anysearch?: anySearchKeyRow
                 }
                 Text("Capture")
                     .captionLabel()

@@ -6,7 +6,7 @@ DERIVED_DATA := /private/tmp/notchflow-derived
 APP_BUNDLE := $(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app
 
 .DEFAULT_GOAL := help
-.PHONY: help build dev verify-dev run start stop restart status
+.PHONY: help build dev install-release install-release-customer verify-dev run start stop restart status
 
 help:
 	@echo "NotchFlow commands:"
@@ -14,6 +14,8 @@ help:
 	@echo "  make verify-dev  Launch Debug and verify its menu and approval bridges"
 	@echo "  make run      Alias for make dev"
 	@echo "  make build    Build and sign the locally entitled Debug app"
+	@echo "  make install-release  Build Release, stamped with the latest tag, and install it"
+	@echo "  make install-release-customer  Same, but licensed as a customer (trial, lock) for testing"
 	@echo "  make start    Alias for make run"
 	@echo "  make stop     Close NotchFlow"
 	@echo "  make restart  Close, rebuild, and relaunch NotchFlow"
@@ -36,6 +38,19 @@ dev:
 	@./scripts/build_and_run.sh --verify
 	@bash Tests/verify_menu_bar_icon.sh
 	@bash Tests/verify_approval_bridges.sh
+
+# The product users get, built locally. It is stamped with the newest release
+# tag so the updater doesn't offer that same release back as an "update".
+install-release:
+	@BUILD_CONFIGURATION=Release MARKETING_VERSION=$$(git tag --list 'v*' --sort=-v:refname | head -1 | sed 's/^v//') \
+		./scripts/build_and_run.sh --verify
+
+# Release as a customer sees it on this Mac: owner unlock off, trial kept in a
+# separate Keychain entry. See `CustomerSimulation` in LicenseService.swift.
+install-release-customer:
+	@BUILD_CONFIGURATION=Release EXTRA_SWIFT_FLAGS=-DNOTCHFLOW_CUSTOMER_SIMULATION \
+		MARKETING_VERSION=$$(git tag --list 'v*' --sort=-v:refname | head -1 | sed 's/^v//') \
+		./scripts/build_and_run.sh --verify
 
 verify-dev: dev
 	@swift test

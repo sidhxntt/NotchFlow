@@ -228,11 +228,14 @@ public enum NotchUtilitiesLayout {
 /// The immediate actions shown above the Utilities workspace, in a horizontally
 /// scrolling strip. Started as three fixed, equal-width chips; grew a second
 /// group (Power, Devices, Shortcuts) that would not fit at equal width, which is
-/// what made the strip scroll instead of squeezing.
+/// what made the strip scroll instead of squeezing. Calculator and Converter sit
+/// beside the other everyday tools so they're reachable without scrolling far.
 public enum QuickUtilityAction: CaseIterable, Identifiable, Equatable, Sendable {
     case pomodoro
     case quickNote
     case reminder
+    case calculator
+    case converter
     case power
     case devices
     case clipboard
@@ -245,6 +248,8 @@ public enum QuickUtilityAction: CaseIterable, Identifiable, Equatable, Sendable 
         case .pomodoro: "Pomodoro"
         case .quickNote: "Quick note"
         case .reminder: "Reminder"
+        case .calculator: "Calculator"
+        case .converter: "Converter"
         case .power: "Power"
         case .devices: "Devices"
         case .clipboard: "Clipboard"
@@ -257,6 +262,8 @@ public enum QuickUtilityAction: CaseIterable, Identifiable, Equatable, Sendable 
         case .pomodoro: "timer"
         case .quickNote: "note.text"
         case .reminder: "checklist"
+        case .calculator: "plus.forwardslash.minus"
+        case .converter: "arrow.left.arrow.right"
         case .power: "moon.zzz.fill"
         case .devices: "batteryblock.fill"
         case .clipboard: "clipboard.fill"
@@ -267,8 +274,8 @@ public enum QuickUtilityAction: CaseIterable, Identifiable, Equatable, Sendable 
 
 /// Which of the quick-action chips the Utilities strip actually offers.
 ///
-/// Seven chips no longer fit a notch-wide panel without scrolling, and not
-/// everyone uses all seven — someone who never runs a Pomodoro is scrolling past
+/// Nine chips no longer fit a notch-wide panel without scrolling, and not
+/// everyone uses all nine — someone who never runs a Pomodoro is scrolling past
 /// it to reach Clipboard every time. Hiding a chip only removes it from the
 /// strip; the surface behind it is untouched and still reachable from anywhere
 /// else that opens it (a file drop still reveals the File tray).
@@ -314,6 +321,8 @@ public enum UtilityOverlayKind: Equatable, Sendable {
     case pomodoro
     case quickNote
     case reminder
+    case calculator
+    case converter
     case power
     case devices
     case clipboard
@@ -324,6 +333,8 @@ public enum UtilityOverlayKind: Equatable, Sendable {
         case .pomodoro: self = .pomodoro
         case .quickNote: self = .quickNote
         case .reminder: self = .reminder
+        case .calculator: self = .calculator
+        case .converter: self = .converter
         case .power: self = .power
         case .devices: self = .devices
         case .clipboard: self = .clipboard
@@ -338,6 +349,8 @@ public enum UtilityOverlayKind: Equatable, Sendable {
         case .pomodoro: .pomodoro
         case .quickNote: .quickNote
         case .reminder: .reminder
+        case .calculator: .calculator
+        case .converter: .converter
         case .power: .power
         case .devices: .devices
         case .clipboard: .clipboard

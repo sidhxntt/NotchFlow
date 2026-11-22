@@ -7,9 +7,8 @@ import Combine
 final class LicenseServiceTests: XCTestCase {
     private let configuration = LicensingConfiguration(
         checkoutURL: URL(string: "https://notch.example.com/buy")!,
-        storeID: 11,
-        productID: 22,
-        variantID: 33
+        productID: "pdt_notchflow",
+        environment: .test
     )
     private let installID = UUID(uuidString: "A9D46187-9EF9-4A72-9B35-F199A4D39BE0")!
     private let instanceID = "47596ad9-a811-4ebf-ac8a-03fc7b6d2a17"
@@ -19,7 +18,7 @@ final class LicenseServiceTests: XCTestCase {
         let start = Date(timeIntervalSince1970: 2_000_000_000)
         let clock = MutableClock(start)
         let store = MemorySecureStore()
-        let service = makeService(store: store, client: StubLemonClient(), clock: clock)
+        let service = makeService(store: store, client: StubLicenseClient(), clock: clock)
 
         await service.resolveInitialState()
         XCTAssertEqual(service.state, .trial(remaining: 7))
@@ -37,7 +36,7 @@ final class LicenseServiceTests: XCTestCase {
         let store = MemorySecureStore()
         let service = makeService(
             store: store,
-            client: StubLemonClient(),
+            client: StubLicenseClient(),
             hasLocalDevelopmentEntitlement: LicenseService.hasLocalDevelopmentEntitlement
         )
 
@@ -50,10 +49,22 @@ final class LicenseServiceTests: XCTestCase {
         #endif
     }
 
+    func testOwnerMachineIsRecognisedOnlyByItsHashedPlatformID() {
+        let ownerID = "00000000-0000-4000-8000-000000000001"
+        let digests: Set<String> = [LicenseService.ownerDigest(forPlatformUUID: ownerID)]
+
+        XCTAssertTrue(LicenseService.isOwnerMachine(platformUUID: ownerID, ownerDigests: digests))
+        XCTAssertTrue(LicenseService.isOwnerMachine(platformUUID: ownerID.lowercased(), ownerDigests: digests))
+        XCTAssertFalse(LicenseService.isOwnerMachine(platformUUID: "00000000-0000-4000-8000-000000000002",
+                                                     ownerDigests: digests))
+        XCTAssertFalse(LicenseService.isOwnerMachine(platformUUID: nil, ownerDigests: digests))
+        XCTAssertFalse(LicenseService.isOwnerMachine(platformUUID: ownerID, ownerDigests: []))
+    }
+
     func testCommittedStatePublishesAfterTheAuthoritativeStateIsStored() async {
         let service = makeService(
             store: MemorySecureStore(),
-            client: StubLemonClient(),
+            client: StubLicenseClient(),
             hasLocalDevelopmentEntitlement: true
         )
         let committed = expectation(description: "committed entitlement")
@@ -76,7 +87,7 @@ final class LicenseServiceTests: XCTestCase {
         let service = LicenseService(
             configuration: configuration,
             store: store,
-            client: StubLemonClient(),
+            client: StubLicenseClient(),
             makeInstallID: { installID }
         )
 
@@ -96,7 +107,7 @@ final class LicenseServiceTests: XCTestCase {
         let store = MemorySecureStore(values: [
             LicenseStorageKey.trialStart.rawValue: try JSONEncoder().encode(start)
         ])
-        let service = makeService(store: store, client: StubLemonClient(), clock: clock)
+        let service = makeService(store: store, client: StubLicenseClient(), clock: clock)
 
         await service.resolveInitialState()
         XCTAssertEqual(service.state, .blocked(reason: .trialExpired))
@@ -110,7 +121,7 @@ final class LicenseServiceTests: XCTestCase {
         let start = Date(timeIntervalSince1970: 2_000_000_000)
         let clock = MutableClock(start)
         let store = MemorySecureStore()
-        let service = makeService(store: store, client: StubLemonClient(), clock: clock)
+        let service = makeService(store: store, client: StubLicenseClient(), clock: clock)
         await service.resolveInitialState()
 
         clock.now = start.addingTimeInterval((6 * 86_400) + 1)
@@ -124,10 +135,9 @@ final class LicenseServiceTests: XCTestCase {
 
     func testValidPerpetualActivationLicensesThisMac() async throws {
         let store = MemorySecureStore()
-        let client = StubLemonClient()
+        let client = StubLicenseClient()
         client.activation = .success(
             instanceID: instanceID,
-            license: activePerpetualLicense(),
             identity: expectedIdentity(email: "owner@example.com")
         )
         let service = makeService(store: store, client: client)
@@ -142,14 +152,12 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertEqual(store.string(for: .validationResult), "valid")
     }
 
-    func testActivationRejectsLicenseForAnotherLemonProduct() async {
+    func testActivationRejectsLicenseForAnotherProduct() async {
         let store = MemorySecureStore()
-        let client = StubLemonClient()
+        let client = StubLicenseClient()
         client.activation = .success(
             instanceID: instanceID,
-            license: activePerpetualLicense(),
-            identity: .init(storeID: 11, productID: 999, variantID: 33,
-                            customerEmail: "owner@example.com")
+            identity: .init(productID: "pdt_someone_else", customerEmail: "owner@example.com")
         )
         let service = makeService(store: store, client: client)
         await service.resolveInitialState()
@@ -161,12 +169,12 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertEqual(service.state, .trial(remaining: 7))
         XCTAssertNil(store.string(for: .licenseKey))
         XCTAssertEqual(client.deactivationRequests.count, 1,
-                       "A rejected activation must free the Lemon device slot it consumed.")
+                       "A rejected activation must free the activation slot it consumed.")
     }
 
     func testInvalidStoredLicenseIsBlockedAfterAuthoritativeValidation() async throws {
         let store = try activatedStore(trialStart: Date(timeIntervalSince1970: 1_000_000_000))
-        let client = StubLemonClient()
+        let client = StubLicenseClient()
         client.validation = .invalid(error: "The license key has been disabled.")
         let service = makeService(store: store, client: client)
 
@@ -178,7 +186,7 @@ final class LicenseServiceTests: XCTestCase {
 
     func testOfflineValidationRetainsPreviouslyActivatedPerpetualLicense() async throws {
         let store = try activatedStore()
-        let client = StubLemonClient()
+        let client = StubLicenseClient()
         client.validationError = URLError(.notConnectedToInternet)
         let service = makeService(store: store, client: client)
 
@@ -191,9 +199,9 @@ final class LicenseServiceTests: XCTestCase {
     func testDeactivatingCurrentMacClearsLicenseAndReturnsExpiredTrialToBlocked() async throws {
         let oldTrial = Date(timeIntervalSince1970: 1_000_000_000)
         let store = try activatedStore(trialStart: oldTrial)
-        let client = StubLemonClient()
+        let client = StubLicenseClient()
         client.validationError = URLError(.notConnectedToInternet)
-        client.deactivation = .success(identity: expectedIdentity())
+        client.deactivation = .success
         let service = makeService(store: store, client: client)
         await service.resolveInitialState()
         XCTAssertEqual(service.state, .licensed)
@@ -220,9 +228,9 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertTrue(LicenseState.blocked(reason: .trialExpired).shouldPresentRestrictedSettings)
     }
 
-    func testTrialAndBlockedStatesRestrictSettingsToAbout() {
+    func testOnlyABlockedStateRestrictsSettingsToAbout() {
         XCTAssertFalse(LicenseState.checking.shouldRestrictSettingsToAbout)
-        XCTAssertTrue(LicenseState.trial(remaining: 1).shouldRestrictSettingsToAbout)
+        XCTAssertFalse(LicenseState.trial(remaining: 1).shouldRestrictSettingsToAbout)
         XCTAssertFalse(LicenseState.licensed.shouldRestrictSettingsToAbout)
         XCTAssertTrue(LicenseState.blocked(reason: .trialExpired).shouldRestrictSettingsToAbout)
     }
@@ -306,21 +314,26 @@ final class LicenseServiceTests: XCTestCase {
 
     func testLicensingConfigurationRejectsMissingIdentityAndNonHTTPSCheckout() throws {
         let valid = Data("""
-        {"licensing":{"checkoutURL":"https://notch.example.com/buy","storeID":11,"productID":22,"variantID":33}}
+        {"licensing":{"checkoutURL":"https://notch.example.com/buy","productID":"pdt_notchflow","environment":"test"}}
         """.utf8)
         XCTAssertEqual(try LicensingConfiguration.load(from: valid), configuration)
 
         XCTAssertThrowsError(try LicensingConfiguration.load(from: Data("""
-        {"licensing":{"checkoutURL":"http://notch.example.com/buy","storeID":11,"productID":22,"variantID":33}}
+        {"licensing":{"checkoutURL":"http://notch.example.com/buy","productID":"pdt_notchflow","environment":"test"}}
         """.utf8)))
         XCTAssertThrowsError(try LicensingConfiguration.load(from: Data("""
-        {"licensing":{"checkoutURL":"https://notch.example.com/buy","storeID":0,"productID":22,"variantID":33}}
+        {"licensing":{"checkoutURL":"https://notch.example.com/buy","productID":"1333817","environment":"test"}}
         """.utf8)))
+        XCTAssertThrowsError(try LicensingConfiguration.load(from: Data("""
+        {"licensing":{"checkoutURL":"https://notch.example.com/buy","productID":"pdt_notchflow","environment":"staging"}}
+        """.utf8)))
+        XCTAssertEqual(LicensingConfiguration.Environment.live.apiBaseURL.host, "live.dodopayments.com")
+        XCTAssertEqual(LicensingConfiguration.Environment.test.apiBaseURL.host, "test.dodopayments.com")
     }
 
     private func makeService(
         store: MemorySecureStore,
-        client: StubLemonClient,
+        client: StubLicenseClient,
         clock: MutableClock = MutableClock(Date(timeIntervalSince1970: 2_000_000_000)),
         hasLocalDevelopmentEntitlement: Bool = false
     ) -> LicenseService {
@@ -345,12 +358,8 @@ final class LicenseServiceTests: XCTestCase {
         ])
     }
 
-    private func activePerpetualLicense() -> LemonLicense {
-        LemonLicense(status: "active", expiresAt: nil)
-    }
-
-    private func expectedIdentity(email: String = "owner@example.com") -> LemonLicenseIdentity {
-        LemonLicenseIdentity(storeID: 11, productID: 22, variantID: 33, customerEmail: email)
+    private func expectedIdentity(email: String = "owner@example.com") -> LicenseIdentity {
+        LicenseIdentity(productID: "pdt_notchflow", customerEmail: email)
     }
 }
 
@@ -390,25 +399,25 @@ private final class MemoryLegacyStore: LegacyValueStoring {
     func removeValue(forKey key: String) { values.removeValue(forKey: key) }
 }
 
-private final class StubLemonClient: LemonLicenseClient, @unchecked Sendable {
+private final class StubLicenseClient: LicenseClient, @unchecked Sendable {
     struct DeactivationRequest: Equatable { let key: String; let instanceID: String }
 
-    var activation: LemonActivationResult = .rejected(error: "Not configured")
-    var validation: LemonValidationResult = .invalid(error: "Not configured")
-    var deactivation: LemonDeactivationResult = .rejected(error: "Not configured")
+    var activation: LicenseActivationResult = .rejected(error: "Not configured")
+    var validation: LicenseValidationResult = .invalid(error: "Not configured")
+    var deactivation: LicenseDeactivationResult = .rejected(error: "Not configured")
     var validationError: Error?
     var deactivationRequests: [DeactivationRequest] = []
 
-    func activate(key: String, instanceName: String) async throws -> LemonActivationResult {
+    func activate(key: String, instanceName: String) async throws -> LicenseActivationResult {
         activation
     }
 
-    func validate(key: String, instanceID: String) async throws -> LemonValidationResult {
+    func validate(key: String, instanceID: String) async throws -> LicenseValidationResult {
         if let validationError { throw validationError }
         return validation
     }
 
-    func deactivate(key: String, instanceID: String) async throws -> LemonDeactivationResult {
+    func deactivate(key: String, instanceID: String) async throws -> LicenseDeactivationResult {
         deactivationRequests.append(.init(key: key, instanceID: instanceID))
         return deactivation
     }

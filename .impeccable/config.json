@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-11-22T05:08:35.642Z",
+        "reason": "user confirmed: chose 'Keep look as is' for the website's visual system in the critique follow-up (2026-11-22)"
+      }
+    ]
+  }
+}

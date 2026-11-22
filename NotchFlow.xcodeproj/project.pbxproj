@@ -98,6 +98,11 @@
 		A1001225 /* ShortcutsUtilityOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001224 /* ShortcutsUtilityOverlayView.swift */; };
 		A1001223 /* DeviceUtilityOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001222 /* DeviceUtilityOverlayView.swift */; };
 		A1001221 /* PowerUtilityOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001220 /* PowerUtilityOverlayView.swift */; };
+		D91EB3DCC1FFE725D8AB85A8 /* CurrencyRates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0A8C36DA5C07720423BD3C /* CurrencyRates.swift */; };
+		CB395E3568096F6717E55360 /* ConverterOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEDEA036757EB81539324444 /* ConverterOverlayView.swift */; };
+		3943E33568BDACD718ECAC7F /* CalculatorOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F745300A3D17B314404AAE /* CalculatorOverlayView.swift */; };
+		CE2D39D73B7E9022DAA3712E /* CalculatorInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37BC44AF4412AD66BC2809DD /* CalculatorInput.swift */; };
+		FD74A948D951AD0C353AE42C /* UnitConversion.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40B61116E068AFC15212020 /* UnitConversion.swift */; };
 		A1001215 /* SystemUtilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001214 /* SystemUtilityService.swift */; };
 		A1001401 /* FileConversionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001400 /* FileConversionService.swift */; };
 		A1001301 /* SystemMonitorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1001300 /* SystemMonitorService.swift */; };
@@ -324,6 +329,11 @@
 		A1001224 /* ShortcutsUtilityOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsUtilityOverlayView.swift; sourceTree = "<group>"; };
 		A1001222 /* DeviceUtilityOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceUtilityOverlayView.swift; sourceTree = "<group>"; };
 		A1001220 /* PowerUtilityOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerUtilityOverlayView.swift; sourceTree = "<group>"; };
+		2F0A8C36DA5C07720423BD3C /* CurrencyRates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/CurrencyRates.swift; sourceTree = "<group>"; };
+		BEDEA036757EB81539324444 /* ConverterOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConverterOverlayView.swift; sourceTree = "<group>"; };
+		E3F745300A3D17B314404AAE /* CalculatorOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalculatorOverlayView.swift; sourceTree = "<group>"; };
+		37BC44AF4412AD66BC2809DD /* CalculatorInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/CalculatorInput.swift; sourceTree = "<group>"; };
+		B40B61116E068AFC15212020 /* UnitConversion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/UnitConversion.swift; sourceTree = "<group>"; };
 		A1001214 /* SystemUtilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/SystemUtilityService.swift; sourceTree = "<group>"; };
 		A1001400 /* FileConversionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/FileConversionService.swift; sourceTree = "<group>"; };
 		A1001300 /* SystemMonitorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/SystemMonitorService.swift; sourceTree = "<group>"; };
@@ -552,6 +562,11 @@
 				A1001224 /* ShortcutsUtilityOverlayView.swift */,
 				A1001222 /* DeviceUtilityOverlayView.swift */,
 				A1001220 /* PowerUtilityOverlayView.swift */,
+				2F0A8C36DA5C07720423BD3C /* CurrencyRates.swift */,
+				BEDEA036757EB81539324444 /* ConverterOverlayView.swift */,
+				E3F745300A3D17B314404AAE /* CalculatorOverlayView.swift */,
+				37BC44AF4412AD66BC2809DD /* CalculatorInput.swift */,
+				B40B61116E068AFC15212020 /* UnitConversion.swift */,
 				A1001214 /* SystemUtilityService.swift */,
 				A1001400 /* FileConversionService.swift */,
 				A1001300 /* SystemMonitorService.swift */,
@@ -1073,6 +1088,11 @@
 				A1001225 /* ShortcutsUtilityOverlayView.swift in Sources */,
 				A1001223 /* DeviceUtilityOverlayView.swift in Sources */,
 				A1001221 /* PowerUtilityOverlayView.swift in Sources */,
+				D91EB3DCC1FFE725D8AB85A8 /* CurrencyRates.swift in Sources */,
+				CB395E3568096F6717E55360 /* ConverterOverlayView.swift in Sources */,
+				3943E33568BDACD718ECAC7F /* CalculatorOverlayView.swift in Sources */,
+				CE2D39D73B7E9022DAA3712E /* CalculatorInput.swift in Sources */,
+				FD74A948D951AD0C353AE42C /* UnitConversion.swift in Sources */,
 				A1001215 /* SystemUtilityService.swift in Sources */,
 				A1001401 /* FileConversionService.swift in Sources */,
 				A1001301 /* SystemMonitorService.swift in Sources */,

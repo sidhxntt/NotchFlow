@@ -79,8 +79,13 @@ public struct KeychainStore: SecureValueStoring, Sendable {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-            kSecUseDataProtectionKeychain as String: true
+            kSecAttrAccount as String: key
+            // Not `kSecUseDataProtectionKeychain`: that keychain needs a
+            // keychain-access-groups entitlement backed by a provisioning
+            // profile, which a Developer ID app does not have. Without one every
+            // call fails with errSecMissingEntitlement (-34018), and the trial
+            // could never be stored. The login keychain needs no entitlement,
+            // and its items stay tied to the app's signature.
         ]
     }
 }

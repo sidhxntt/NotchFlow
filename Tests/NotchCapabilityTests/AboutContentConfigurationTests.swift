@@ -13,7 +13,9 @@ final class AboutContentConfigurationTests: XCTestCase {
 
         XCTAssertEqual(configuration.name, "NotchFlow")
         XCTAssertEqual(configuration.tagline, "Your menu-bar AI workspace")
-        XCTAssertEqual(configuration.aboutMeURL, "https://www.notch.website")
+        XCTAssertEqual(configuration.aboutMeURL, "https://sidhxntt.dev/")
+        XCTAssertEqual(configuration.xURL, "https://x.com/sidhxntt")
+        XCTAssertEqual(configuration.feedbackURL, "mailto:siddhantg2002@gmail.com")
     }
 
     func testInvalidInputJSONIsRejected() {
